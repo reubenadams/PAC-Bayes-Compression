@@ -29,7 +29,7 @@ hyper_config = Config(
 base_model_estimate_path = "trained_models/base_mlp_estimate.t"
 
 
-wandb.init(project="hypertraining", name="Hyper [3, 256, 256, 256, 256, 1], lr=0.000001")
+wandb.init(project="hypertraining", name="Hyper [3, 256, 256, 256, 256, 1], lr=0.000001, proper normalization")
 
 os.makedirs("trained_models", exist_ok=True)
 
@@ -42,7 +42,7 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=base_
 
 base_model = BaseModel(base_config.model_dims, base_config.model_act)
 base_model_estimate = BaseModel(base_config.model_dims, base_config.model_act)
-hyper_model = HyperModel(hyper_config.model_dims, hyper_config.model_act)
+hyper_model = HyperModel(hyper_config.model_dims, hyper_config.model_act, base_config.model_dims)
 
 print(f"Number of parameters in base model: {base_model.num_parameters}")
 print(f"Number of parameters in hyper model: {hyper_model.num_parameters}")
