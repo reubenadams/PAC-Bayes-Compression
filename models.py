@@ -110,6 +110,16 @@ class MLP(nn.Module):
                         else:  # Bias
                             layer.bias[row] = param_hat
 
+    def get_hypermodel_scaled_input(self, dimensions, activation):
+        assert dimensions[0] == 3, "The first dimension of the hypermodel must be 3"
+        assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
+        return HyperModel(dimensions, activation, transform=self.scale_indices_transform)
+
+    def get_hypermodel_binary_input(self, dimensions, activation):
+        assert dimensions[0] == sum(self.bit_lengths), "The first dimension of the hypermodel must be the sum of the bit lengths"
+        assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
+        return HyperModel(dimensions, activation, transform=self.index_to_binary_transform)
+
     @staticmethod
     def get_act(act: str):
         if act == "relu":
@@ -125,43 +135,15 @@ class MLP(nn.Module):
 
 
 class HyperModel(MLP):
-    def __init__(self, dimensions, activation, base_model):
-        assert dimensions[0] == 3, "The first dimension of the hypermodel must be 3"
-        assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
+    def __init__(self, dimensions, activation, transform=None, transform_input=False):
         super(HyperModel, self).__init__(dimensions, activation)
-
-        base_max_vals = torch.tensor([base_model.num_layers - 1, base_model.max_rows - 1, base_model.max_cols])
-        self.transform = lambda x: x / base_max_vals - 0.5  # Normalize indices to [-0.5, 0.5]
-        self.treat_input_as_raw_index = True
+        self.transform = transform
+        self.transform_input = transform_input
 
     def forward(self, x):
-        if self.treat_input_as_raw_index:
-            return self.network(self.transform(x))
-        return self.network(x)
-
-
-class HyperModelBinaryInput(MLP):
-    def __init__(self, dimensions, activation, base_model):
-        assert dimensions[-1] == 1
-        super(HyperModelBinaryInput, self).__init__(dimensions, activation)
-        self.input_bit_lengths = base_model.bit_lengths
-        dimensions[0] = sum(self.input_bit_lengths)
-        self.treat_input_as_raw_index = True
-
-    def forward(self, x):
-        if self.treat_input_as_raw_index:
-            x = self.binary_to_indices(x)
+        if self.transform_input:
             x = self.transform(x)
         return self.network(x)
-
-    def binary_to_indices(self, binary_input):
-        indices = []
-        for i in range(0, len(binary_input), 8):
-            byte = binary_input[i:i+8]
-            indices.append(int(byte, 2))
-        return torch.tensor(indices, dtype=torch.float32)
-    
-    def transform(self, x):
 
 
 # class BaseModel(MLP):
