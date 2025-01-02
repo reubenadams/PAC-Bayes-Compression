@@ -1,18 +1,22 @@
 import torch
 from torch.utils.data import Dataset
 import torch.nn as nn
+import wandb
 
 
 class MLP(nn.Module):
-    def __init__(self, dimensions):
+    def __init__(self, dimensions, activation="relu"):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.layers = []
+        self.activation = self.get_act(activation)
         for i in range(len(dimensions) - 1):
             self.layers.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation on the last layer
-                self.layers.append(nn.ReLU())
+                self.layers.append(self.activation())
         self.network = nn.Sequential(*self.layers)
+
+        self.num_parameters = sum([layer.weight.numel() + layer.bias.numel() for layer in self.linear_layers])
 
     def forward(self, x):
         return self.network(x)
@@ -20,9 +24,6 @@ class MLP(nn.Module):
     @property
     def linear_layers(self):
         return (layer for layer in self.network if isinstance(layer, nn.Linear))
-
-    def num_parameters(self):
-        return sum([layer.weight.numel() + layer.bias.numel() for layer in self.linear_layers])
     
     def overall_loss(self, loss_fn, dataloader):
         assert loss_fn.reduction == 'sum'
@@ -42,12 +43,14 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
     
-    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs):
+    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, log_name=None):
         for epoch in range(num_epochs):
             for images, labels in train_loader:
                 images = images.view(images.size(0), -1)
                 outputs = self(images)
                 loss = train_loss_fn(outputs, labels)
+                if log_name:
+                    wandb.log({log_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -62,12 +65,26 @@ class MLP(nn.Module):
 
     def load(self, path):
         self.load_state_dict(torch.load(path, weights_only=True))
+    
+    @staticmethod
+    def get_act(act: str):
+        if act == "relu":
+            return nn.ReLU
+        elif act == "sigmoid":
+            return nn.Sigmoid
+        elif act == "tanh":
+            return nn.Tanh
+        elif act == "leaky_relu":
+            return nn.LeakyReLU
+        else:
+            raise ValueError("Invalid activation function")
+
 
 class HyperModel(MLP):
-    def __init__(self, dimensions):
+    def __init__(self, dimensions, activation="relu"):
         assert dimensions[0] == 3, "The first dimension of the hypermodel must be 3"
         assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
-        super(HyperModel, self).__init__(dimensions)
+        super(HyperModel, self).__init__(dimensions, activation)
 
         self.num_layers = len(self.dimensions) - 1
         self.max_rows = max(self.dimensions[1:])
@@ -84,8 +101,8 @@ class HyperModel(MLP):
 
 
 class BaseModel(MLP):
-    def __init__(self, dimensions):
-        super(BaseModel, self).__init__(dimensions)
+    def __init__(self, dimensions, activation="relu"):
+        super(BaseModel, self).__init__(dimensions, activation)
 
     def get_parameter_dataset(self):
         return ParameterDataset(self)
@@ -93,22 +110,24 @@ class BaseModel(MLP):
     def load_from_hypermodel(self, hypermodel: HyperModel):
         """Populate the weights of the base model with the estimated weights from the hypermodel"""
         assert hypermodel.treat_input_as_raw_index == True
-        for layer_num, layer in enumerate(self.linear_layers):
-            print(f"Estimating layer {layer_num}...")
-            weight = torch.zeros_like(layer.weight)
-            bias = torch.zeros_like(layer.bias)
-            for row in range(weight.size(0)):
-                print(f"\tEstimating row {row}...")
-                for col in range(weight.size(1)):
-                    print(f"\t\tEstimating col {col}...")
-                    x = torch.tensor([layer_num, row, col])
-                    weight[row, col] = hypermodel(x)
-            for row in range(bias.size(0)):
-                print(f"\tEstimating bias row {row}...")
-                x = torch.tensor([layer_num, row, weight.size(1)])
-                bias[row] = hypermodel(x)
-            layer.weight.data = weight
-            layer.bias.data = bias
+        with torch.no_grad():
+            for layer_num, layer in enumerate(self.linear_layers):
+                print(f"Estimating layer {layer_num}...")
+                rows, cols = layer.weight.size()
+
+                weight_rowcol_idxs = torch.meshgrid([torch.arange(rows), torch.arange(cols)], indexing='ij')
+                weight_rowcol_idxs = torch.stack(weight_rowcol_idxs, dim=-1).view(-1, 2)
+                weight_layer_idxs = torch.full((layer.weight.numel(), 1), layer_num)
+                weight_idxs = torch.cat([weight_layer_idxs, weight_rowcol_idxs], dim=1)
+
+                bias_row_idxs = torch.arange(rows).view(-1, 1)
+                bias_col_idxs = torch.full((rows, 1), cols)
+                bias_layer_idxs = torch.full((rows, 1), layer_num)
+                bias_idxs = torch.cat([bias_layer_idxs, bias_row_idxs, bias_col_idxs], dim=1)
+
+                with torch.no_grad():
+                    layer.weight.data = hypermodel(weight_idxs).view(rows, cols)
+                    layer.bias.data = hypermodel(bias_idxs).view(rows)
 
 
 class ParameterDataset(Dataset):
