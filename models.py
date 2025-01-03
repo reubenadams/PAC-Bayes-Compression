@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import torch.nn as nn
 import wandb
 
+from config import Config
+
 
 class MLP(nn.Module):
     def __init__(self, dimensions, activation):
@@ -32,20 +34,21 @@ class MLP(nn.Module):
 
     @staticmethod
     def scale_indices(indices, max_indices):
-        return [idx / max_idx - 0.5 for idx, max_idx in zip(indices, max_indices)]
+        return torch.tensor(indices, dtype=torch.float) / torch.tensor(max_indices, dtype=torch.float) - 0.5
 
     @property
     def scale_indices_transform(self):
-        return lambda indices: self.scale_indices(indices, self.max_indices)
+        max_indices = [max(1, idx) for idx in self.max_indices]  # To avoid division by zero if there is only one layer/row/col
+        return lambda indices: self.scale_indices(indices, max_indices)
 
     @staticmethod
-    def index_to_binary(indices, bit_lengths):
+    def binary_indices(indices, bit_lengths):
         binary_string = ''.join([to_padded_binary(idx, num_bits) for idx, num_bits in zip(indices, bit_lengths)])
-        return [int(d) - 0.5 for d in binary_string]
+        return torch.tensor([int(d) for d in binary_string], dtype=torch.float) - 0.5
 
     @property
-    def index_to_binary_transform(self):
-        return lambda indices: self.index_to_binary(indices, self.bit_lengths)
+    def binary_indices_transform(self):
+        return lambda indices: self.binary_indices(indices, self.bit_lengths)
 
     def get_parameter_dataset(self, transform=None):
         return ParameterDataset(self, transform)
@@ -64,11 +67,11 @@ class MLP(nn.Module):
         for x, labels in dataloader:
             x = x.view(x.size(0), -1)
             outputs = self(x)
-            _, predicted = torch.max(outputs, 1)
+            _, predicted = torch.max(outputs, -1)
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
     
-    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, log_name=None):
+    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, log_name=None, get_accuracy=False):
         for epoch in range(num_epochs):
             for images, labels in train_loader:
                 images = images.view(images.size(0), -1)
@@ -81,8 +84,11 @@ class MLP(nn.Module):
                 loss.backward()
                 optimizer.step()
             test_loss = self.overall_loss(test_loss_fn, test_loader)
-            test_accuracy = self.overall_accuracy(test_loader)
-            print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item():.4f}, Test Accuracy: {test_accuracy.item():.4f}')
+            if get_accuracy:
+                test_accuracy = self.overall_accuracy(test_loader)
+                print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}, Test Accuracy: {test_accuracy.item():.4f}')
+            else:
+                print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}')
         print("Training complete.")
     
     def save(self, path):
@@ -91,8 +97,8 @@ class MLP(nn.Module):
     def load(self, path):
         self.load_state_dict(torch.load(path, weights_only=True))
 
-    def load_from_hypermodel(self, hypermodel, transform=None):
-        """Populate the weights of the base model with the estimated weights from the hypermodel"""
+    def load_from_hyper_model(self, hyper_model, transform=None):
+        """Populate the weights of the base model with the estimated weights from the hyper_model"""
         with torch.no_grad():
             for layer_num, layer in enumerate(self.linear_layers):
                 for row in range(layer.weight.size(0)):
@@ -102,23 +108,24 @@ class MLP(nn.Module):
 
                         if transform:
                             x = transform(x)
-                        x = torch.tensor(x)
-                        param_hat = hypermodel(x)
+                        param_hat = hyper_model(x)
 
                         if col < layer.weight.size(1):  # Weight
                             layer.weight[row, col] = param_hat
                         else:  # Bias
                             layer.bias[row] = param_hat
 
-    def get_hypermodel_scaled_input(self, dimensions, activation):
-        assert dimensions[0] == 3, "The first dimension of the hypermodel must be 3"
-        assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
-        return HyperModel(dimensions, activation, transform=self.scale_indices_transform)
+    def get_hyper_model_scaled_input(self, hyper_config: Config):
+        assert hyper_config.model_dims[0] == 3, "The first dimension of the hyper_model must be 3"
+        assert hyper_config.model_dims[-1] == 1, "The last dimension of the hyper_model must be 1"
+        return HyperModel(hyper_config.model_dims, hyper_config.model_act, transform=self.scale_indices_transform)
 
-    def get_hypermodel_binary_input(self, dimensions, activation):
-        assert dimensions[0] == sum(self.bit_lengths), "The first dimension of the hypermodel must be the sum of the bit lengths"
-        assert dimensions[-1] == 1, "The last dimension of the hypermodel must be 1"
-        return HyperModel(dimensions, activation, transform=self.index_to_binary_transform)
+    def get_hyper_model_binary_input(self, hyper_config: Config):
+        if hyper_config.model_dims[0] != sum(self.bit_lengths):
+            print(f"Changing dimensions from {hyper_config.model_dims[0]} to {sum(self.bit_lengths)}")
+            hyper_config.model_dims[0] = sum(self.bit_lengths)
+        assert hyper_config.model_dims[-1] == 1, "The last dimension of the hyper_model must be 1"
+        return HyperModel(hyper_config.model_dims, hyper_config.model_act, transform=self.binary_indices_transform)
 
     @staticmethod
     def get_act(act: str):
@@ -143,53 +150,27 @@ class HyperModel(MLP):
     def forward(self, x):
         if self.transform_input:
             x = self.transform(x)
-        return self.network(x)
-
-
-# class BaseModel(MLP):
-#     def __init__(self, dimensions, activation):
-#         super(BaseModel, self).__init__(dimensions, activation)
-
-#     def load_from_hypermodel(self, hypermodel: HyperModel):
-#         """Populate the weights of the base model with the estimated weights from the hypermodel"""
-#         assert hypermodel.treat_input_as_raw_index == True
-#         with torch.no_grad():
-#             for layer_num, layer in enumerate(self.linear_layers):
-#                 print(f"Estimating layer {layer_num}...")
-#                 rows, cols = layer.weight.size()
-
-#                 weight_rowcol_idxs = torch.meshgrid([torch.arange(rows), torch.arange(cols)], indexing='ij')
-#                 weight_rowcol_idxs = torch.stack(weight_rowcol_idxs, dim=-1).view(-1, 2)
-#                 weight_layer_idxs = torch.full((layer.weight.numel(), 1), layer_num)
-#                 weight_idxs = torch.cat([weight_layer_idxs, weight_rowcol_idxs], dim=1)
-
-#                 bias_row_idxs = torch.arange(rows).view(-1, 1)
-#                 bias_col_idxs = torch.full((rows, 1), cols)
-#                 bias_layer_idxs = torch.full((rows, 1), layer_num)
-#                 bias_idxs = torch.cat([bias_layer_idxs, bias_row_idxs, bias_col_idxs], dim=1)
-
-#                 with torch.no_grad():
-#                     layer.weight.data = hypermodel(weight_idxs).view(rows, cols)
-#                     layer.bias.data = hypermodel(bias_idxs).view(rows)
+        return self.network(x).view(-1)
 
 
 class ParameterDataset(Dataset):
     def __init__(self, model: MLP, transform=None):
         super(ParameterDataset, self).__init__()
         self.params = []
-        for layer_num, layer in enumerate(model.linear_layers):
-            weight = layer.weight.detach()
-            bias = layer.bias.detach()
-            for row in range(weight.size(0)):
-                for col in range(weight.size(1) + 1):
-                    x = [layer_num, row, col]
-                    if transform:
-                        x = transform(x)
-                    if col < weight.size(1):  # Weight
-                        y = weight[row, col]
-                    else:  # Bias
-                        y = bias[row]
-                    self.params.append((torch.tensor(x), torch.tensor(y)))
+        with torch.no_grad():
+            for layer_num, layer in enumerate(model.linear_layers):
+                weight = layer.weight.detach()
+                bias = layer.bias.detach()
+                for row in range(weight.size(0)):
+                    for col in range(weight.size(1) + 1):
+                        x = [layer_num, row, col]
+                        if transform:
+                            x = transform(x)
+                        if col < weight.size(1):  # Weight
+                            y = weight[row, col]
+                        else:  # Bias
+                            y = bias[row]
+                        self.params.append((x, y))
 
     def __len__(self):
         return len(self.params)
@@ -197,37 +178,6 @@ class ParameterDataset(Dataset):
     def __getitem__(self, idx):
         return self.params[idx]
 
-
-# class ParameterDatasetBinaryInput(Dataset):
-#     def __init__(self, model: BaseModel):
-#         super(ParameterDatasetBinaryInput, self).__init__()
-#         self.params = []
-#         self.l_b, self.l_r, self.l_c = model.bit_lengths
-#         for layer_num, layer in enumerate(model.linear_layers):
-#             layer_num_binary = to_padded_binary(layer_num, self.l_b)
-#             weight = layer.weight.detach()
-#             bias = layer.bias.detach()
-#             for row in range(weight.size(0)):
-                
-#                 # Weights
-#                 row_binary = to_padded_binary(row, self.l_r)
-#                 for col in range(weight.size(1)):
-#                     col_binary = to_padded_binary(col, self.l_c)
-#                     x = torch.tensor([int(d) for d in layer_num_binary + row_binary + col_binary]) - 0.5
-#                     y = torch.tensor([weight[row, col]])
-#                     self.params.append((x, y))
-
-#                 # Biases
-#                 col_binary = to_padded_binary(weight.size(1), self.l_c)
-#                 x = torch.tensor([int(d) for d in layer_num_binary + row_binary + col_binary]) - 0.5
-#                 y = torch.tensor([bias[row]])
-#                 self.params.append((x, y))
-
-#     def __len__(self):
-#         return len(self.params)
-
-#     def __getitem__(self, idx):
-#         return self.params[idx]
 
 def to_padded_binary(n, b):
     return format(n, f'0{b}b')
