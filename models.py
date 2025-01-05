@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import torch.nn as nn
 import wandb
 
+from copy import deepcopy
+
 from config import Config
 
 
@@ -71,7 +73,7 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
     
-    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, log_name=None, get_accuracy=False):
+    def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, scheduler=None, log_name=None, get_accuracy=False, callback=None):
         for epoch in range(num_epochs):
             for images, labels in train_loader:
                 images = images.view(images.size(0), -1)
@@ -83,12 +85,16 @@ class MLP(nn.Module):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+            if scheduler:
+                scheduler.step()
             test_loss = self.overall_loss(test_loss_fn, test_loader)
             if get_accuracy:
                 test_accuracy = self.overall_accuracy(test_loader)
                 print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}, Test Accuracy: {test_accuracy.item():.4f}')
             else:
                 print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}')
+            if epoch % 10 == 0 and callback:
+                callback(epoch)
         print("Training complete.")
     
     def save(self, path):
@@ -181,3 +187,9 @@ class ParameterDataset(Dataset):
 
 def to_padded_binary(n, b):
     return format(n, f'0{b}b')
+
+
+def get_reconstructed_accuracy(base_model, hyper_model, transform, dataloader):
+    base_model_estimate = deepcopy(base_model)
+    base_model_estimate.load_from_hyper_model(hyper_model, transform=transform)
+    return base_model_estimate.overall_accuracy(dataloader).item()
