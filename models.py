@@ -68,9 +68,7 @@ class LowRankLinear(nn.Linear):
             raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
         self.weight.data = self.low_rank_approxes[rank].clone().detach()
     
-    def forward(self, x, rank=None):
-        if rank:
-            self.set_to_rank(rank)
+    def forward(self, x):
         return super().forward(x)
 
 
@@ -94,7 +92,7 @@ class MLP(nn.Module):
         self.max_cols = max(dimensions[:-1])
         self.max_indices = (self.num_layers - 1, self.max_rows - 1, self.max_cols)  # Extra col is for bias
         self.bit_lengths = (self.num_layers.bit_length(), self.max_rows.bit_length(), self.max_cols.bit_length())
-        self.num_parameters = sum([layer.weight.numel() + layer.bias.numel() for layer in self.linear_layers])
+        self.num_parameters = sum([p.numel() for p in self.parameters()])
 
     def forward(self, x):
         return self.network(x)
@@ -102,14 +100,6 @@ class MLP(nn.Module):
     @property
     def linear_layers(self):
         return (layer for layer in self.network if isinstance(layer, nn.Linear))
-
-    def construct_low_rank_approxes(self):
-        for layer in self.linear_layers:
-            layer.low_rank_approxes = all_low_rank_approxes(layer.weight.clone().detach())
-    
-    def set_to_rank(self, rank):
-        for layer in self.linear_layers:
-            layer.weight.data = layer.low_rank_approxes[rank].clone().detach()
 
     @staticmethod
     def scale_indices(indices, max_indices):
@@ -270,15 +260,3 @@ def get_reconstructed_accuracy(base_model, hyper_model, transform, dataloader):
     base_model_estimate = deepcopy(base_model)
     base_model_estimate.load_from_hyper_model(hyper_model, transform=transform)
     return base_model_estimate.overall_accuracy(dataloader).item()
-
-
-def low_rank_approx(W, rank):
-    U, S, V = torch.svd(W)
-    U = U[:, :rank]
-    S = S[:rank]
-    V = V[:, :rank]
-    return torch.mm(U, torch.mm(torch.diag(S), V.t()))
-
-
-def all_low_rank_approxes(W):
-    return {rank: low_rank_approx(W, rank) for rank in range(1, min(W.shape))}

@@ -36,3 +36,12 @@ hyper_config_binary = Config(
     batch_size=64,
     learning_rate=0.0001
 )
+
+low_rank_config = Config(
+    model_path="trained_models/low_rank_mlp.t",
+    model_dims=[784, 128, 10],
+    model_act="relu",
+    train_epochs=10,
+    batch_size=64,
+    learning_rate=0.001
+)
