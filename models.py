@@ -8,14 +8,83 @@ from copy import deepcopy
 from config import Config
 
 
+class LowRankLinear(nn.Linear):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features, out_features, bias=False)  # The papers don't use bias, I don't know why
+        self._weight_norm = None
+        self._U = None
+        self._S = None
+        self._Vt = None
+        self._low_rank_approxes = None
+        self._spectral_dists = None
+    
+    @property
+    def weight_norm(self):
+        if self._weight_norm is None:
+            self._weight_norm = torch.linalg.norm(self.weight.detach(), ord=2)
+        return self._weight_norm
+
+    @property
+    def U(self):
+        if self._U is None:
+            self.compute_svd()
+        return self._U
+
+    @property
+    def S(self):
+        if self._S is None:
+            self.compute_svd()
+        return self._S
+    
+    @property
+    def Vt(self):
+        if self._Vt is None:
+            self.compute_svd()
+        return self._Vt
+    
+    @property
+    def low_rank_approxes(self):
+        if self._low_rank_approxes is None:
+            self._low_rank_approxes = {rank: self.get_low_rank_approx(rank) for rank in range(1, min(self.weight.shape))}
+        return self._low_rank_approxes
+
+    @property
+    def spectral_dists(self):
+        if self._spectral_dists is None:
+            self._spectral_dists = {rank: torch.linalg.norm(self.low_rank_approxes[rank] - self.weight, ord=2) for rank in range(1, min(self.weight.shape))}
+        return self._spectral_dists
+
+    def compute_svd(self):
+        self._U, self._S, self._Vt = torch.linalg.svd(self.weight.clone().detach())
+
+    def get_low_rank_approx(self, rank):
+        U_trunc = self.U[:, :rank]
+        S_trunc = self.S[:rank]
+        Vt_trunc = self.Vt[:rank, :]
+        return torch.mm(U_trunc, torch.mm(torch.diag(S_trunc), Vt_trunc))
+
+    def set_to_rank(self, rank):
+        if rank < 1 or rank > min(self.weight.shape):
+            raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
+        self.weight.data = self.low_rank_approxes[rank].clone().detach()
+    
+    def forward(self, x, rank=None):
+        if rank:
+            self.set_to_rank(rank)
+        return super().forward(x)
+
+
 class MLP(nn.Module):
-    def __init__(self, dimensions, activation):
+    def __init__(self, dimensions, activation, low_rank=False):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
         self.layers = []
         for i in range(len(dimensions) - 1):
-            self.layers.append(nn.Linear(dimensions[i], dimensions[i + 1]))
+            if low_rank:
+                self.layers.append(LowRankLinear(dimensions[i], dimensions[i + 1]))
+            else:
+                self.layers.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation on the last layer
                 self.layers.append(self.activation())
         self.network = nn.Sequential(*self.layers)
