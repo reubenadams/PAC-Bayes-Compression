@@ -34,6 +34,14 @@ class MLP(nn.Module):
     def linear_layers(self):
         return (layer for layer in self.network if isinstance(layer, nn.Linear))
 
+    def construct_low_rank_approxes(self):
+        for layer in self.linear_layers:
+            layer.low_rank_approxes = all_low_rank_approxes(layer.weight.clone().detach())
+    
+    def set_to_rank(self, rank):
+        for layer in self.linear_layers:
+            layer.weight.data = layer.low_rank_approxes[rank].clone().detach()
+
     @staticmethod
     def scale_indices(indices, max_indices):
         return torch.tensor(indices, dtype=torch.float) / torch.tensor(max_indices, dtype=torch.float) - 0.5
@@ -193,3 +201,15 @@ def get_reconstructed_accuracy(base_model, hyper_model, transform, dataloader):
     base_model_estimate = deepcopy(base_model)
     base_model_estimate.load_from_hyper_model(hyper_model, transform=transform)
     return base_model_estimate.overall_accuracy(dataloader).item()
+
+
+def low_rank_approx(W, rank):
+    U, S, V = torch.svd(W)
+    U = U[:, :rank]
+    S = S[:rank]
+    V = V[:, :rank]
+    return torch.mm(U, torch.mm(torch.diag(S), V.t()))
+
+
+def all_low_rank_approxes(W):
+    return {rank: low_rank_approx(W, rank) for rank in range(1, min(W.shape))}

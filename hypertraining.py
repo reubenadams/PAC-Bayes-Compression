@@ -2,11 +2,11 @@ import os
 from copy import deepcopy
 
 import torch
-from torchvision import datasets, transforms
 import wandb
 
 from models import MLP, get_reconstructed_accuracy
-from config import Config
+from config import base_config, hyper_config_scaled, hyper_config_binary
+from data.MNIST.load_data import train_loader, test_loader
 
 
 to_train = {
@@ -16,33 +16,6 @@ to_train = {
 }
 
 
-base_config = Config(
-    model_path="trained_models/base_mlp.t",
-    model_dims=[784, 128, 10],
-    model_act="relu",
-    train_epochs=10,
-    batch_size=64,
-    learning_rate=0.001
-)
-
-hyper_config_scaled = Config(
-    model_path="trained_models/hyper_mlp_scaled.t",
-    model_dims=[3, 1024, 1],
-    model_act="relu",
-    train_epochs=30,
-    batch_size=64,
-    learning_rate=0.01
-)
-
-hyper_config_binary = Config(
-    model_path="trained_models/hyper_mlp_binary.t",
-    model_dims=[3, 64, 512, 64, 1],
-    model_act="relu",
-    train_epochs=1001,
-    batch_size=64,
-    learning_rate=0.0001
-)
-
 base_model_estimate_scaled_path = "trained_models/base_mlp_estimate_scaled.t"
 base_model_estimate_binary_path = "trained_models/base_mlp_estimate_binary.t"
 
@@ -50,12 +23,6 @@ base_model_estimate_binary_path = "trained_models/base_mlp_estimate_binary.t"
 wandb.init(project="hypertraining", name=f"Base: dims={base_config.model_dims}, Hyper binary: dims={hyper_config_binary.model_dims}, act={hyper_config_binary.model_act} lr={hyper_config_binary.learning_rate}")
 
 os.makedirs("trained_models", exist_ok=True)
-
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=base_config.batch_size, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=base_config.batch_size, shuffle=False)
 
 
 base_model = MLP(base_config.model_dims, base_config.model_act)
