@@ -45,13 +45,13 @@ class LowRankLinear(nn.Linear):
     @property
     def low_rank_approxes(self):
         if self._low_rank_approxes is None:
-            self._low_rank_approxes = {rank: self.get_low_rank_approx(rank) for rank in range(1, min(self.weight.shape))}
+            self._low_rank_approxes = {rank: self.get_low_rank_approx(rank) for rank in range(1, min(self.weight.shape) + 1)}
         return self._low_rank_approxes
 
     @property
     def spectral_dists(self):
         if self._spectral_dists is None:
-            self._spectral_dists = {rank: torch.linalg.norm(self.low_rank_approxes[rank] - self.weight, ord=2) for rank in range(1, min(self.weight.shape))}
+            self._spectral_dists = {rank: torch.linalg.norm(self.low_rank_approxes[rank] - self.weight, ord=2) for rank in range(1, min(self.weight.shape) + 1)}
         return self._spectral_dists
 
     def compute_svd(self):
@@ -99,7 +99,7 @@ class MLP(nn.Module):
     
     @property
     def linear_layers(self):
-        return (layer for layer in self.network if isinstance(layer, nn.Linear))
+        return [layer for layer in self.network if isinstance(layer, nn.Linear)]
 
     @staticmethod
     def scale_indices(indices, max_indices):

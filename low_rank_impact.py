@@ -1,13 +1,17 @@
 import os
 from copy import deepcopy
+from itertools import product
 
 import torch
 import wandb
 
 from models import MLP
 from config import low_rank_config
-from data.MNIST.load_data import train_loader, test_loader
+from data.MNIST.load_data import train_loader, test_loader, get_B
 
+
+max_fro_norm = get_B(train_loader)
+print(f"Max Frobenius norm of training data: {max_fro_norm.item()}")
 
 wandb.init(project="Low rank impact", name=f"Model dims: {low_rank_config.model_dims}")
 
@@ -37,8 +41,15 @@ except FileNotFoundError:
 
 
 
+print("Calculating low rank approxes")
+for layer in model.linear_layers:
+    layer.low_rank_approxes
+print("Finished calculating low rank approxes")
 
-model.construct_low_rank_approxes()
-for rank in range(2, 30):
-    model.set_to_rank(rank)
-    wandb.log({"rank": rank, "accuracy": model.overall_accuracy(test_loader).item()})
+
+layer_rank_ranges = [range(1, min(layer.weight.shape) + 1) for layer in model.linear_layers]
+for ranks in product(*layer_rank_ranges):
+    for layer, rank in zip(model.linear_layers, ranks):
+        layer.set_to_rank(rank)
+    wandb.log({"ranks": ranks, "accuracy": model.overall_accuracy(test_loader).item()})
+    print(f"Ranks: {ranks}, Accuracy: {model.overall_accuracy(test_loader).item()}")
