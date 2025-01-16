@@ -23,7 +23,7 @@ hyper_config_scaled = Config(
     model_path="trained_models/hyper_mlp_scaled.t",
     model_dims=[3, 1024, 1],
     model_act="relu",
-    train_epochs=30,
+    train_epochs=10,
     batch_size=64,
     learning_rate=0.01
 )
@@ -32,7 +32,7 @@ hyper_config_binary = Config(
     model_path="trained_models/hyper_mlp_binary.t",
     model_dims=[3, 64, 512, 64, 1],
     model_act="relu",
-    train_epochs=1001,
+    train_epochs=10,
     batch_size=64,
     learning_rate=0.0001
 )

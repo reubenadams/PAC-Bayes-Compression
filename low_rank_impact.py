@@ -5,7 +5,7 @@ from itertools import product
 import torch
 import wandb
 
-from models import MLP
+from models import LowRankMLP
 from config import low_rank_config
 from data.MNIST.load_data import train_loader, test_loader, get_B
 
@@ -15,7 +15,7 @@ print(f"Max Frobenius norm of training data: {max_fro_norm.item()}")
 
 wandb.init(project="Low rank impact", name=f"Model dims: {low_rank_config.model_dims}")
 
-model = MLP(low_rank_config.model_dims, low_rank_config.model_act, low_rank=True)
+model = LowRankMLP(low_rank_config.model_dims, low_rank_config.model_act, low_rank=True)
 
 
 try:
@@ -40,16 +40,19 @@ except FileNotFoundError:
 
 
 
-
 print("Calculating low rank approxes")
 for layer in model.linear_layers:
     layer.low_rank_approxes
 print("Finished calculating low rank approxes")
 
 
-layer_rank_ranges = [range(1, min(layer.weight.shape) + 1) for layer in model.linear_layers]
+layer_rank_ranges = [range(1, min(layer.weight.shape) + 1, 3) for layer in model.linear_layers]
 for ranks in product(*layer_rank_ranges):
     for layer, rank in zip(model.linear_layers, ranks):
         layer.set_to_rank(rank)
-    wandb.log({"ranks": ranks, "accuracy": model.overall_accuracy(test_loader).item()})
-    print(f"Ranks: {ranks}, Accuracy: {model.overall_accuracy(test_loader).item()}")
+    accuracy = model.overall_accuracy(test_loader).item()
+    num_params = sum([layer.low_rank_num_params[rank] for layer, rank in zip(model.linear_layers, ranks)])
+    min_weight = min([layer.low_rank_min_weights[rank] for layer, rank in zip(model.linear_layers, ranks)])
+    max_weight = max([layer.low_rank_max_weights[rank] for layer, rank in zip(model.linear_layers, ranks)])
+    wandb.log({"ranks": ranks, "num_params": num_params, "min_weight": {min_weight}, "max_weight": {max_weight}, "accuracy": accuracy})
+    print(f"Ranks: {ranks}, Num params: {num_params}, Min weight: {min_weight.item():.4f}, Max weight: {max_weight:.4f} Accuracy: {model.overall_accuracy(test_loader).item():.4f}")

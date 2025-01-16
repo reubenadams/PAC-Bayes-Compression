@@ -4,14 +4,14 @@ from copy import deepcopy
 import torch
 import wandb
 
-from models import MLP, get_reconstructed_accuracy
+from models import BaseMLP, get_reconstructed_accuracy
 from config import base_config, hyper_config_scaled, hyper_config_binary
 from data.MNIST.load_data import train_loader, test_loader
 
 
 to_train = {
-    "base": False,
-    "hyper_scaled": False,
+    "base": True,
+    "hyper_scaled": True,
     "hyper_binary": True,
 }
 
@@ -25,7 +25,7 @@ wandb.init(project="hypertraining", name=f"Base: dims={base_config.model_dims}, 
 os.makedirs("trained_models", exist_ok=True)
 
 
-base_model = MLP(base_config.model_dims, base_config.model_act)
+base_model = BaseMLP(base_config.model_dims, base_config.model_act)
 hyper_model_scaled = base_model.get_hyper_model_scaled_input(hyper_config_scaled)
 print(f"hyper config binary dims: {hyper_config_binary.model_dims}")
 hyper_model_binary = base_model.get_hyper_model_binary_input(hyper_config_binary)

@@ -4,6 +4,7 @@ import torch.nn as nn
 import wandb
 
 from copy import deepcopy
+from itertools import product
 
 from config import Config
 
@@ -11,18 +12,30 @@ from config import Config
 class LowRankLinear(nn.Linear):
     def __init__(self, in_features, out_features):
         super().__init__(in_features, out_features, bias=False)  # The papers don't use bias, I don't know why
-        self._weight_norm = None
+        self._weight_spectral_norm = None
+
         self._U = None
         self._S = None
         self._Vt = None
-        self._low_rank_approxes = None
-        self._spectral_dists = None
+
+        self._U_truncs = None
+        self._S_truncs = None
+        self._Vt_truncs = None
+
+        self._low_rank_Ws = None
+        self._perturbation_spectral_norms = None
+
+        self._USV_num_params = None
+        self._UV_min = None
+        self._UV_max = None
+        self._S_min = None
+        self._S_max = None
     
     @property
-    def weight_norm(self):
-        if self._weight_norm is None:
-            self._weight_norm = torch.linalg.norm(self.weight.detach(), ord=2)
-        return self._weight_norm
+    def weight_spectral_norm(self):
+        if self._weight_spectral_norm is None:
+            self._weight_spectral_norm = torch.linalg.norm(self.weight.detach(), ord=2)
+        return self._weight_spectral_norm
 
     @property
     def U(self):
@@ -43,33 +56,76 @@ class LowRankLinear(nn.Linear):
         return self._Vt
     
     @property
-    def low_rank_approxes(self):
-        if self._low_rank_approxes is None:
-            self._low_rank_approxes = {rank: self.get_low_rank_approx(rank) for rank in range(1, min(self.weight.shape) + 1)}
-        return self._low_rank_approxes
+    def U_truncs(self):
+        if self._U_truncs is None:
+            self._U_truncs = {rank: self.U[:, :rank] for rank in range(1, min(self.weight.shape) + 1)}
+        return self._U_truncs
 
     @property
-    def spectral_dists(self):
-        if self._spectral_dists is None:
-            self._spectral_dists = {rank: torch.linalg.norm(self.low_rank_approxes[rank] - self.weight, ord=2) for rank in range(1, min(self.weight.shape) + 1)}
-        return self._spectral_dists
+    def S_truncs(self):
+        if self._S_truncs is None:
+            self._S_truncs = {rank: self.S[:rank] for rank in range(1, min(self.weight.shape) + 1)}
+        return self._S_truncs
+    
+    @property
+    def Vt_truncs(self):
+        if self._Vt_truncs is None:
+            self._Vt_truncs = {rank: self.Vt[:rank, :] for rank in range(1, min(self.weight.shape) + 1)}
+        return self._Vt_truncs
+
+    @property
+    def low_rank_Ws(self):
+        if self._low_rank_Ws is None:
+            self._low_rank_Ws = {rank: torch.mm(self.U_truncs[rank], torch.mm(torch.diag(self.S_truncs[rank]), self.Vt_truncs[rank])) for rank in range(1, min(self.weight.shape))}
+            self._low_rank_Ws[min(self.weight.shape)] = self.weight.clone().detach()  # Last one stores the original weights
+        return self._low_rank_Ws
+
+    @property
+    def perturbation_spectral_norms(self):
+        if self._perturbation_spectral_norms is None:
+            self._perturbation_spectral_norms = {rank: torch.linalg.norm(self.low_rank_Ws[rank] - self.low_rank_Ws[rank][-1], ord=2) for rank in range(1, min(self.weight.shape) + 1)}
+        return self._perturbation_spectral_norms
+
+    @property
+    def USV_num_params(self):
+        if self._USV_num_params is None:
+            self._USV_num_params = {rank: self.U_truncs[rank].numel() + self.S_truncs[rank].numel() + self.Vt_truncs[rank].numel() for rank in range(1, min(self.weight.shape) + 1)}
+
+    @property
+    def UV_min(self):
+        if self._UV_min is None:
+            self._UV_min = {rank: min(self.U_truncs[rank].min(), self.Vt_truncs[rank].min()) for rank in range(1, min(self.weight.shape) + 1)}
+        return self._UV_min
+
+    @property
+    def UV_max(self):
+        if self._UV_max is None:
+            self._UV_max = {rank: max(self.U_truncs[rank].max(), self.Vt_truncs[rank].max()) for rank in range(1, max(self.weight.shape) + 1)}
+        return self._UV_max
+
+    @property
+    def S_min(self):
+        if self._S_min is None:
+            self._S_min = {rank: self.S_truncs[rank].min() for rank in range(1, min(self.weight.shape) + 1)}
+        return self._S_min
+    
+    @property
+    def S_max(self):
+        if self._S_max is None:
+            self._S_max = {rank: self.S_truncs[rank].max() for rank in range(1, min(self.weight.shape) + 1)}
+        return self._S_max
 
     def compute_svd(self):
         self._U, self._S, self._Vt = torch.linalg.svd(self.weight.clone().detach())
 
-    def get_low_rank_approx(self, rank):
-        U_trunc = self.U[:, :rank]
-        S_trunc = self.S[:rank]
-        Vt_trunc = self.Vt[:rank, :]
-        return torch.mm(U_trunc, torch.mm(torch.diag(S_trunc), Vt_trunc))
-
     def set_to_rank(self, rank):
         if rank < 1 or rank > min(self.weight.shape):
             raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
-        self.weight.data = self.low_rank_approxes[rank].clone().detach()
+        self.weight.data = self.low_rank_Ws[rank]
     
-    def forward(self, x):
-        return super().forward(x)
+    def valid_ranks(self, num_layers):
+        """Returns the ranks for which the perturbation matches the requirements of Lemma 2 in the paper"""
+        return [rank for rank in range(1, min(self.weight.shape) + 1) if num_layers * self.perturbation_spectral_norms[rank] <= self.weight_spectral_norm]
 
 
 class MLP(nn.Module):
@@ -86,12 +142,6 @@ class MLP(nn.Module):
             if i < len(dimensions) - 2:  # No activation on the last layer
                 self.layers.append(self.activation())
         self.network = nn.Sequential(*self.layers)
-
-        self.num_layers = len(dimensions) - 1
-        self.max_rows = max(dimensions[1:])
-        self.max_cols = max(dimensions[:-1])
-        self.max_indices = (self.num_layers - 1, self.max_rows - 1, self.max_cols)  # Extra col is for bias
-        self.bit_lengths = (self.num_layers.bit_length(), self.max_rows.bit_length(), self.max_cols.bit_length())
         self.num_parameters = sum([p.numel() for p in self.parameters()])
 
     def forward(self, x):
@@ -100,27 +150,6 @@ class MLP(nn.Module):
     @property
     def linear_layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
-
-    @staticmethod
-    def scale_indices(indices, max_indices):
-        return torch.tensor(indices, dtype=torch.float) / torch.tensor(max_indices, dtype=torch.float) - 0.5
-
-    @property
-    def scale_indices_transform(self):
-        max_indices = [max(1, idx) for idx in self.max_indices]  # To avoid division by zero if there is only one layer/row/col
-        return lambda indices: self.scale_indices(indices, max_indices)
-
-    @staticmethod
-    def binary_indices(indices, bit_lengths):
-        binary_string = ''.join([to_padded_binary(idx, num_bits) for idx, num_bits in zip(indices, bit_lengths)])
-        return torch.tensor([int(d) for d in binary_string], dtype=torch.float) - 0.5
-
-    @property
-    def binary_indices_transform(self):
-        return lambda indices: self.binary_indices(indices, self.bit_lengths)
-
-    def get_parameter_dataset(self, transform=None):
-        return ParameterDataset(self, transform)
 
     def overall_loss(self, loss_fn, dataloader):
         assert loss_fn.reduction == 'sum'
@@ -140,6 +169,19 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
     
+    def margin_loss(self, dataloader, margin, take_softmax=False):
+        total_margin_loss = torch.tensor(0.)
+        for x, labels in dataloader:
+            x = x.view(x.size(0), -1)
+            outputs = self(x)
+            if take_softmax:
+                outputs = nn.functional.softmax(outputs, dim=-1)
+            target_values = outputs[torch.arange(outputs.size(0)), labels]
+            outputs[torch.arange(outputs.size(0)), labels] = -torch.inf
+            max_non_target_values, _ = outputs.max(dim=-1)
+            total_margin_loss += (target_values <= margin + max_non_target_values).sum()
+        return total_margin_loss / len(dataloader.dataset)
+
     def train(self, train_loss_fn, test_loss_fn, optimizer, train_loader, test_loader, num_epochs, scheduler=None, log_name=None, get_accuracy=False, callback=None):
         for epoch in range(num_epochs):
             for images, labels in train_loader:
@@ -169,6 +211,134 @@ class MLP(nn.Module):
 
     def load(self, path):
         self.load_state_dict(torch.load(path, weights_only=True))
+
+    @staticmethod
+    def get_act(act: str):
+        if act == "relu":
+            return nn.ReLU
+        elif act == "sigmoid":
+            return nn.Sigmoid
+        elif act == "tanh":
+            return nn.Tanh
+        elif act == "leaky_relu":
+            return nn.LeakyReLU
+        else:
+            raise ValueError("Invalid activation function")
+    
+ 
+ # TODO: Implement the KL divergence
+class LowRankMLP(MLP):
+    def __init__(self, dimensions, activation):
+        super().__init__(self, dimensions, activation, low_rank=True)  # Note this will have no bias in the layers
+        self.rank_combs = list(product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers]))
+        self._product_weight_spectral_norms = None
+        self._valid_rank_combs = None
+        self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
+        self._num_params = None
+        self._min_UVs = None
+        self._max_UVs = None
+        self._min_Ss = None
+        self._max_Ss = None
+        self._KL_divergences = None
+
+    @property
+    def product_weight_spectral_norms(self):
+        if self._product_weight_spectral_norms is None:
+            self._product_weight_spectral_norms = torch.tensor([layer.weight_spectral_norm for layer in self.linear_layers]).prod()
+        return self._product_weight_spectral_norms
+
+    @property
+    def valid_rank_combs(self):
+        if self._valid_rank_combs is None:
+            self._valid_rank_combs = {}
+            for rank_comb in self.rank_combs:
+                self._valid_rank_combs[rank_comb] = all([layer.perturbation_spectral_norms[rank] <= layer.weight_spectral_norm / len(self.layers) for rank, layer in zip(rank_comb, self.layers)])
+        return self._valid_rank_combs
+
+    @property
+    def epsilons(self):
+        if self._epsilons is None:
+            self._epsilons = {}
+            for rank_comb in self.rank_combs:
+                norm_ratios = [layer.perturbation_spectral_norms[rank] / layer.weight_spectral_norm for rank, layer in zip(rank_comb, self.layers)]
+                self._epsilons[rank_comb] = torch.e * self.product_weight_spectral_norms * sum(norm_ratios)
+        return self._epsilons
+
+    @property
+    def num_params(self):
+        if self._num_params is None:
+            self._num_params = {}
+            for rank_comb in self.rank_combs:
+                self._num_params[rank_comb] = sum(layer._USV_num_params[rank] for rank, layer in zip(rank_comb, self.layers))
+        return self._num_params
+
+    @property
+    def min_UVs(self):
+        if self._min_UVs is None:
+            self._min_UVs = {}
+            for rank_comb in self.rank_combs:
+                self._min_UVs[rank_comb] = min(layer.UV_min[rank] for rank, layer in zip(rank_comb, self.layers))
+        return self._min_UVs
+
+    @property
+    def max_UVs(self):
+        if self._max_UVs is None:
+            self._max_UVs = {}
+            for rank_comb in self.rank_combs:
+                self._max_UVs[rank_comb] = max(layer.UV_max[rank] for rank, layer in zip(rank_comb, self.layers))
+        return self._max_UVs
+
+    @property
+    def min_Ss(self):
+        if self._min_Ss is None:
+            self._min_Ss = {}
+            for rank_comb in self.rank_combs:
+                self._min_Ss[rank_comb] = min(layer.S_min[rank] for rank, layer in zip(rank_comb, self.layers))
+        return self._min_Ss
+
+    @property
+    def max_Ss(self):
+        if self._max_Ss is None:
+            self._max_Ss = {}
+            for rank_comb in self.rank_combs:
+                self._max_Ss[rank_comb] = max(layer.S_max[rank] for rank, layer in zip(rank_comb, self.layers))
+        return self._max_Ss
+
+    def set_to_ranks(self, ranks):
+        for layer, rank in zip(self.linear_layers, ranks):
+            layer.set_to_rank(rank)
+    
+
+class BaseMLP(MLP):
+    def __init__(self, dimensions, activation):
+        super().__init__(dimensions, activation, low_rank=False)
+
+        self.num_layers = len(dimensions) - 1
+        self.max_rows = max(dimensions[1:])
+        self.max_cols = max(dimensions[:-1])
+        self.max_indices = (self.num_layers - 1, self.max_rows - 1, self.max_cols)  # Extra col is for bias
+        self.bit_lengths = (self.num_layers.bit_length(), self.max_rows.bit_length(), self.max_cols.bit_length())
+
+    @staticmethod
+    def scale_indices(indices, max_indices):
+        return torch.tensor(indices, dtype=torch.float) / torch.tensor(max_indices, dtype=torch.float) - 0.5
+
+    @property
+    def scale_indices_transform(self):
+        max_indices = [max(1, idx) for idx in self.max_indices]  # To avoid division by zero if there is only one layer/row/col
+        return lambda indices: self.scale_indices(indices, max_indices)
+
+    @staticmethod
+    def binary_indices(indices, bit_lengths):
+        binary_string = ''.join([to_padded_binary(idx, num_bits) for idx, num_bits in zip(indices, bit_lengths)])
+        return torch.tensor([int(d) for d in binary_string], dtype=torch.float) - 0.5
+
+    @property
+    def binary_indices_transform(self):
+        return lambda indices: self.binary_indices(indices, self.bit_lengths)
+
+    def get_parameter_dataset(self, transform=None):
+        return ParameterDataset(self, transform)
 
     def load_from_hyper_model(self, hyper_model, transform=None):
         """Populate the weights of the base model with the estimated weights from the hyper_model"""
@@ -200,23 +370,11 @@ class MLP(nn.Module):
         assert hyper_config.model_dims[-1] == 1, "The last dimension of the hyper_model must be 1"
         return HyperModel(hyper_config.model_dims, hyper_config.model_act, transform=self.binary_indices_transform)
 
-    @staticmethod
-    def get_act(act: str):
-        if act == "relu":
-            return nn.ReLU
-        elif act == "sigmoid":
-            return nn.Sigmoid
-        elif act == "tanh":
-            return nn.Tanh
-        elif act == "leaky_relu":
-            return nn.LeakyReLU
-        else:
-            raise ValueError("Invalid activation function")
 
-
+# Do you want to inherit from BaseMLP or MLP?
 class HyperModel(MLP):
     def __init__(self, dimensions, activation, transform=None, transform_input=False):
-        super(HyperModel, self).__init__(dimensions, activation)
+        super().__init__(dimensions, activation)
         self.transform = transform
         self.transform_input = transform_input
 
