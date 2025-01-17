@@ -76,20 +76,21 @@ class LowRankLinear(nn.Linear):
     @property
     def low_rank_Ws(self):
         if self._low_rank_Ws is None:
-            self._low_rank_Ws = {rank: torch.mm(self.U_truncs[rank], torch.mm(torch.diag(self.S_truncs[rank]), self.Vt_truncs[rank])) for rank in range(1, min(self.weight.shape))}
+            self._low_rank_Ws = {rank: self.U_truncs[rank] @ torch.diag(self.S_truncs[rank]) @ self.Vt_truncs[rank] for rank in range(1, min(self.weight.shape))}
             self._low_rank_Ws[min(self.weight.shape)] = self.weight.clone().detach()  # Last one stores the original weights
         return self._low_rank_Ws
 
     @property
     def perturbation_spectral_norms(self):
         if self._perturbation_spectral_norms is None:
-            self._perturbation_spectral_norms = {rank: torch.linalg.norm(self.low_rank_Ws[rank] - self.low_rank_Ws[rank][-1], ord=2) for rank in range(1, min(self.weight.shape) + 1)}
+            self._perturbation_spectral_norms = {rank: torch.linalg.norm(self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)], ord=2) for rank in range(1, min(self.weight.shape) + 1)}
         return self._perturbation_spectral_norms
 
     @property
     def USV_num_params(self):
         if self._USV_num_params is None:
             self._USV_num_params = {rank: self.U_truncs[rank].numel() + self.S_truncs[rank].numel() + self.Vt_truncs[rank].numel() for rank in range(1, min(self.weight.shape) + 1)}
+        return self._USV_num_params
 
     @property
     def UV_min(self):
@@ -100,7 +101,7 @@ class LowRankLinear(nn.Linear):
     @property
     def UV_max(self):
         if self._UV_max is None:
-            self._UV_max = {rank: max(self.U_truncs[rank].max(), self.Vt_truncs[rank].max()) for rank in range(1, max(self.weight.shape) + 1)}
+            self._UV_max = {rank: max(self.U_truncs[rank].max(), self.Vt_truncs[rank].max()) for rank in range(1, min(self.weight.shape) + 1)}
         return self._UV_max
 
     @property
@@ -133,22 +134,22 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
-        self.layers = []
+        self.network_modules = []
         for i in range(len(dimensions) - 1):
             if low_rank:
-                self.layers.append(LowRankLinear(dimensions[i], dimensions[i + 1]))
+                self.network_modules.append(LowRankLinear(dimensions[i], dimensions[i + 1]))
             else:
-                self.layers.append(nn.Linear(dimensions[i], dimensions[i + 1]))
+                self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation on the last layer
-                self.layers.append(self.activation())
-        self.network = nn.Sequential(*self.layers)
+                self.network_modules.append(self.activation())
+        self.network = nn.Sequential(*self.network_modules)
         self.num_parameters = sum([p.numel() for p in self.parameters()])
 
     def forward(self, x):
         return self.network(x)
     
     @property
-    def linear_layers(self):
+    def layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
 
     def overall_loss(self, loss_fn, dataloader):
@@ -229,7 +230,7 @@ class MLP(nn.Module):
  # TODO: Implement the KL divergence
 class LowRankMLP(MLP):
     def __init__(self, dimensions, activation):
-        super().__init__(self, dimensions, activation, low_rank=True)  # Note this will have no bias in the layers
+        super().__init__(dimensions, activation, low_rank=True)  # Note this will have no bias in the layers
         self.rank_combs = list(product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers]))
         self._product_weight_spectral_norms = None
         self._valid_rank_combs = None
@@ -244,7 +245,7 @@ class LowRankMLP(MLP):
     @property
     def product_weight_spectral_norms(self):
         if self._product_weight_spectral_norms is None:
-            self._product_weight_spectral_norms = torch.tensor([layer.weight_spectral_norm for layer in self.linear_layers]).prod()
+            self._product_weight_spectral_norms = torch.tensor([layer.weight_spectral_norm for layer in self.layers]).prod()
         return self._product_weight_spectral_norms
 
     @property
@@ -269,7 +270,7 @@ class LowRankMLP(MLP):
         if self._num_params is None:
             self._num_params = {}
             for rank_comb in self.rank_combs:
-                self._num_params[rank_comb] = sum(layer._USV_num_params[rank] for rank, layer in zip(rank_comb, self.layers))
+                self._num_params[rank_comb] = sum(layer.USV_num_params[rank] for rank, layer in zip(rank_comb, self.layers))
         return self._num_params
 
     @property
@@ -305,7 +306,7 @@ class LowRankMLP(MLP):
         return self._max_Ss
 
     def set_to_ranks(self, ranks):
-        for layer, rank in zip(self.linear_layers, ranks):
+        for layer, rank in zip(self.layers, ranks):
             layer.set_to_rank(rank)
     
 
@@ -343,7 +344,7 @@ class BaseMLP(MLP):
     def load_from_hyper_model(self, hyper_model, transform=None):
         """Populate the weights of the base model with the estimated weights from the hyper_model"""
         with torch.no_grad():
-            for layer_num, layer in enumerate(self.linear_layers):
+            for layer_num, layer in enumerate(self.layers):
                 for row in range(layer.weight.size(0)):
                     for col in range(layer.weight.size(1) + 1):
 
@@ -389,7 +390,7 @@ class ParameterDataset(Dataset):
         super(ParameterDataset, self).__init__()
         self.params = []
         with torch.no_grad():
-            for layer_num, layer in enumerate(model.linear_layers):
+            for layer_num, layer in enumerate(model.layers):
                 weight = layer.weight.detach()
                 bias = layer.bias.detach()
                 for row in range(weight.size(0)):
