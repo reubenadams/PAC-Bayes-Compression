@@ -164,3 +164,4 @@ cython_debug/
 
 trained_models/
 wandb/
+data/
