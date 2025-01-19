@@ -201,6 +201,7 @@ class MLP(nn.Module):
             if get_accuracy:
                 test_accuracy = self.overall_accuracy(test_loader)
                 print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}, Test Accuracy: {test_accuracy.item():.4f}')
+                wandb.log({"Epoch": epoch, "Test Loss": test_loss, "Test Accuracy": test_accuracy})
             else:
                 print(f'Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}')
             if epoch % 10 == 0 and callback:
