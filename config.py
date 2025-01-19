@@ -8,40 +8,55 @@ class Config:
     train_epochs: int
     batch_size: int
     learning_rate: float
+    dataset: str
 
 
-base_config = Config(
-    model_path="trained_models/base_mlp.t",
+base_mnist_config = Config(
+    model_path="trained_models/mnist_base_mlp.t",
     model_dims=[784, 128, 10],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
-    learning_rate=0.001
+    learning_rate=0.001,
+    dataset="MNIST"
 )
 
-hyper_config_scaled = Config(
-    model_path="trained_models/hyper_mlp_scaled.t",
+hyper_mnist_config_scaled = Config(
+    model_path="trained_models/mnist_hyper_mlp_scaled.t",
     model_dims=[3, 1024, 1],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
-    learning_rate=0.01
+    learning_rate=0.01,
+    dataset="MNIST"
 )
 
-hyper_config_binary = Config(
-    model_path="trained_models/hyper_mlp_binary.t",
+hyper_mnist_config_binary = Config(
+    model_path="trained_models/mnist_hyper_mlp_binary.t",
     model_dims=[3, 64, 512, 64, 1],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
-    learning_rate=0.0001
+    learning_rate=0.0001,
+    dataset="MNIST"
 )
 
-low_rank_config = Config(
-    model_path="trained_models/low_rank_mlp.t",
+low_rank_mnist_config = Config(
+    model_path="trained_models/mnist_low_rank_mlp.t",
     model_dims=[784, 128, 10],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
-    learning_rate=0.001
+    learning_rate=0.001,
+    dataset="MNIST"
+)
+
+low_rank_CIFAR100_config = Config(
+    model_path="trained_models/cifar100_low_rank_mlp.t",
+    model_dims=[100, 100, 100],
+    model_act="relu",
+    train_epochs=100,
+    batch_size=64,
+    learning_rate=0.001,
+    dataset="CIFAR100"
 )
