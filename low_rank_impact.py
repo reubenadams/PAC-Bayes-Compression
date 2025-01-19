@@ -48,7 +48,7 @@ for margin in torch.linspace(0, 25, 251):
     if margin <= 1:
         margin_loss_probs = model.margin_loss(test_loader, margin, take_softmax=True)
         wandb.log({"Margin": margin, "Margin loss probs": margin_loss_probs})
-assert False
+
 
 
 for rank_comb in model.rank_combs:
