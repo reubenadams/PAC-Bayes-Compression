@@ -9,13 +9,20 @@ from config import low_rank_CIFAR100_config as model_config
 from load_data import get_dataloaders, get_B
 
 
-train_loader, test_loader = get_dataloaders(model_config.dataset, model_config.batch_size, shrink_test_dataset=True)
+os.makedirs("trained_models", exist_ok=True)
+
+train_loader, test_loader = get_dataloaders(
+    model_config.dataset, model_config.batch_size, shrink_test_dataset=True
+)
 
 max_fro_norm = get_B(train_loader)
 # max_fro_norm = torch.tensor(28.)  # Reinstate previous line
 print(f"Max Frobenius norm of training data: {max_fro_norm.item()}")
 
-wandb.init(project="Margin loss against margin, CIFAR", name=f"Model dims: {model_config.model_dims}")
+wandb.init(
+    project="Margin loss against margin, CIFAR",
+    name=f"Model dims: {model_config.model_dims}",
+)
 
 model = LowRankMLP(model_config.model_dims, model_config.model_act)
 
@@ -25,8 +32,8 @@ try:
     print(f"File {model_config.model_path} found. Loading model...")
 except FileNotFoundError:
     print(f"File {model_config.model_path} not found. Training model...")
-    base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
-    base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction='sum')
+    base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
+    base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
     base_optimizer = torch.optim.Adam(model.parameters(), lr=model_config.learning_rate)
     model.train(
         train_loss_fn=base_train_loss_fn,
@@ -36,8 +43,8 @@ except FileNotFoundError:
         test_loader=test_loader,
         num_epochs=model_config.train_epochs,
         log_name="base_train_loss",
-        get_accuracy=True
-        )
+        get_accuracy=True,
+    )
     model.save(model_config.model_path)
 
 
@@ -50,7 +57,6 @@ for margin in torch.linspace(0, 25, 251):
         wandb.log({"Margin": margin, "Margin loss probs": margin_loss_probs})
 
 
-
 for rank_comb in model.rank_combs:
     if model.valid_rank_combs[rank_comb]:
         print(f"rank_comb: {rank_comb}")
@@ -61,5 +67,18 @@ for rank_comb in model.rank_combs:
         min_Ss = model.min_Ss[rank_comb]
         max_Ss = model.max_Ss[rank_comb]
         model.set_to_ranks(rank_comb)
-        margin_loss = model.margin_loss(test_loader, margin=torch.sqrt(torch.tensor(2.)) * eps, take_softmax=True)
-        wandb.log({"ranks": rank_comb, "num_params": num_params, "min_UVs": min_UVs, "max_UVs": max_UVs, "min_Ss": min_Ss, "max_Ss": max_Ss, "eps": eps, "margin_loss": margin_loss})
+        margin_loss = model.margin_loss(
+            test_loader, margin=torch.sqrt(torch.tensor(2.0)) * eps, take_softmax=True
+        )
+        wandb.log(
+            {
+                "ranks": rank_comb,
+                "num_params": num_params,
+                "min_UVs": min_UVs,
+                "max_UVs": max_UVs,
+                "min_Ss": min_Ss,
+                "max_Ss": max_Ss,
+                "eps": eps,
+                "margin_loss": margin_loss,
+            }
+        )

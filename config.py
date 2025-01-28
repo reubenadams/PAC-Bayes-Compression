@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class Config:
     model_path: str
@@ -18,7 +19,7 @@ base_mnist_config = Config(
     train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
-    dataset="MNIST"
+    dataset="MNIST",
 )
 
 hyper_mnist_config_scaled = Config(
@@ -28,7 +29,7 @@ hyper_mnist_config_scaled = Config(
     train_epochs=10,
     batch_size=64,
     learning_rate=0.01,
-    dataset="MNIST"
+    dataset="MNIST",
 )
 
 hyper_mnist_config_binary = Config(
@@ -38,7 +39,7 @@ hyper_mnist_config_binary = Config(
     train_epochs=10,
     batch_size=64,
     learning_rate=0.0001,
-    dataset="MNIST"
+    dataset="MNIST",
 )
 
 low_rank_mnist_config = Config(
@@ -48,7 +49,7 @@ low_rank_mnist_config = Config(
     train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
-    dataset="MNIST"
+    dataset="MNIST",
 )
 
 low_rank_CIFAR100_config = Config(
@@ -58,5 +59,25 @@ low_rank_CIFAR100_config = Config(
     train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
-    dataset="CIFAR100"
+    dataset="CIFAR100",
+)
+
+full_mnist_config = Config(
+    model_path="trained_models/mnist_full_mlp.t",
+    model_dims=[784, 32, 10],
+    model_act="relu",
+    train_epochs=10,
+    batch_size=64,
+    learning_rate=0.001,
+    dataset="MNIST",
+)
+
+dist_data_mnist_config = Config(
+    model_path="trained_models/mnist_dist_data_mlp.t",
+    model_dims=[784, 32, 10],
+    model_act="relu",
+    train_epochs=10,
+    batch_size=64,
+    learning_rate=0.001,
+    dataset="MNIST",
 )

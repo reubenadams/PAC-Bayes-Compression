@@ -1,0 +1,66 @@
+import os
+
+import torch
+import wandb
+
+from models import MLP
+from config import full_mnist_config, dist_data_mnist_config
+from load_data import get_dataloaders
+
+
+os.makedirs("trained_models", exist_ok=True)
+
+train_loader, test_loader = get_dataloaders(
+    full_mnist_config.dataset, full_mnist_config.batch_size, shrink_test_dataset=True
+)
+
+wandb.init(
+    project="Distillation",
+    name=f"Distilling into same architecture: {full_mnist_config.model_dims}",
+)
+
+full_model = MLP(full_mnist_config.model_dims, full_mnist_config.model_act)
+dist_data_model = MLP(full_mnist_config.model_dims, dist_data_mnist_config.model_act)
+
+
+try:
+    full_model.load(full_mnist_config.model_path)
+    print(f"File {full_mnist_config.model_path} found. Loading model...")
+except FileNotFoundError:
+    print(f"File {full_mnist_config.model_path} not found. Training model...")
+    full_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
+    full_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
+    full_optimizer = torch.optim.Adam(
+        full_model.parameters(), lr=full_mnist_config.learning_rate
+    )
+    full_model.train(
+        train_loss_fn=full_train_loss_fn,
+        test_loss_fn=full_test_loss_fn,
+        optimizer=full_optimizer,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        num_epochs=full_mnist_config.train_epochs,
+        log_name="full_train_loss",
+        get_accuracy=True,
+    )
+    full_model.save(full_mnist_config.model_path)
+
+
+try:
+    dist_data_model.load(dist_data_mnist_config.model_path)
+    print(f"File {dist_data_mnist_config.model_path} found. Loading model...")
+except FileNotFoundError:
+    print(f"File {dist_data_mnist_config.model_path} not found. Training model...")
+    dist_optimizer = torch.optim.Adam(
+        dist_data_model.parameters(), lr=dist_data_mnist_config.learning_rate
+    )
+    dist_data_model.dist_from(
+        full_model,
+        optimizer=dist_optimizer,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        num_epochs=dist_data_mnist_config.train_epochs,
+        log_name="dist_train_loss",
+        get_accuracy=True,
+    )
+    dist_data_model.save(dist_data_mnist_config.model_path)
