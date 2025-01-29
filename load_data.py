@@ -2,6 +2,7 @@ import os
 
 import torch
 from torchvision import datasets, transforms
+from torch.utils.data import Dataset, DataLoader, Subset
 
 
 def get_datasets(dataset_name, new_size=None):
@@ -85,12 +86,12 @@ def get_dataloaders(
     train, test = get_datasets(dataset_name, new_size)
 
     if train_size is not None:
-        train = torch.utils.data.Subset(train, range(train_size))
+        train = Subset(train, range(train_size))
     if test_size is not None:
-        test = torch.utils.data.Subset(test, range(test_size))
+        test = Subset(test, range(test_size))
 
-    train_loader = torch.utils.data.DataLoader(train, batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test, batch_size, shuffle=False)
+    train_loader = DataLoader(train, batch_size, shuffle=True)
+    test_loader = DataLoader(test, batch_size, shuffle=False)
 
     return train_loader, test_loader
 
@@ -116,35 +117,28 @@ def get_epsilon_mesh(epsilon, data_size):
     return mesh, actual_epsilon, actual_cell_width
 
 
+class RandomDomainDataset(Dataset):
+
+    def __init__(self, data_size, sample_size):
+        self.num_pixels = data_size[0] * data_size[1]
+        self.sample_size = sample_size
+
+    def __len__(self):
+        return self.sample_size
+
+    # We return idx just so the DataLoader doesn't complain. Note normalization is just to get the right range, it's nothing to do with wanting to match the distribution.
+    def __getitem__(self, idx):
+        return (torch.rand((self.num_pixels)) - 0.5) / 0.5, idx
+
+
+def get_rand_domain_dataloader(data_size, sample_size, batch_size):
+    return DataLoader(
+        RandomDomainDataset(data_size, sample_size), batch_size, shuffle=True
+    )
+
+
+# TODO: I think this is not going to work because it's only returning x's and not (fake) y's.
 def get_epsilon_mesh_dataloader(epsilon, data_size, batch_size):
     mesh, eps, width = get_epsilon_mesh(epsilon, data_size)
-    mesh_dataloader = torch.utils.data.DataLoader(mesh, batch_size, shuffle=True)
+    mesh_dataloader = DataLoader(mesh, batch_size, shuffle=True)
     return mesh_dataloader, eps, width
-
-
-def get_rand_domain_dataloader(data_size, batch_size, num_batches):
-    num_pixels = data_size[0] * data_size[1]
-
-    def rand_domain_generator():
-        for _ in range(num_batches):
-            yield torch.rand((batch_size, num_pixels))
-
-    return rand_domain_generator()
-
-
-if __name__ == "__main__":
-    epsilon = 0.1 / torch.sqrt(torch.tensor(2.0))
-    data_size = (2, 2)
-    mesh, eps, width = get_epsilon_mesh(epsilon=epsilon, data_size=data_size)
-    print(mesh)
-    print(mesh.shape)
-    print(eps)
-    print(width)
-
-    mesh_dataloader, eps, width = get_epsilon_mesh_dataloader(
-        epsilon=epsilon, data_size=data_size, batch_size=4
-    )
-    for batch in mesh_dataloader:
-        print(batch)
-        print(batch.shape)
-        break

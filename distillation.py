@@ -5,7 +5,7 @@ import wandb
 
 from models import MLP
 from config import full_mnist_config, dist_data_mnist_config
-from load_data import get_dataloaders
+from load_data import get_dataloaders, get_rand_domain_dataloader
 
 
 train_loader, test_loader = get_dataloaders(
@@ -23,7 +23,9 @@ wandb.init(
 
 full_model = MLP(full_mnist_config.model_dims, full_mnist_config.model_act)
 dist_data_model = MLP(full_mnist_config.model_dims, dist_data_mnist_config.model_act)
-os.makedirs("trained_models/mnist/2x2", exist_ok=True)
+os.makedirs(
+    "trained_models/mnist/2x2", exist_ok=True
+)  # TODO: Really need to sort this out with 2x2, 3x3, etc.!
 
 
 try:
@@ -60,7 +62,12 @@ except FileNotFoundError:
     dist_data_model.dist_from(
         full_model,
         optimizer=dist_optimizer,
-        train_loader=train_loader,
+        # train_loader=train_loader,
+        train_loader=get_rand_domain_dataloader(
+            data_size=dist_data_mnist_config.new_size,
+            sample_size=len(train_loader.dataset),
+            batch_size=dist_data_mnist_config.batch_size,
+        ),
         test_loader=test_loader,
         num_epochs=dist_data_mnist_config.train_epochs,
         log_name="dist_train_loss",
