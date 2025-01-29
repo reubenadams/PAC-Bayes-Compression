@@ -104,19 +104,6 @@ def get_B(data_loader):
     return max_fro_norm
 
 
-def get_epsilon_mesh(epsilon, data_size):
-    cell_width = torch.sqrt(torch.tensor(2.0)) * epsilon
-    num_cells = int(torch.ceil(1 / cell_width))
-    actual_cell_width = 1 / num_cells
-    actual_epsilon = actual_cell_width / torch.sqrt(torch.tensor(2.0))
-    num_pixels = data_size[0] * data_size[1]
-    print(
-        f"Creating mesh with {num_cells}^{num_pixels} = {num_cells ** num_pixels} elements."
-    )
-    mesh = torch.cartesian_prod(*[torch.linspace(0, 1, num_cells + 1)] * num_pixels)
-    return mesh, actual_epsilon, actual_cell_width
-
-
 class RandomDomainDataset(Dataset):
 
     def __init__(self, data_size, sample_size):
@@ -135,6 +122,19 @@ def get_rand_domain_dataloader(data_size, sample_size, batch_size):
     return DataLoader(
         RandomDomainDataset(data_size, sample_size), batch_size, shuffle=True
     )
+
+
+def get_epsilon_mesh(epsilon, data_size):
+    cell_width = torch.sqrt(torch.tensor(2.0)) * epsilon
+    num_cells = int(torch.ceil(1 / cell_width))
+    actual_cell_width = 1 / num_cells
+    actual_epsilon = actual_cell_width / torch.sqrt(torch.tensor(2.0))
+    num_pixels = data_size[0] * data_size[1]
+    print(
+        f"Creating mesh with {num_cells}^{num_pixels} = {num_cells ** num_pixels} elements."
+    )
+    mesh = torch.cartesian_prod(*[torch.linspace(0, 1, num_cells + 1)] * num_pixels)
+    return mesh, actual_epsilon, actual_cell_width
 
 
 # TODO: I think this is not going to work because it's only returning x's and not (fake) y's.

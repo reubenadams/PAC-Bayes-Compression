@@ -74,3 +74,7 @@ except FileNotFoundError:
         get_accuracy=True,
     )
     dist_data_model.save(dist_data_mnist_config.model_path)
+
+
+deviation = dist_data_model.max_deviation(full_model, epsilon=1, data_size=(2, 2))
+print(f"Max deviation: {deviation}")

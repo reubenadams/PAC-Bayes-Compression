@@ -9,6 +9,7 @@ from copy import deepcopy
 from itertools import product
 
 from config import Config
+from load_data import get_epsilon_mesh
 
 
 class LowRankLinear(nn.Linear):
@@ -333,6 +334,16 @@ class MLP(nn.Module):
                 )
             if epoch % 10 == 0 and callback:
                 callback(epoch)
+
+            max_dev = self.max_deviation(full_model, epsilon=0.5, data_size=(2, 2))
+            wandb.log(
+                {
+                    "Epoch": epoch,
+                    "Max Deviation": max_dev[0],
+                    "Epsilon": max_dev[1],
+                    "Cell Width": max_dev[2],
+                }
+            )
         print("Training complete.")
 
     def save(self, path):
@@ -340,6 +351,14 @@ class MLP(nn.Module):
 
     def load(self, path):
         self.load_state_dict(torch.load(path, weights_only=True))
+
+    def max_deviation(self, full_model, epsilon, data_size):
+        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size)
+        mesh = (mesh - 0.5) / 0.5
+        self_output = self(mesh)
+        full_output = full_model(mesh)
+        l2_norms = torch.linalg.vector_norm(self_output - full_output, ord=2, dim=-1)
+        return l2_norms.max(), actual_epsilon, actual_cell_width
 
     @staticmethod
     def get_act(act: str):
