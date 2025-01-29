@@ -64,23 +64,23 @@ low_rank_CIFAR100_config = Config(
 )
 
 full_mnist_config = Config(
-    model_path="trained_models/mnist_2x2_full_mlp.t",
-    model_dims=[4, 32, 10],
+    model_path="trained_models/mnist/3x3/full_mlp.t",
+    model_dims=[9, 256, 10],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
     dataset="MNIST",
-    new_size=(2, 2),
+    new_size=(3, 3),
 )
 
 dist_data_mnist_config = Config(
-    model_path="trained_models/mnist_2x2_dist_data_mlp.t",
-    model_dims=[4, 32, 10],
+    model_path="trained_models/mnist/3x3/dist_data_mlp.t",
+    model_dims=[9, 32, 10],
     model_act="relu",
     train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
     dataset="MNIST",
-    new_size=(2, 2),
+    new_size=(3, 3),
 )

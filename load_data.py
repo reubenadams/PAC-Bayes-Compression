@@ -101,3 +101,50 @@ def get_B(data_loader):
         fro_norms = torch.linalg.matrix_norm(data, ord="fro")
         max_fro_norm = max(max_fro_norm, fro_norms.max())
     return max_fro_norm
+
+
+def get_epsilon_mesh(epsilon, data_size):
+    cell_width = torch.sqrt(torch.tensor(2.0)) * epsilon
+    num_cells = int(torch.ceil(1 / cell_width))
+    actual_cell_width = 1 / num_cells
+    actual_epsilon = actual_cell_width / torch.sqrt(torch.tensor(2.0))
+    num_pixels = data_size[0] * data_size[1]
+    print(
+        f"Creating mesh with {num_cells}^{num_pixels} = {num_cells ** num_pixels} elements."
+    )
+    mesh = torch.cartesian_prod(*[torch.linspace(0, 1, num_cells + 1)] * num_pixels)
+    return mesh, actual_epsilon, actual_cell_width
+
+
+def get_epsilon_mesh_dataloader(epsilon, data_size, batch_size):
+    mesh, eps, width = get_epsilon_mesh(epsilon, data_size)
+    mesh_dataloader = torch.utils.data.DataLoader(mesh, batch_size, shuffle=True)
+    return mesh_dataloader, eps, width
+
+
+def get_rand_domain_dataloader(data_size, batch_size, num_batches):
+    num_pixels = data_size[0] * data_size[1]
+
+    def rand_domain_generator():
+        for _ in range(num_batches):
+            yield torch.rand((batch_size, num_pixels))
+
+    return rand_domain_generator()
+
+
+if __name__ == "__main__":
+    epsilon = 0.1 / torch.sqrt(torch.tensor(2.0))
+    data_size = (2, 2)
+    mesh, eps, width = get_epsilon_mesh(epsilon=epsilon, data_size=data_size)
+    print(mesh)
+    print(mesh.shape)
+    print(eps)
+    print(width)
+
+    mesh_dataloader, eps, width = get_epsilon_mesh_dataloader(
+        epsilon=epsilon, data_size=data_size, batch_size=4
+    )
+    for batch in mesh_dataloader:
+        print(batch)
+        print(batch.shape)
+        break
