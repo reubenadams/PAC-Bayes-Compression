@@ -11,7 +11,11 @@ from load_data import get_dataloaders
 os.makedirs("trained_models", exist_ok=True)
 
 train_loader, test_loader = get_dataloaders(
-    full_mnist_config.dataset, full_mnist_config.batch_size, shrink_test_dataset=True
+    full_mnist_config.dataset,
+    full_mnist_config.batch_size,
+    train_size=100,
+    test_size=100,
+    new_size=full_mnist_config.new_size,
 )
 
 wandb.init(
