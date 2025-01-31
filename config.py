@@ -78,9 +78,9 @@ dist_data_mnist_config = Config(
     model_path="trained_models/mnist/2x2/dist_data_mlp.t",
     model_dims=[4, 32, 10],
     model_act="relu",
-    train_epochs=50,
+    train_epochs=50000,
     batch_size=64,
-    learning_rate=0.001,
+    learning_rate=0.01,
     dataset="MNIST",
     new_size=(2, 2),
 )
