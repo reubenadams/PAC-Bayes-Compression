@@ -72,9 +72,11 @@ except FileNotFoundError:
         num_epochs=dist_data_mnist_config.train_epochs,
         log_name="dist_train_loss",
         get_accuracy=True,
+        objective="l2",
+        reduction="mellowmax",
     )
     dist_data_model.save(dist_data_mnist_config.model_path)
 
 
-deviation = dist_data_model.max_deviation(full_model, epsilon=1, data_size=(2, 2))
+deviation = dist_data_model.max_l2_deviation(full_model, epsilon=1, data_size=(2, 2))
 print(f"Max deviation: {deviation}")

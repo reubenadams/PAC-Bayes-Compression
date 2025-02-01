@@ -80,7 +80,7 @@ dist_data_mnist_config = Config(
     model_act="relu",
     train_epochs=1,
     batch_size=64,
-    learning_rate=0.001,
+    learning_rate=0.01,
     dataset="MNIST",
     new_size=(2, 2),
 )

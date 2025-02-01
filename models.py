@@ -247,6 +247,14 @@ class MLP(nn.Module):
             total_dist_loss += test_loss_fn(outputs, targets) * x.size(0)
         return total_dist_loss / len(dataloader.dataset)
 
+    def max_l2_deviation(self, full_model, epsilon, data_size):
+        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size)
+        mesh = (mesh - 0.5) / 0.5
+        self_output = self(mesh)
+        full_output = full_model(mesh)
+        l2_norms = torch.linalg.vector_norm(self_output - full_output, ord=2, dim=-1)
+        return l2_norms.max(), actual_epsilon, actual_cell_width
+
     def train(
         self,
         train_loss_fn,
@@ -304,9 +312,27 @@ class MLP(nn.Module):
         log_name=None,
         get_accuracy=False,
         callback=None,
+        objective="kl",
+        reduction="mean",
+        k=10,
+        alpha=10**5,
     ):
 
-        train_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
+        if objective == "kl":
+            train_loss_fn_unreduced = torch.nn.KLDivLoss(reduction="none", log_target=True)
+        elif objective == "l2":
+            train_loss_fn_unreduced = torch.nn.MSELoss(reduction="none")
+        else:
+            raise ValueError(f"Invalid objective {objective}. Should be 'kl' or 'l2'.")
+
+        if reduction == "mean":
+            train_loss_fn = lambda outputs, targets: train_loss_fn_unreduced(outputs, targets).sum(-1).mean()
+        elif reduction == "topk":
+            train_loss_fn = lambda outputs, targets: train_loss_fn_unreduced(outputs, targets).sum(-1).topk(k)[0].mean()
+        elif reduction == "mellowmax":
+            train_loss_fn = lambda outputs, targets: torch.logsumexp(alpha * train_loss_fn_unreduced(outputs, targets).sum(-1), dim=-1) / alpha
+        else:
+            raise ValueError(f"Invalid reduction {reduction}. Should be 'mean', 'topk' or 'mellowmax'.")
 
         for epoch in range(num_epochs):
             for x, _ in train_loader:
@@ -321,8 +347,12 @@ class MLP(nn.Module):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
             if scheduler:
                 scheduler.step()
+            alpha *= 1.5
+            alpha = min(alpha, 10**5)
+
             test_loss = self.dist_loss(full_model, test_loader)
             if get_accuracy:
                 test_accuracy = self.overall_accuracy(test_loader)
@@ -334,6 +364,7 @@ class MLP(nn.Module):
                         "Epoch": epoch,
                         "Test Dist Loss": test_loss,
                         "Test Dist Accuracy": test_accuracy,
+                        "Alpha": alpha,
                     }
                 )
             else:
@@ -343,7 +374,7 @@ class MLP(nn.Module):
             if epoch % 10 == 0 and callback:
                 callback(epoch)
 
-            max_dev = self.max_deviation(full_model, epsilon=0.5, data_size=(2, 2))
+            max_dev = self.max_l2_deviation(full_model, epsilon=0.5, data_size=(2, 2))
             wandb.log(
                 {
                     "Epoch": epoch,
