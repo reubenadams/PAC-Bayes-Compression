@@ -10,7 +10,7 @@ class Config:
     batch_size: int
     learning_rate: float
     dataset: str
-    new_size: tuple[int, int] = None
+    new_data_shape: tuple[int, int] = None
 
 
 base_mnist_config = Config(
@@ -67,20 +67,20 @@ full_mnist_config = Config(
     model_path="trained_models/mnist/2x2/full_mlp.t",
     model_dims=[4, 256, 10],
     model_act="relu",
-    train_epochs=1,
+    train_epochs=10,
     batch_size=64,
     learning_rate=0.001,
     dataset="MNIST",
-    new_size=(2, 2),
+    new_data_shape=(2, 2),
 )
 
-dist_data_mnist_config = Config(
+dist_mnist_config = Config(
     model_path="trained_models/mnist/2x2/dist_data_mlp.t",
-    model_dims=[4, 32, 10],
+    model_dims=[4, 4096, 10],
     model_act="relu",
-    train_epochs=1,
+    train_epochs=50000,
     batch_size=64,
-    learning_rate=0.01,
+    learning_rate=0.001,
     dataset="MNIST",
-    new_size=(2, 2),
+    new_data_shape=(2, 2),
 )

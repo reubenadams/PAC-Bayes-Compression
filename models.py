@@ -222,7 +222,7 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
 
-    def margin_loss(self, dataloader, margin, take_softmax=False):
+    def overall_margin_loss(self, dataloader, margin, take_softmax=False):
         total_margin_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
@@ -236,153 +236,186 @@ class MLP(nn.Module):
             total_margin_loss += (target_values <= margin + max_non_target_values).sum()
         return total_margin_loss / len(dataloader.dataset)
 
-    def dist_loss(self, full_model, dataloader):
-        total_dist_loss = torch.tensor(0.0, device=self.device)
-        test_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
-        for x, _ in dataloader:
+    def overall_kl_loss(self, full_model, domain_dataloader):
+        total_dist_kl_loss = torch.tensor(0.0, device=self.device)
+        kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
+        for x, _ in domain_dataloader:
             x = x.to(self.device)
             x = x.view(x.size(0), -1)
             outputs = F.log_softmax(self(x), dim=-1)
             targets = F.log_softmax(full_model(x), dim=-1)
-            total_dist_loss += test_loss_fn(outputs, targets) * x.size(0)
-        return total_dist_loss / len(dataloader.dataset)
+            total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
+        return total_dist_kl_loss / len(domain_dataloader.dataset)
 
-    def max_l2_deviation(self, full_model, epsilon, data_size):
-        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size)
-        mesh = (mesh - 0.5) / 0.5
-        self_output = self(mesh)
-        full_output = full_model(mesh)
-        l2_norms = torch.linalg.vector_norm(self_output - full_output, ord=2, dim=-1)
-        return l2_norms.max(), actual_epsilon, actual_cell_width
+    def max_l2_deviation(self, full_model, domain_loader):
+        max_l2 = torch.tensor(0.0, device=self.device)
+        for x, _ in domain_loader:
+            x = x.to(self.device)
+            x = x.view(x.size(0), -1)
+            self_output = self(x)
+            full_output = full_model(x)
+            l2_norms = torch.linalg.vector_norm(
+                self_output - full_output, ord=2, dim=-1
+            )
+            max_l2 = max(max_l2, l2_norms.max())
+        return max_l2
 
     def train(
         self,
         train_loss_fn,
         test_loss_fn,
-        optimizer,
+        lr,
         train_loader,
         test_loader,
         num_epochs,
-        scheduler=None,
-        log_name=None,
-        get_accuracy=False,
+        get_test_loss=False,
+        get_test_accuracy=False,
+        train_loss_name="Train Loss",
+        test_loss_name="Test Loss",
+        test_accuracy_name="Test Accuracy",
         callback=None,
     ):
+
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+
         for epoch in range(num_epochs):
+
+            print(f"Epoch [{epoch+1}/{num_epochs}]")
+
             for x, labels in train_loader:
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
-                if log_name:
-                    wandb.log({log_name: loss.item()})
+                if train_loss_name:
+                    wandb.log({train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-            if scheduler:
-                scheduler.step()
-            test_loss = self.overall_loss(test_loss_fn, test_loader)
-            if get_accuracy:
+
+            epoch_log = {"Epoch": epoch}
+
+            if get_test_loss:
+                test_loss = self.overall_loss(test_loss_fn, test_loader)
+                epoch_log[test_loss_name] = test_loss.item()
+
+            if get_test_accuracy:
                 test_accuracy = self.overall_accuracy(test_loader)
-                print(
-                    f"Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}, Test Accuracy: {test_accuracy.item():.4f}"
-                )
-                wandb.log(
-                    {
-                        "Epoch": epoch,
-                        "Test Loss": test_loss,
-                        "Test Accuracy": test_accuracy,
-                    }
-                )
-            else:
-                print(f"Epoch [{epoch+1}/{num_epochs}], Test Loss: {test_loss.item()}")
+                epoch_log[test_accuracy_name] = test_accuracy
+
+            wandb.log(epoch_log)
+
             if epoch % 10 == 0 and callback:
                 callback(epoch)
+
         print("Training complete.")
 
-    def dist_from(
-        self,
-        full_model,
-        optimizer,
-        train_loader,
-        test_loader,
-        num_epochs,
-        scheduler=None,
-        log_name=None,
-        get_accuracy=False,
-        callback=None,
-        objective="kl",
-        reduction="mean",
-        k=10,
-        alpha=10**5,
-    ):
+    def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
 
         if objective == "kl":
-            train_loss_fn_unreduced = torch.nn.KLDivLoss(reduction="none", log_target=True)
+            dist_loss_fn_unreduced = torch.nn.KLDivLoss(
+                reduction="none", log_target=True
+            )
         elif objective == "l2":
-            train_loss_fn_unreduced = torch.nn.MSELoss(reduction="none")
+            dist_loss_fn_unreduced = torch.nn.MSELoss(reduction="none")
         else:
             raise ValueError(f"Invalid objective {objective}. Should be 'kl' or 'l2'.")
 
         if reduction == "mean":
-            train_loss_fn = lambda outputs, targets: train_loss_fn_unreduced(outputs, targets).sum(-1).mean()
+            dist_loss_fn = (
+                lambda outputs, targets: dist_loss_fn_unreduced(outputs, targets)
+                .sum(-1)
+                .mean()
+            )
         elif reduction == "topk":
-            train_loss_fn = lambda outputs, targets: train_loss_fn_unreduced(outputs, targets).sum(-1).topk(k)[0].mean()
+            dist_loss_fn = (
+                lambda outputs, targets: dist_loss_fn_unreduced(outputs, targets)
+                .sum(-1)
+                .topk(k)[0]
+                .mean()
+            )
         elif reduction == "mellowmax":
-            train_loss_fn = lambda outputs, targets: torch.logsumexp(alpha * train_loss_fn_unreduced(outputs, targets).sum(-1), dim=-1) / alpha
+            dist_loss_fn = (
+                lambda outputs, targets: torch.logsumexp(
+                    alpha * dist_loss_fn_unreduced(outputs, targets).sum(-1), dim=-1
+                )
+                / alpha
+            )
         else:
-            raise ValueError(f"Invalid reduction {reduction}. Should be 'mean', 'topk' or 'mellowmax'.")
+            raise ValueError(
+                f"Invalid reduction {reduction}. Should be 'mean', 'topk' or 'mellowmax'."
+            )
+
+        return dist_loss_fn
+
+    def dist_from(
+        self,
+        full_model,
+        domain_train_loader,
+        domain_test_loader,
+        data_test_loader,
+        lr,
+        num_epochs,
+        get_kl_on_test_data=False,
+        get_accuracy_on_test_data=False,
+        callback=None,
+        objective="kl",
+        reduction="mean",
+        k=10,
+        alpha=10**2,
+    ):
+
+        train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
+        train_loss_name = f"Dist Train {objective} {reduction}"
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
 
         for epoch in range(num_epochs):
-            for x, _ in train_loader:
+
+            print(f"Epoch [{epoch+1}/{num_epochs}]")
+
+            for x, _ in domain_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = F.log_softmax(self(x), dim=-1)
                 targets = F.log_softmax(full_model(x), dim=-1)
                 loss = train_loss_fn(outputs, targets)
-                if log_name:
-                    wandb.log({log_name: loss.item()})
+                wandb.log({train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-            if scheduler:
-                scheduler.step()
-            alpha *= 1.5
-            alpha = min(alpha, 10**5)
+            # alpha *= 1.5
+            # alpha = min(alpha, 10**5)
 
-            test_loss = self.dist_loss(full_model, test_loader)
-            if get_accuracy:
-                test_accuracy = self.overall_accuracy(test_loader)
-                print(
-                    f"Epoch [{epoch+1}/{num_epochs}], Test Dist Loss: {test_loss.item()}, Test Dist Accuracy: {test_accuracy.item():.4f}"
+            epoch_log = {
+                "Epoch": epoch,
+                "Alpha": alpha,
+                "lr": scheduler.get_last_lr()[0],
+            }
+
+            if get_accuracy_on_test_data:
+                test_accuracy = self.overall_accuracy(data_test_loader)
+                epoch_log["Dist Test Accuracy"] = test_accuracy
+
+            if get_kl_on_test_data:
+                total_kl_loss_on_test_data = self.overall_kl_loss(
+                    full_model, data_test_loader
                 )
-                wandb.log(
-                    {
-                        "Epoch": epoch,
-                        "Test Dist Loss": test_loss,
-                        "Test Dist Accuracy": test_accuracy,
-                        "Alpha": alpha,
-                    }
-                )
-            else:
-                print(
-                    f"Epoch [{epoch+1}/{num_epochs}], Test Dist Loss: {test_loss.item()}"
-                )
+                epoch_log["KL Loss on Test Data"] = total_kl_loss_on_test_data
+
+            max_l2_dev = self.max_l2_deviation(full_model, domain_test_loader)
+            epoch_log["Max l2 Deviation"] = max_l2_dev
+
+            # scheduler.step(max_l2_dev)
+
+            wandb.log(epoch_log)
+
             if epoch % 10 == 0 and callback:
                 callback(epoch)
 
-            max_dev = self.max_l2_deviation(full_model, epsilon=0.5, data_size=(2, 2))
-            wandb.log(
-                {
-                    "Epoch": epoch,
-                    "Max Deviation": max_dev[0],
-                    "Epsilon": max_dev[1],
-                    "Cell Width": max_dev[2],
-                }
-            )
         print("Training complete.")
 
     def save(self, path):
@@ -393,8 +426,10 @@ class MLP(nn.Module):
             torch.load(path, map_location=self.device, weights_only=True)
         )
 
-    def max_deviation(self, full_model, epsilon, data_size):
-        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size, device=self.device)
+    def max_deviation(self, full_model, epsilon, data_shape):
+        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(
+            epsilon, data_shape, device=self.device
+        )
         mesh = (mesh - 0.5) / 0.5
         self_output = self(mesh)
         full_output = full_model(mesh)
