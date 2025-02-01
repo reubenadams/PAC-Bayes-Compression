@@ -21,8 +21,8 @@ wandb.init(
     name=f"Distilling into same architecture: {full_mnist_config.model_dims}",
 )
 
-full_model = MLP(full_mnist_config.model_dims, full_mnist_config.model_act)
-dist_data_model = MLP(full_mnist_config.model_dims, dist_data_mnist_config.model_act)
+full_model = MLP(full_mnist_config.model_dims, full_mnist_config.model_act, device="cuda")
+dist_data_model = MLP(full_mnist_config.model_dims, dist_data_mnist_config.model_act, device="cuda")
 os.makedirs(
     "trained_models/mnist/2x2", exist_ok=True
 )  # TODO: Really need to sort this out with 2x2, 3x3, etc.!

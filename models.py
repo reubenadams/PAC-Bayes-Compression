@@ -176,11 +176,13 @@ class LowRankLinear(nn.Linear):
 
 
 class MLP(nn.Module):
-    def __init__(self, dimensions, activation, low_rank=False):
+    def __init__(self, dimensions, activation, low_rank=False, device="cpu"):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
         self.network_modules = []
+        self.device = torch.device(device)
+
         for i in range(len(dimensions) - 1):
             if low_rank:
                 self.network_modules.append(
@@ -190,7 +192,7 @@ class MLP(nn.Module):
                 self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation on the last layer
                 self.network_modules.append(self.activation())
-        self.network = nn.Sequential(*self.network_modules)
+        self.network = nn.Sequential(*self.network_modules).to(self.device)
         self.num_parameters = sum([p.numel() for p in self.parameters()])
 
     def forward(self, x):
@@ -202,16 +204,18 @@ class MLP(nn.Module):
 
     def overall_loss(self, loss_fn, dataloader):
         assert loss_fn.reduction == "sum"
-        total_loss = torch.tensor(0.0)
+        total_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
+            x, labels = x.to(self.device), labels.to(self.device)
             x = x.view(x.size(0), -1)
             outputs = self(x)
             total_loss += loss_fn(outputs, labels)
         return total_loss / len(dataloader.dataset)
 
     def overall_accuracy(self, dataloader):
-        num_correct = torch.tensor(0.0)
+        num_correct = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
+            x, labels = x.to(self.device), labels.to(self.device)
             x = x.view(x.size(0), -1)
             outputs = self(x)
             _, predicted = torch.max(outputs, -1)
@@ -219,8 +223,9 @@ class MLP(nn.Module):
         return num_correct / len(dataloader.dataset)
 
     def margin_loss(self, dataloader, margin, take_softmax=False):
-        total_margin_loss = torch.tensor(0.0)
+        total_margin_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
+            x, labels = x.to(self.device), labels.to(self.device)
             x = x.view(x.size(0), -1)
             outputs = self(x)
             if take_softmax:
@@ -232,13 +237,14 @@ class MLP(nn.Module):
         return total_margin_loss / len(dataloader.dataset)
 
     def dist_loss(self, full_model, dataloader):
-        total_dist_loss = torch.tensor(0.0)
+        total_dist_loss = torch.tensor(0.0, device=self.device)
         test_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
-        for images, _ in dataloader:
-            images = images.view(images.size(0), -1)
-            outputs = F.log_softmax(self(images), dim=-1)
-            targets = F.log_softmax(full_model(images), dim=-1)
-            total_dist_loss += test_loss_fn(outputs, targets) * images.size(0)
+        for x, _ in dataloader:
+            x = x.to(self.device)
+            x = x.view(x.size(0), -1)
+            outputs = F.log_softmax(self(x), dim=-1)
+            targets = F.log_softmax(full_model(x), dim=-1)
+            total_dist_loss += test_loss_fn(outputs, targets) * x.size(0)
         return total_dist_loss / len(dataloader.dataset)
 
     def train(
@@ -255,9 +261,10 @@ class MLP(nn.Module):
         callback=None,
     ):
         for epoch in range(num_epochs):
-            for images, labels in train_loader:
-                images = images.view(images.size(0), -1)
-                outputs = self(images)
+            for x, labels in train_loader:
+                x, labels = x.to(self.device), labels.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
                 if log_name:
                     wandb.log({log_name: loss.item()})
@@ -302,10 +309,11 @@ class MLP(nn.Module):
         train_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
 
         for epoch in range(num_epochs):
-            for images, _ in train_loader:
-                images = images.view(images.size(0), -1)
-                outputs = F.log_softmax(self(images), dim=-1)
-                targets = F.log_softmax(full_model(images), dim=-1)
+            for x, _ in train_loader:
+                x = x.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs = F.log_softmax(self(x), dim=-1)
+                targets = F.log_softmax(full_model(x), dim=-1)
                 loss = train_loss_fn(outputs, targets)
                 if log_name:
                     wandb.log({log_name: loss.item()})
@@ -350,10 +358,12 @@ class MLP(nn.Module):
         torch.save(self.state_dict(), path)
 
     def load(self, path):
-        self.load_state_dict(torch.load(path, weights_only=True))
+        self.load_state_dict(
+            torch.load(path, map_location=self.device, weights_only=True)
+        )
 
     def max_deviation(self, full_model, epsilon, data_size):
-        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size)
+        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(epsilon, data_size, device=self.device)
         mesh = (mesh - 0.5) / 0.5
         self_output = self(mesh)
         full_output = full_model(mesh)
@@ -376,9 +386,9 @@ class MLP(nn.Module):
 
 # TODO: Implement the KL divergence
 class LowRankMLP(MLP):
-    def __init__(self, dimensions, activation):
+    def __init__(self, dimensions, activation, device="cpu"):
         super().__init__(
-            dimensions, activation, low_rank=True
+            dimensions, activation, low_rank=True, device=device
         )  # Note this will have no bias in the layers
         self.rank_combs = list(
             product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers])
@@ -526,7 +536,12 @@ class BaseMLP(MLP):
                 for idx, num_bits in zip(indices, bit_lengths)
             ]
         )
-        return torch.tensor([int(d) for d in binary_string], dtype=torch.float) - 0.5
+        return (
+            torch.tensor(
+                [int(d) for d in binary_string], dtype=torch.float, device=self.device
+            )
+            - 0.5
+        )
 
     @property
     def binary_indices_transform(self):
@@ -592,7 +607,9 @@ class HyperModel(MLP):
     def forward(self, x):
         if self.transform_input:
             x = self.transform(x)
-        return self.network(x).view(-1)
+        return self.network(x).view(
+            -1
+        )  # TODO: I think you want to change this to self(x) so that it uses the inherited forward method which deals with the device
 
 
 class ParameterDataset(Dataset):
