@@ -1,5 +1,3 @@
-import os
-
 import torch
 import wandb
 
@@ -11,11 +9,14 @@ from load_data import (
     get_mesh_domain_loader,
 )
 
+full_mnist_config.ensure_dir_exists()
+dist_mnist_config.ensure_dir_exists()
+
 
 train_loader, test_loader = get_dataloaders(
     full_mnist_config.dataset,
     full_mnist_config.batch_size,
-    # train_size=100,
+    train_size=100,
     test_size=100,
     new_size=full_mnist_config.new_data_shape,
 )
@@ -36,9 +37,6 @@ full_model = MLP(
 dist_data_model = MLP(
     full_mnist_config.model_dims, dist_mnist_config.model_act, device=device
 )
-os.makedirs(
-    "trained_models/mnist/2x2", exist_ok=True
-)  # TODO: Really need to sort this out with 2x2, 3x3, etc.!
 
 
 try:
@@ -105,7 +103,3 @@ except FileNotFoundError:
         reduction="mellowmax",
     )
     dist_data_model.save(dist_mnist_config.model_path)
-
-
-deviation = dist_data_model.max_l2_deviation(full_model, epsilon=1, data_shape=(2, 2))
-print(f"Max deviation: {deviation}")
