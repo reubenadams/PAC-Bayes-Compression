@@ -25,6 +25,9 @@ def get_datasets(dataset_name, new_size=None):
                     f"New CIFAR10 size {new_size} should not be larger than original size 32x32."
                 )
 
+    else:
+        raise ValueError(f"Invalid dataset name: {dataset_name} should be one of {'MNIST', 'CIFAR10'}")
+
     data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
 
     try:

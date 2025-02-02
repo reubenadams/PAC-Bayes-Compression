@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch.utils.data import Dataset
 import torch.nn as nn
@@ -273,7 +275,7 @@ class MLP(nn.Module):
         train_loss_name="Train Loss",
         test_loss_name="Test Loss",
         test_accuracy_name="Test Accuracy",
-        callback=None,
+        callback=None,  # TODO: Do we ever use this?
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -418,8 +420,10 @@ class MLP(nn.Module):
 
         print("Training complete.")
 
-    def save(self, path):
-        torch.save(self.state_dict(), path)
+    def save(self, model_dir, model_name):
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = f"{model_dir}/{model_name}"
+        torch.save(self.state_dict(), model_path)
 
     def load(self, path):
         self.load_state_dict(
@@ -594,8 +598,7 @@ class BaseMLP(MLP):
         ]  # To avoid division by zero if there is only one layer/row/col
         return lambda indices: self.scale_indices(indices, max_indices)
 
-    @staticmethod
-    def binary_indices(indices, bit_lengths):
+    def binary_indices(self, indices, bit_lengths):
         binary_string = "".join(
             [
                 to_padded_binary(idx, num_bits)

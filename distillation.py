@@ -9,9 +9,6 @@ from load_data import (
     get_mesh_domain_loader,
 )
 
-full_mnist_config.ensure_dir_exists()
-dist_mnist_config.ensure_dir_exists()
-
 
 train_loader, test_loader = get_dataloaders(
     full_mnist_config.dataset,
@@ -50,7 +47,7 @@ except FileNotFoundError:
     full_model.train(
         train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
         test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-        lr=full_mnist_config.learning_rate,
+        lr=full_mnist_config.lr,
         train_loader=train_loader,
         test_loader=test_loader,
         num_epochs=full_mnist_config.train_epochs,
@@ -60,7 +57,7 @@ except FileNotFoundError:
         test_loss_name="Full Test Loss",
         test_accuracy_name="Full Test Accuracy",
     )
-    full_model.save(full_mnist_config.model_path)
+    full_model.save(full_mnist_config.model_dir, full_mnist_config.model_name)
 
 
 try:
@@ -95,11 +92,11 @@ except FileNotFoundError:
         domain_train_loader=domain_train_loader,
         domain_test_loader=domain_test_loader,
         data_test_loader=test_loader,
-        lr=dist_mnist_config.learning_rate,
+        lr=dist_mnist_config.lr,
         num_epochs=dist_mnist_config.train_epochs,
         get_accuracy_on_test_data=True,
         get_kl_on_test_data=True,
         objective="l2",
         reduction="mellowmax",
     )
-    dist_data_model.save(dist_mnist_config.model_path)
+    dist_data_model.save(dist_mnist_config.model_dir, dist_mnist_config.model_name)

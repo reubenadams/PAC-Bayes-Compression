@@ -21,7 +21,10 @@ to_train = {
 
 
 train_loader, test_loader = get_dataloaders(
-    base_mnist_config.dataset, base_mnist_config.batch_size
+    base_mnist_config.dataset,
+    base_mnist_config.batch_size,
+    train_size=100,
+    test_size=100,
 )
 
 
@@ -31,10 +34,8 @@ base_model_estimate_binary_path = "trained_models/base_mlp_estimate_binary.t"
 
 wandb.init(
     project="hypertraining",
-    name=f"Base: dims={base_mnist_config.model_dims}, Hyper binary: dims={hyper_mnist_config_binary.model_dims}, act={hyper_mnist_config_binary.model_act} lr={hyper_mnist_config_binary.learning_rate}",
+    name=f"Base: dims={base_mnist_config.model_dims}, Hyper binary: dims={hyper_mnist_config_binary.model_dims}, act={hyper_mnist_config_binary.model_act} lr={hyper_mnist_config_binary.lr}",
 )
-
-os.makedirs("trained_models", exist_ok=True)
 
 
 base_model = BaseMLP(base_mnist_config.model_dims, base_mnist_config.model_act)
@@ -61,20 +62,20 @@ except FileNotFoundError:
         print(f"File {base_mnist_config.model_path} not found. Training model...")
         base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
         base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
-        base_optimizer = torch.optim.Adam(
-            base_model.parameters(), lr=base_mnist_config.learning_rate
-        )
         base_model.train(
             train_loss_fn=base_train_loss_fn,
             test_loss_fn=base_test_loss_fn,
-            optimizer=base_optimizer,
+            lr=base_mnist_config.lr,
             train_loader=train_loader,
             test_loader=test_loader,
             num_epochs=base_mnist_config.train_epochs,
-            log_name="base_train_loss",
-            get_accuracy=True,
+            get_test_loss=True,
+            get_test_accuracy=True,
+            train_loss_name="Base Train Loss",
+            test_loss_name="Base Test Loss",
+            test_accuracy_name="Base Test Accuracy",
         )
-        base_model.save(base_mnist_config.model_path)
+        base_model.save(base_mnist_config.model_dir, base_mnist_config.model_name)
 
 
 try:
@@ -87,9 +88,6 @@ except FileNotFoundError:
         )
         hyper_train_loss_fn = torch.nn.MSELoss(reduction="mean")
         hyper_test_loss_fn = torch.nn.MSELoss(reduction="sum")
-        hyper_optimizer = torch.optim.Adam(
-            hyper_model_scaled.parameters(), lr=hyper_mnist_config_scaled.learning_rate
-        )
         # hyper_scheduler = torch.optim.lr_scheduler.StepLR(hyper_optimizer, step_size=10, gamma=0.1)
         param_dataset_scaled = base_model.get_parameter_dataset(
             transform=base_model.scale_indices_transform
@@ -112,15 +110,14 @@ except FileNotFoundError:
         hyper_model_scaled.train(
             train_loss_fn=hyper_train_loss_fn,
             test_loss_fn=hyper_test_loss_fn,
-            optimizer=hyper_optimizer,
+            lr=hyper_mnist_config_scaled.lr,
             train_loader=param_dataloader_scaled,
             test_loader=param_dataloader_scaled,
             num_epochs=hyper_mnist_config_scaled.train_epochs,
-            log_name="hyper_scaled_train_loss",
-            get_accuracy=False,
+            train_loss_name="hyper_scaled_train_loss",
             callback=callback,
         )
-        hyper_model_scaled.save(hyper_mnist_config_scaled.model_path)
+        hyper_model_scaled.save(hyper_mnist_config_scaled.model_dir, hyper_mnist_config_scaled.model_name)
 
 
 try:
@@ -133,9 +130,6 @@ except FileNotFoundError:
         )
         hyper_train_loss_fn = torch.nn.MSELoss(reduction="mean")
         hyper_test_loss_fn = torch.nn.MSELoss(reduction="sum")
-        hyper_optimizer = torch.optim.Adam(
-            hyper_model_binary.parameters(), lr=hyper_mnist_config_binary.learning_rate
-        )
         param_dataset_binary = base_model.get_parameter_dataset(
             transform=base_model.binary_indices_transform
         )
@@ -157,15 +151,14 @@ except FileNotFoundError:
         hyper_model_binary.train(
             train_loss_fn=hyper_train_loss_fn,
             test_loss_fn=hyper_test_loss_fn,
-            optimizer=hyper_optimizer,
+            lr=hyper_mnist_config_binary.lr,
             train_loader=param_dataloader_binary,
             test_loader=param_dataloader_binary,
             num_epochs=hyper_mnist_config_binary.train_epochs,
-            log_name="hyper_binary_train_loss",
-            get_accuracy=False,
+            train_loss_name="hyper_binary_train_loss",
             callback=callback,
         )
-        hyper_model_binary.save(hyper_mnist_config_binary.model_path)
+        hyper_model_binary.save(hyper_mnist_config_binary.model_dir, hyper_mnist_config_binary.model_name)
         reconstructed_accuracy = get_reconstructed_accuracy(
             base_model,
             hyper_model_binary,

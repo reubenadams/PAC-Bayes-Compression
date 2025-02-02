@@ -5,14 +5,15 @@ import torch
 import wandb
 
 from models import LowRankMLP
-from config import low_rank_CIFAR100_config as model_config
+from config import low_rank_CIFAR10_config as model_config
 from load_data import get_dataloaders, get_B
 
 
-os.makedirs("trained_models", exist_ok=True)
-
 train_loader, test_loader = get_dataloaders(
-    model_config.dataset, model_config.batch_size, shrink_test_dataset=True
+    model_config.dataset,
+    model_config.batch_size,
+    train_size=100,
+    test_size=100,
 )
 
 max_fro_norm = get_B(train_loader)
@@ -28,24 +29,26 @@ model = LowRankMLP(model_config.model_dims, model_config.model_act)
 
 
 try:
+    
     model.load(model_config.model_path)
     print(f"File {model_config.model_path} found. Loading model...")
+
 except FileNotFoundError:
+
     print(f"File {model_config.model_path} not found. Training model...")
     base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
     base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
-    base_optimizer = torch.optim.Adam(model.parameters(), lr=model_config.learning_rate)
     model.train(
         train_loss_fn=base_train_loss_fn,
         test_loss_fn=base_test_loss_fn,
-        optimizer=base_optimizer,
+        lr=model_config.lr,
         train_loader=train_loader,
         test_loader=test_loader,
         num_epochs=model_config.train_epochs,
-        log_name="base_train_loss",
-        get_accuracy=True,
+        get_test_loss=True,
+        get_test_accuracy=True,
     )
-    model.save(model_config.model_path)
+    model.save(model_config.model_dir, model_config.model_name)
 
 
 # Log margin loss of full rank model:
