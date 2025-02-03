@@ -68,7 +68,7 @@ except FileNotFoundError:
             lr=base_mnist_config.lr,
             train_loader=train_loader,
             test_loader=test_loader,
-            num_epochs=base_mnist_config.train_epochs,
+            num_epochs=base_mnist_config.epochs,
             get_test_loss=True,
             get_test_accuracy=True,
             train_loss_name="Base Train Loss",
@@ -113,11 +113,13 @@ except FileNotFoundError:
             lr=hyper_mnist_config_scaled.lr,
             train_loader=param_dataloader_scaled,
             test_loader=param_dataloader_scaled,
-            num_epochs=hyper_mnist_config_scaled.train_epochs,
+            num_epochs=hyper_mnist_config_scaled.epochs,
             train_loss_name="hyper_scaled_train_loss",
             callback=callback,
         )
-        hyper_model_scaled.save(hyper_mnist_config_scaled.model_dir, hyper_mnist_config_scaled.model_name)
+        hyper_model_scaled.save(
+            hyper_mnist_config_scaled.model_dir, hyper_mnist_config_scaled.model_name
+        )
 
 
 try:
@@ -154,11 +156,13 @@ except FileNotFoundError:
             lr=hyper_mnist_config_binary.lr,
             train_loader=param_dataloader_binary,
             test_loader=param_dataloader_binary,
-            num_epochs=hyper_mnist_config_binary.train_epochs,
+            num_epochs=hyper_mnist_config_binary.epochs,
             train_loss_name="hyper_binary_train_loss",
             callback=callback,
         )
-        hyper_model_binary.save(hyper_mnist_config_binary.model_dir, hyper_mnist_config_binary.model_name)
+        hyper_model_binary.save(
+            hyper_mnist_config_binary.model_dir, hyper_mnist_config_binary.model_name
+        )
         reconstructed_accuracy = get_reconstructed_accuracy(
             base_model,
             hyper_model_binary,

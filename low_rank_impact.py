@@ -29,7 +29,7 @@ model = LowRankMLP(model_config.model_dims, model_config.model_act)
 
 
 try:
-    
+
     model.load(model_config.model_path)
     print(f"File {model_config.model_path} found. Loading model...")
 
@@ -44,7 +44,7 @@ except FileNotFoundError:
         lr=model_config.lr,
         train_loader=train_loader,
         test_loader=test_loader,
-        num_epochs=model_config.train_epochs,
+        num_epochs=model_config.epochs,
         get_test_loss=True,
         get_test_accuracy=True,
     )

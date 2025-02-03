@@ -178,12 +178,13 @@ class LowRankLinear(nn.Linear):
 
 
 class MLP(nn.Module):
-    def __init__(self, dimensions, activation, low_rank=False, device="cpu"):
+    def __init__(self, dimensions, activation, low_rank=False, device="cpu", shift_logits=False):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
         self.network_modules = []
         self.device = torch.device(device)
+        self.shift_logits = shift_logits
 
         for i in range(len(dimensions) - 1):
             if low_rank:
@@ -198,7 +199,11 @@ class MLP(nn.Module):
         self.num_parameters = sum([p.numel() for p in self.parameters()])
 
     def forward(self, x):
-        return self.network(x)
+        logits = self.network(x)
+        if self.shift_logits:
+            min_logit = logits.min(dim=-1, keepdim=True)[0].detach()
+            logits = logits - min_logit
+        return logits
 
     @property
     def layers(self):
@@ -359,6 +364,7 @@ class MLP(nn.Module):
         data_test_loader,
         lr,
         num_epochs,
+        epoch_shift=0,
         get_kl_on_test_data=False,
         get_accuracy_on_test_data=False,
         callback=None,
@@ -369,7 +375,7 @@ class MLP(nn.Module):
     ):
 
         train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
-        train_loss_name = f"Dist Train {objective} {reduction}"
+        train_loss_name = f"Dist Train ({objective} {reduction})"
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
 
@@ -393,23 +399,23 @@ class MLP(nn.Module):
             # alpha = min(alpha, 10**5)
 
             epoch_log = {
-                "Epoch": epoch,
+                "Epoch": epoch + epoch_shift,
                 "Alpha": alpha,
                 "lr": scheduler.get_last_lr()[0],
             }
 
             if get_accuracy_on_test_data:
                 test_accuracy = self.overall_accuracy(data_test_loader)
-                epoch_log["Dist Test Accuracy"] = test_accuracy
+                epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = test_accuracy
 
             if get_kl_on_test_data:
                 total_kl_loss_on_test_data = self.overall_kl_loss(
                     full_model, data_test_loader
                 )
-                epoch_log["KL Loss on Test Data"] = total_kl_loss_on_test_data
+                epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = total_kl_loss_on_test_data
 
             max_l2_dev = self.max_l2_deviation(full_model, domain_test_loader)
-            epoch_log["Max l2 Deviation"] = max_l2_dev
+            epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
 
             # scheduler.step(max_l2_dev)
 
