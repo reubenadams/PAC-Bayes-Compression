@@ -178,7 +178,9 @@ class LowRankLinear(nn.Linear):
 
 
 class MLP(nn.Module):
-    def __init__(self, dimensions, activation, low_rank=False, device="cpu", shift_logits=False):
+    def __init__(
+        self, dimensions, activation, low_rank=False, device="cpu", shift_logits=False
+    ):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
@@ -254,7 +256,7 @@ class MLP(nn.Module):
             total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
-    def max_l2_deviation(self, full_model, domain_loader):
+    def max_and_mean_l2_deviation(self, full_model, domain_loader):
         max_l2 = torch.tensor(0.0, device=self.device)
         for x, _ in domain_loader:
             x = x.to(self.device)
@@ -265,7 +267,8 @@ class MLP(nn.Module):
                 self_output - full_output, ord=2, dim=-1
             )
             max_l2 = max(max_l2, l2_norms.max())
-        return max_l2
+            mean_l2 = l2_norms.mean()
+        return max_l2, mean_l2
 
     def train(
         self,
@@ -406,16 +409,23 @@ class MLP(nn.Module):
 
             if get_accuracy_on_test_data:
                 test_accuracy = self.overall_accuracy(data_test_loader)
-                epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = test_accuracy
+                epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = (
+                    test_accuracy
+                )
 
             if get_kl_on_test_data:
                 total_kl_loss_on_test_data = self.overall_kl_loss(
                     full_model, data_test_loader
                 )
-                epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = total_kl_loss_on_test_data
+                epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = (
+                    total_kl_loss_on_test_data
+                )
 
-            max_l2_dev = self.max_l2_deviation(full_model, domain_test_loader)
+            max_l2_dev, mean_l2_dev = self.max_and_mean_l2_deviation(
+                full_model, domain_test_loader
+            )
             epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
+            epoch_log[f"Mean l2 Deviation ({objective} {reduction})"] = mean_l2_dev
 
             # scheduler.step(max_l2_dev)
 

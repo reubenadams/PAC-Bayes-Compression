@@ -30,7 +30,7 @@ train_loader, test_loader = get_dataloaders(
 
 wandb.init(
     project="Distillation",
-    name=f"Yes logit shift",
+    name=f"No logit shift, alpha=0.1",
 )
 
 
@@ -139,6 +139,7 @@ except FileNotFoundError:
         get_kl_on_test_data=True,
         objective="l2",
         reduction="mellowmax",
+        alpha=0.1,
     )
     dist_l2_data_model.save(
         dist_l2_mnist_config.model_dir, dist_l2_mnist_config.model_name
