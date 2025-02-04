@@ -368,19 +368,27 @@ class MLP(nn.Module):
         lr,
         num_epochs,
         epoch_shift=0,
+        get_kl_on_train_data=False,
         get_kl_on_test_data=False,
         get_accuracy_on_test_data=False,
+        get_l2_on_test_data=False,
         callback=None,
         objective="kl",
         reduction="mean",
         k=10,
         alpha=10**2,
+        use_scheduler=True,
+        target_kl_on_train=None,
     ):
 
         train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
         train_loss_name = f"Dist Train ({objective} {reduction})"
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
+        scheduler = (
+            torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
+            if use_scheduler
+            else None
+        )
 
         for epoch in range(num_epochs):
 
@@ -401,17 +409,27 @@ class MLP(nn.Module):
             # alpha *= 1.5
             # alpha = min(alpha, 10**5)
 
-            epoch_log = {
-                "Epoch": epoch + epoch_shift,
-                "Alpha": alpha,
-                "lr": scheduler.get_last_lr()[0],
-            }
+            epoch_log = {"Epoch": epoch + epoch_shift}
+            if objective == "l2":
+                epoch_log["Alpha"] = alpha
+            if scheduler:
+                epoch_log["lr"] = scheduler.get_last_lr()[0]
 
             if get_accuracy_on_test_data:
                 test_accuracy = self.overall_accuracy(data_test_loader)
                 epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = (
                     test_accuracy
                 )
+
+            if get_kl_on_train_data:
+                total_kl_loss_on_train_data = self.overall_kl_loss(
+                    full_model, domain_train_loader
+                )
+                epoch_log[f"KL Loss on Train Data ({objective} {reduction})"] = (
+                    total_kl_loss_on_train_data
+                )
+                if total_kl_loss_on_train_data < target_kl_on_train:
+                    return total_kl_loss_on_train_data
 
             if get_kl_on_test_data:
                 total_kl_loss_on_test_data = self.overall_kl_loss(
@@ -421,11 +439,12 @@ class MLP(nn.Module):
                     total_kl_loss_on_test_data
                 )
 
-            max_l2_dev, mean_l2_dev = self.max_and_mean_l2_deviation(
-                full_model, domain_test_loader
-            )
-            epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
-            epoch_log[f"Mean l2 Deviation ({objective} {reduction})"] = mean_l2_dev
+            if get_l2_on_test_data:
+                max_l2_dev, mean_l2_dev = self.max_and_mean_l2_deviation(
+                    full_model, domain_test_loader
+                )
+                epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
+                epoch_log[f"Mean l2 Deviation ({objective} {reduction})"] = mean_l2_dev
 
             # scheduler.step(max_l2_dev)
 
@@ -435,6 +454,98 @@ class MLP(nn.Module):
                 callback(epoch)
 
         print("Training complete.")
+
+    def get_dist_dims(self, dim_skip):
+        input_dim, hidden_dims, output_dim = (
+            self.dimensions[0],
+            self.dimensions[1:-1],
+            self.dimensions[-1],
+        )
+
+        dist_hidden_dims = product(
+            *[list(range(1, dim + 1, dim_skip)) for dim in hidden_dims]
+        )  # TODO: Currently you only test every 5
+        dist_dims = [
+            [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
+        ]
+        return dist_dims
+
+    def get_dists(
+        self,
+        dim_skip,
+        dist_activation,
+        shift_logits,
+        domain_train_loader,
+        domain_test_loader,
+        data_test_loader,
+        lr,
+        num_epochs,
+    ):
+        dist_dims = self.get_dist_dims(dim_skip)
+        dist_models = {
+            tuple(dims): MLP(
+                dimensions=dims,
+                activation=dist_activation,
+                device=self.device,
+                shift_logits=shift_logits,
+            )
+            for dims in dist_dims
+        }
+        for dims, model in dist_models.items():
+            wandb.init(
+                project="Multiple Distillations, lr=0.01, Full Data", name=f"{dims}"
+            )
+            print(f"Distilling into dims: {dims}")
+            model.dist_from(
+                full_model=self,
+                domain_train_loader=domain_train_loader,
+                domain_test_loader=domain_test_loader,
+                data_test_loader=data_test_loader,
+                lr=lr,
+                num_epochs=num_epochs,
+                objective="kl",
+                reduction="mean",
+            )
+            wandb.finish()
+
+    def get_dist_complexity(
+        self,
+        dim_skip,
+        max_hidden_dim,
+        dist_activation,
+        shift_logits,
+        domain_train_loader,
+        lr,
+        num_epochs,
+        target_kl_on_train,
+    ):
+        for hidden_dim in range(1, max_hidden_dim + 1, dim_skip):
+            dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
+            dist_model = MLP(
+                dimensions=dist_dims,
+                activation=dist_activation,
+                device=self.device,
+                shift_logits=shift_logits,
+            )
+
+            wandb.init(project="Distillation complexity", name=f"{dist_dims}")
+            total_kl_loss_on_train_data = dist_model.dist_from(
+                full_model=self,
+                domain_train_loader=domain_train_loader,
+                domain_test_loader=None,
+                data_test_loader=None,
+                lr=lr,
+                num_epochs=num_epochs,
+                get_kl_on_train_data=True,
+                get_kl_on_test_data=False,
+                get_accuracy_on_test_data=False,
+                objective="kl",
+                reduction="mean",
+                target_kl_on_train=target_kl_on_train,
+            )
+            wandb.finish()
+            if total_kl_loss_on_train_data:
+                return dist_dims[1]
 
     def save(self, model_dir, model_name):
         os.makedirs(model_dir, exist_ok=True)
