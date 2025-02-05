@@ -7,7 +7,7 @@ from load_data import get_dataloaders
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {device}")
+torch.manual_seed(0)
 
 
 full_model_dims = [[784, d, 10] for d in [100, 200, 300]]
@@ -15,7 +15,7 @@ full_model_configs = [
     Config(experiment="distillation", model_type="full", model_dims=dims)
     for dims in full_model_dims
 ]
-torch.manual_seed(0)
+
 full_models = [
     MLP(config.model_dims, config.model_act, device=device)
     for config in full_model_configs
@@ -47,14 +47,18 @@ for full_config, full_model in zip(full_model_configs, full_models):
             train_loader=train_loader,
             test_loader=test_loader,
             num_epochs=full_config.epochs,
+            get_overall_train_loss=True,
+            overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
             get_test_accuracy=True,
             train_loss_name="Full Train Loss",
             test_loss_name="Full Test Loss",
             test_accuracy_name="Full Test Accuracy",
+            target_overall_train_loss=0.01,
         )
         full_model.save(full_config.model_dir, full_config.model_name)
 
 
+dist_complexities = {}
 for full_model in full_models:
     dist_complexity = full_model.get_dist_complexity(
         dim_skip=10,
@@ -64,16 +68,17 @@ for full_model in full_models:
         domain_train_loader=train_loader,
         lr=0.01,
         num_epochs=100,
-        target_kl_on_train=0.1,
+        target_kl_on_train=0.01,
     )
+    dist_complexities[full_model.dimensions[1]] = dist_complexity
     print(dist_complexity)
-    wandb.init(project="Distillation complexity", name=f"{full_model.dimensions}")
     print(f"Full Model Dim: {full_model.dimensions[1]}")
     print(f"Complexity: {dist_complexity}")
-    wandb.log(
-        {"Full Model Dim": full_model.dimensions[1], "Complexity": dist_complexity}
-    )
-    wandb.finish()
+
+wandb.init(project="Distillation complexity", name="Complexity")
+for dim, comp in dist_complexities.items():
+    wandb.log({"Full Model Dim": dim, "Complexity": comp})
+wandb.finish()
 
 assert False
 

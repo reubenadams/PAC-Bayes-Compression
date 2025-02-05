@@ -278,12 +278,15 @@ class MLP(nn.Module):
         train_loader,
         test_loader,
         num_epochs,
+        get_overall_train_loss=False,
+        overall_train_loss_fn=None,
         get_test_loss=False,
         get_test_accuracy=False,
         train_loss_name="Train Loss",
         test_loss_name="Test Loss",
         test_accuracy_name="Test Accuracy",
         callback=None,  # TODO: Do we ever use this?
+        target_overall_train_loss=None,
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -306,6 +309,12 @@ class MLP(nn.Module):
 
             epoch_log = {"Epoch": epoch}
 
+            if get_overall_train_loss:
+                overall_train_loss = self.overall_loss(
+                    overall_train_loss_fn, train_loader
+                )
+                epoch_log["Overall " + train_loss_name] = overall_train_loss.item()
+
             if get_test_loss:
                 test_loss = self.overall_loss(test_loss_fn, test_loader)
                 epoch_log[test_loss_name] = test_loss.item()
@@ -315,6 +324,10 @@ class MLP(nn.Module):
                 epoch_log[test_accuracy_name] = test_accuracy
 
             wandb.log(epoch_log)
+
+            if target_overall_train_loss:
+                if overall_train_loss <= target_overall_train_loss:
+                    return overall_train_loss
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)

@@ -166,3 +166,4 @@ trained_models/
 wandb/
 data/
 scratch.py
+scratch2.py

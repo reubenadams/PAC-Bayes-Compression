@@ -62,7 +62,7 @@ class Config:
         self.model_dir = (
             f"trained_models/{self.experiment}/{self.dataset}/{self.new_data_shape_str}"
         )
-        self.model_name = f"{self.model_type}_{self.model_dims_str}_{self.model_act}.t"
+        self.model_name = f"{self.model_type}_{self.model_dims_str}_B{self.batch_size}_lr{self.lr}.t"
         self.model_path = f"{self.model_dir}/{self.model_name}"
 
 
