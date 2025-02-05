@@ -211,7 +211,7 @@ class MLP(nn.Module):
     def layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
 
-    def overall_loss(self, loss_fn, dataloader):
+    def get_overall_loss(self, loss_fn, dataloader):
         assert loss_fn.reduction == "sum"
         total_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
@@ -221,7 +221,7 @@ class MLP(nn.Module):
             total_loss += loss_fn(outputs, labels)
         return total_loss / len(dataloader.dataset)
 
-    def overall_accuracy(self, dataloader):
+    def get_overall_accuracy(self, dataloader):
         num_correct = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
@@ -231,7 +231,12 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
 
-    def overall_margin_loss(self, dataloader, margin, take_softmax=False):
+    def get_generalization_gap(self, train_loader, test_loader):
+        overall_train_01_error = 1 - self.get_overall_accuracy(train_loader)
+        overall_test_01_error = 1 - self.get_overall_accuracy(test_loader)
+        return overall_test_01_error - overall_train_01_error
+
+    def get_overall_margin_loss(self, dataloader, margin, take_softmax=False):
         total_margin_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
@@ -245,7 +250,7 @@ class MLP(nn.Module):
             total_margin_loss += (target_values <= margin + max_non_target_values).sum()
         return total_margin_loss / len(dataloader.dataset)
 
-    def overall_kl_loss(self, full_model, domain_dataloader):
+    def get_overall_kl_loss(self, full_model, domain_dataloader):
         total_dist_kl_loss = torch.tensor(0.0, device=self.device)
         kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
         for x, _ in domain_dataloader:
@@ -256,7 +261,7 @@ class MLP(nn.Module):
             total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
-    def max_and_mean_l2_deviation(self, full_model, domain_loader):
+    def get_max_and_mean_l2_deviation(self, full_model, domain_loader):
         max_l2 = torch.tensor(0.0, device=self.device)
         for x, _ in domain_loader:
             x = x.to(self.device)
@@ -287,13 +292,19 @@ class MLP(nn.Module):
         test_accuracy_name="Test Accuracy",
         callback=None,  # TODO: Do we ever use this?
         target_overall_train_loss=None,
+        patience=10,
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
-        for epoch in range(num_epochs):
+        if target_overall_train_loss:
+            best_loss = float("inf")
+            epochs_since_improvement = 0
 
-            print(f"Epoch [{epoch+1}/{num_epochs}]")
+        for epoch in range(1, num_epochs + 1):
+
+            if epoch % 10 == 1:
+                print(f"Epoch [{epoch}/{num_epochs}]")
 
             for x, labels in train_loader:
                 x, labels = x.to(self.device), labels.to(self.device)
@@ -310,29 +321,36 @@ class MLP(nn.Module):
             epoch_log = {"Epoch": epoch}
 
             if get_overall_train_loss:
-                overall_train_loss = self.overall_loss(
+                overall_train_loss = self.get_overall_loss(
                     overall_train_loss_fn, train_loader
                 )
                 epoch_log["Overall " + train_loss_name] = overall_train_loss.item()
+                if overall_train_loss < best_loss:
+                    best_loss = overall_train_loss
+                    epochs_since_improvement = 0
+                else:
+                    epochs_since_improvement += 1
 
             if get_test_loss:
-                test_loss = self.overall_loss(test_loss_fn, test_loader)
+                test_loss = self.get_overall_loss(test_loss_fn, test_loader)
                 epoch_log[test_loss_name] = test_loss.item()
 
             if get_test_accuracy:
-                test_accuracy = self.overall_accuracy(test_loader)
+                test_accuracy = self.get_overall_accuracy(test_loader)
                 epoch_log[test_accuracy_name] = test_accuracy
 
             wandb.log(epoch_log)
 
             if target_overall_train_loss:
                 if overall_train_loss <= target_overall_train_loss:
-                    return overall_train_loss
+                    return overall_train_loss, True
+                if epochs_since_improvement >= patience:
+                    return overall_train_loss, False
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)
-
-        print("Training complete.")
+            
+        return overall_train_loss, False
 
     def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
 
@@ -403,9 +421,10 @@ class MLP(nn.Module):
             else None
         )
 
-        for epoch in range(num_epochs):
+        for epoch in range(1, num_epochs + 1):
 
-            print(f"Epoch [{epoch+1}/{num_epochs}]")
+            if epoch % 10 == 1:
+                print(f"Epoch [{epoch}/{num_epochs}]")
 
             for x, _ in domain_train_loader:
                 x = x.to(self.device)
@@ -429,13 +448,13 @@ class MLP(nn.Module):
                 epoch_log["lr"] = scheduler.get_last_lr()[0]
 
             if get_accuracy_on_test_data:
-                test_accuracy = self.overall_accuracy(data_test_loader)
+                test_accuracy = self.get_overall_accuracy(data_test_loader)
                 epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = (
                     test_accuracy
                 )
 
             if get_kl_on_train_data:
-                total_kl_loss_on_train_data = self.overall_kl_loss(
+                total_kl_loss_on_train_data = self.get_overall_kl_loss(
                     full_model, domain_train_loader
                 )
                 epoch_log[f"KL Loss on Train Data ({objective} {reduction})"] = (
@@ -445,7 +464,7 @@ class MLP(nn.Module):
                     return total_kl_loss_on_train_data
 
             if get_kl_on_test_data:
-                total_kl_loss_on_test_data = self.overall_kl_loss(
+                total_kl_loss_on_test_data = self.get_overall_kl_loss(
                     full_model, data_test_loader
                 )
                 epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = (
@@ -453,7 +472,7 @@ class MLP(nn.Module):
                 )
 
             if get_l2_on_test_data:
-                max_l2_dev, mean_l2_dev = self.max_and_mean_l2_deviation(
+                max_l2_dev, mean_l2_dev = self.get_max_and_mean_l2_deviation(
                     full_model, domain_test_loader
                 )
                 epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
@@ -465,8 +484,6 @@ class MLP(nn.Module):
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)
-
-        print("Training complete.")
 
     def get_dist_dims(self, dim_skip):
         input_dim, hidden_dims, output_dim = (
@@ -496,6 +513,7 @@ class MLP(nn.Module):
     ):
         for hidden_dim in range(1, max_hidden_dim + 1, dim_skip):
             dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
+            print(f"Attempting to distill into model with dims {dist_dims}")
             dist_model = MLP(
                 dimensions=dist_dims,
                 activation=dist_activation,
@@ -503,7 +521,6 @@ class MLP(nn.Module):
                 shift_logits=shift_logits,
             )
 
-            wandb.init(project="Distillation complexity", name=f"{dist_dims}")
             total_kl_loss_on_train_data = dist_model.dist_from(
                 full_model=self,
                 domain_train_loader=domain_train_loader,
@@ -518,7 +535,6 @@ class MLP(nn.Module):
                 reduction="mean",
                 target_kl_on_train=target_kl_on_train,
             )
-            wandb.finish()
             if total_kl_loss_on_train_data:
                 return dist_dims[1]
 

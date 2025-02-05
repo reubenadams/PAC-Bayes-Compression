@@ -53,12 +53,12 @@ except FileNotFoundError:
 
 # Log margin loss of full rank model:
 for margin in torch.linspace(0, 25, 251):
-    margin_loss_logits = model.overall_margin_loss(
+    margin_loss_logits = model.get_overall_margin_loss(
         test_loader, margin, take_softmax=False
     )
     wandb.log({"Margin": margin, "Margin loss logits": margin_loss_logits})
     if margin <= 1:
-        margin_loss_probs = model.overall_margin_loss(
+        margin_loss_probs = model.get_overall_margin_loss(
             test_loader, margin, take_softmax=True
         )
         wandb.log({"Margin": margin, "Margin loss probs": margin_loss_probs})
@@ -74,7 +74,7 @@ for rank_comb in model.rank_combs:
         min_Ss = model.min_Ss[rank_comb]
         max_Ss = model.max_Ss[rank_comb]
         model.set_to_ranks(rank_comb)
-        margin_loss = model.overall_margin_loss(
+        margin_loss = model.get_overall_margin_loss(
             test_loader, margin=torch.sqrt(torch.tensor(2.0)) * eps, take_softmax=True
         )
         wandb.log(
