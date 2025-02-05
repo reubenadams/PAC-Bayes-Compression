@@ -470,44 +470,6 @@ class MLP(nn.Module):
         ]
         return dist_dims
 
-    def get_dists(
-        self,
-        dim_skip,
-        dist_activation,
-        shift_logits,
-        domain_train_loader,
-        domain_test_loader,
-        data_test_loader,
-        lr,
-        num_epochs,
-    ):
-        dist_dims = self.get_dist_dims(dim_skip)
-        dist_models = {
-            tuple(dims): MLP(
-                dimensions=dims,
-                activation=dist_activation,
-                device=self.device,
-                shift_logits=shift_logits,
-            )
-            for dims in dist_dims
-        }
-        for dims, model in dist_models.items():
-            wandb.init(
-                project="Multiple Distillations, lr=0.01, Full Data", name=f"{dims}"
-            )
-            print(f"Distilling into dims: {dims}")
-            model.dist_from(
-                full_model=self,
-                domain_train_loader=domain_train_loader,
-                domain_test_loader=domain_test_loader,
-                data_test_loader=data_test_loader,
-                lr=lr,
-                num_epochs=num_epochs,
-                objective="kl",
-                reduction="mean",
-            )
-            wandb.finish()
-
     def get_dist_complexity(
         self,
         dim_skip,
