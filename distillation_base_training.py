@@ -8,23 +8,23 @@ import cProfile
 import pstats
 
 
-
 from config import Config
 from models import MLP
 from load_data import get_dataloaders
 
 
-# device = "cuda" if torch.cuda.is_available() else "cpu"
-device = "cuda"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+# device = "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
 
 dims = [(40, d, 10) for d in [100, 200, 300, 400]]
-batch_sizes = [32, 64, 128]
+base_batch_sizes = [32, 64, 128]
 lrs = [0.01, 0.0032, 0.001]
 target_overall_train_loss = 0.01
 target_kl_loss = 0.01
+dist_batch_size = 128
 max_hidden_dim = 7
 train_size, test_size = None, None
 max_base_epochs = 2000
@@ -43,7 +43,7 @@ configs = {
         batch_size=batch_size,
         lr=lr,
     )
-    for dim, batch_size, lr in product(dims, batch_sizes, lrs)
+    for dim, batch_size, lr in product(dims, base_batch_sizes, lrs)
 }
 
 
@@ -97,7 +97,7 @@ if train_base_models:
             print(
                 f"Model did not reach target train loss {overall_train_loss} > {target_overall_train_loss}"
             )
-        
+
         break
 
 
@@ -129,8 +129,8 @@ def train_dist_models():
 
         torch.manual_seed(0)
         train_loader, test_loader = get_dataloaders(
-            config.dataset,
-            config.batch_size,
+            dataset_name=config.dataset,
+            batch_size=dist_batch_size,
             train_size=train_size,
             test_size=test_size,
             device=device,
@@ -146,6 +146,7 @@ def train_dist_models():
             shift_logits=False,
             domain_train_loader=train_loader,
             lr=0.001,
+            batch_size=dist_batch_size,
             num_epochs=max_dist_epochs,
             target_kl_on_train=target_kl_loss,
             patience=dist_patience,

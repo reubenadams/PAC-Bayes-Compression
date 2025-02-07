@@ -11,7 +11,7 @@ from copy import deepcopy
 from itertools import product
 
 from config import Config
-from load_data import get_epsilon_mesh
+from load_data import get_epsilon_mesh, get_logits_dataloader
 
 
 class LowRankLinear(nn.Linear):
@@ -261,6 +261,16 @@ class MLP(nn.Module):
             total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
+    def get_overall_kl_loss_with_logit_loader(self, logit_loader):
+        total_dist_kl_loss = torch.tensor(0.0, device=self.device)
+        kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
+        for x, targets in logit_loader:
+            x = x.to(self.device)
+            x = x.view(x.size(0), -1)
+            outputs = F.log_softmax(self(x), dim=-1)
+            total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
+        return total_dist_kl_loss / len(logit_loader.dataset)
+
     def get_max_and_mean_l2_deviation(self, full_model, domain_loader):
         max_l2 = torch.tensor(0.0, device=self.device)
         for x, _ in domain_loader:
@@ -293,7 +303,7 @@ class MLP(nn.Module):
         callback=None,  # TODO: Do we ever use this?
         target_overall_train_loss=None,
         patience=10,
-        log_with_wandb=True
+        log_with_wandb=True,
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -400,6 +410,7 @@ class MLP(nn.Module):
         domain_test_loader,
         data_test_loader,
         lr,
+        batch_size,
         num_epochs,
         epoch_shift=0,
         get_kl_on_train_data=False,
@@ -426,6 +437,15 @@ class MLP(nn.Module):
             else None
         )
 
+        if domain_train_loader:
+            logit_train_loader = get_logits_dataloader(
+                full_model, domain_train_loader, batch_size=batch_size, device=self.device
+            )
+        if domain_test_loader:
+            logit_test_loader = get_logits_dataloader(
+                full_model, domain_test_loader, batch_size=batch_size, device=self.device
+            )
+
         if target_kl_on_train:
             best_kl = float("inf")
             epochs_since_improvement = 0
@@ -435,11 +455,10 @@ class MLP(nn.Module):
             if epoch % 10 == 1:
                 print(f"Epoch [{epoch}/{num_epochs}]")
 
-            for x, _ in domain_train_loader:
+            for x, targets in logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = F.log_softmax(self(x), dim=-1)
-                targets = F.log_softmax(full_model(x), dim=-1)
                 loss = train_loss_fn(outputs, targets)
                 if log_with_wandb:
                     wandb.log({train_loss_name: loss.item()})
@@ -464,8 +483,8 @@ class MLP(nn.Module):
                 )
 
             if get_kl_on_train_data:
-                total_kl_loss_on_train_data = self.get_overall_kl_loss(
-                    full_model, domain_train_loader
+                total_kl_loss_on_train_data = self.get_overall_kl_loss_with_logit_loader(
+                    logit_train_loader
                 )
                 epoch_log[f"KL Loss on Train Data ({objective} {reduction})"] = (
                     total_kl_loss_on_train_data
@@ -477,8 +496,8 @@ class MLP(nn.Module):
                     epochs_since_improvement += 1
 
             if get_kl_on_test_data:
-                total_kl_loss_on_test_data = self.get_overall_kl_loss(
-                    full_model, data_test_loader
+                total_kl_loss_on_test_data = self.get_overall_kl_loss_with_logit_loader(
+                    logit_test_loader
                 )
                 epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = (
                     total_kl_loss_on_test_data
@@ -530,6 +549,7 @@ class MLP(nn.Module):
         shift_logits,
         domain_train_loader,
         lr,
+        batch_size,
         num_epochs,
         target_kl_on_train,
         patience=10,
@@ -553,6 +573,7 @@ class MLP(nn.Module):
                     domain_test_loader=None,
                     data_test_loader=None,
                     lr=lr,
+                    batch_size=batch_size,
                     num_epochs=num_epochs,
                     epoch_shift=epochs_taken_so_far,
                     get_kl_on_train_data=True,

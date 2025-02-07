@@ -106,7 +106,12 @@ def get_datasets(dataset_name, new_size=None):
 
 
 def get_dataloaders(
-    dataset_name, batch_size, train_size=None, test_size=None, new_size=None, device="cpu"
+    dataset_name,
+    batch_size,
+    train_size=None,
+    test_size=None,
+    new_size=None,
+    device="cpu",
 ):
 
     train, test = get_datasets(dataset_name, new_size)
@@ -136,14 +141,14 @@ def get_B(data_loader):
 
 
 class CustomDataset(Dataset):
-        
+
     def __init__(self, data, targets):
         self.data = data
         self.targets = targets
 
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, idx):
         return self.data[idx], self.targets[idx]
 
@@ -207,3 +212,19 @@ def get_epsilon_mesh(epsilon, data_shape, device):
         *[torch.linspace(0, 1, num_cells + 1, device=device)] * num_pixels
     )
     return mesh, actual_epsilon, actual_cell_width
+
+
+def get_logits_dataloader(model, data_loader, batch_size, device):
+    model.to(device)
+    inputs = []
+    logits = []
+    with torch.no_grad():
+        for data, _ in data_loader:
+            data = data.to(device)
+            inputs.append(data)
+            logits.append(model(data))
+    inputs = torch.cat(inputs)
+    logits = torch.cat(logits)
+    logits_dataset = CustomDataset(inputs, logits)
+    logits_loader = DataLoader(logits_dataset, batch_size=batch_size, shuffle=True)
+    return logits_loader
