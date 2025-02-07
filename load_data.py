@@ -3,35 +3,47 @@ import os
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset, DataLoader, Subset
+from mnist1d.data import get_dataset_args, get_dataset
 
 
 def get_datasets(dataset_name, new_size=None):
 
+    valid_datasets = ["MNIST", "CIFAR10", "MNIST1D"]
+    data_root = f"./data/{dataset_name}"
+
     if dataset_name == "MNIST":
-        data_root = "./data/MNIST"
         if new_size is None:
             new_size = (28, 28)
             if new_size[0] > 28 or new_size[1] > 28:
                 raise ValueError(
                     f"New MNIST size {new_size} should not be larger than original size 28x28."
                 )
+        data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
 
     elif dataset_name == "CIFAR10":
-        data_root = "./data/CIFAR10"
         if new_size is None:
             new_size = (32, 32)
             if new_size[0] > 32 or new_size[1] > 32:
                 raise ValueError(
                     f"New CIFAR10 size {new_size} should not be larger than original size 32x32."
                 )
+        data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
+
+    elif dataset_name == "MNIST1D":
+        if new_size is None:
+            new_size = (40,)
+        else:
+            if new_size != (40,):
+                raise ValueError(f"MNIST1D does not support resizing.")
+        data_dir = os.path.join(data_root, f"{new_size[0]}")
 
     else:
-        raise ValueError(f"Invalid dataset name: {dataset_name} should be one of {'MNIST', 'CIFAR10'}")
-
-    data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
+        raise ValueError(
+            f"Invalid dataset name: {dataset_name} should be one of {valid_datasets}."
+        )
 
     try:
-
+        print(f"Loading data from {data_dir}.")
         train = torch.load(os.path.join(data_dir, "train.pt"), weights_only=False)
         test = torch.load(os.path.join(data_dir, "test.pt"), weights_only=False)
 
@@ -74,6 +86,17 @@ def get_datasets(dataset_name, new_size=None):
                 download=True,
                 transform=transform,
             )
+
+        elif dataset_name == "MNIST1D":
+            os.makedirs(data_root, exist_ok=True)
+            path = os.path.join(data_root, "mnist1d_data.pkl")
+            args = get_dataset_args()
+            data = get_dataset(args, path=path, download=True)
+            x_train = torch.tensor(data["x"], dtype=torch.float32)
+            x_test = torch.tensor(data["x_test"], dtype=torch.float32)
+            y_train, y_test = torch.tensor(data["y"]), torch.tensor(data["y_test"])
+            train = torch.utils.data.TensorDataset(x_train, y_train)
+            test = torch.utils.data.TensorDataset(x_test, y_test)
 
         os.makedirs(data_dir, exist_ok=True)
         torch.save(train, os.path.join(data_dir, "train.pt"))

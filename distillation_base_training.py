@@ -16,18 +16,24 @@ torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
 
-dims = [(784, d, 10) for d in [100, 200, 300]]
+dims = [(40, d, 10) for d in [100, 200, 300, 400]]
 batch_sizes = [32, 64, 128]
-lrs = [0.01, 0.001, 0.0001]
-target_overall_train_loss = 0.1
+lrs = [0.01, 0.0032, 0.001]
+target_overall_train_loss = 0.01
+target_kl_loss = 0.01
 train_size, test_size = None, None
-max_base_epochs = 100
+max_base_epochs = 2000
+max_dist_epochs = 2000
+base_patience = 20
+dist_patience = 20
+dist_dim_skip = 15
 
 configs = {
     (dim, batch_size, lr): Config(
         experiment="distillation",
         model_type="base",
         model_dims=dim,
+        dataset="MNIST1D",
         epochs=max_base_epochs,
         batch_size=batch_size,
         lr=lr,
@@ -36,11 +42,15 @@ configs = {
 }
 
 
-train_base_models, train_dist_models = True, True
+train_base_models, train_dist_models = False, True
 
 
 if train_base_models:
     for (dim, batch_size, lr), config in configs.items():
+        wandb.init(
+            project="Distillation Base MNIST1D",
+            name=f"{dim[1]}_{batch_size}_{lr}",
+        )
         print(dim, batch_size, lr)
         torch.manual_seed(0)
         model = MLP(config.model_dims, config.model_act, device=device)
@@ -50,9 +60,6 @@ if train_base_models:
             config.batch_size,
             train_size=train_size,
             test_size=test_size,
-        )
-        wandb.init(
-            project="Distillation Base Full MNIST", name=f"{dim[1]}_{batch_size}_{lr}"
         )
         overall_train_loss, target_loss_achieved = model.train(
             train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -69,6 +76,7 @@ if train_base_models:
             test_loss_name="Test Loss",
             test_accuracy_name="Test Accuracy",
             target_overall_train_loss=target_overall_train_loss,
+            patience=base_patience,
         )
         wandb.finish()
         if target_loss_achieved:  # Only save if model reached target train loss
@@ -83,9 +91,14 @@ if train_base_models:
 
 
 if train_dist_models:
-    wandb.init(project="Distillation Dist Full MNIST", name="Distillation")
-    data = []
     for (dim, batch_size, lr), config in configs.items():
+
+        wandb.init(
+            project="Distillation Dist MNIST1D",
+            name=f"{dim[1]}_{batch_size}_{lr}",
+            reinit=True,
+        )
+
         print(dim, batch_size, lr)
         model_log = {
             "Dim": dim[1],
@@ -93,7 +106,14 @@ if train_dist_models:
             "Learning Rate": lr,
         }
         model = MLP(config.model_dims, config.model_act, device=device)
-        model.load(config.model_path)
+
+        try:
+            model.load(config.model_path)
+            print(f"File {config.model_path} found. Loading model...")
+        except FileNotFoundError:
+            print(f"File {config.model_path} not found. Skipping model...")
+            continue
+
         torch.manual_seed(0)
         train_loader, test_loader = get_dataloaders(
             config.dataset,
@@ -101,34 +121,28 @@ if train_dist_models:
             train_size=train_size,
             test_size=test_size,
         )
+
         generalization_gap = model.get_generalization_gap(train_loader, test_loader)
-        # generalization_gap = randint(1, 100)
         model_log["Generalization Gap"] = generalization_gap
+
         complexity = model.get_dist_complexity(
-            dim_skip=1,
+            dim_skip=dist_dim_skip,
             max_hidden_dim=1000,
             dist_activation="relu",
             shift_logits=False,
             domain_train_loader=train_loader,
-            lr=0.01,
-            num_epochs=20,
-            target_kl_on_train=0.01,
+            lr=0.001,
+            num_epochs=max_dist_epochs,
+            target_kl_on_train=target_kl_loss,
+            patience=dist_patience,
         )
-        # complexity = randint(1, 100)
+
         if complexity:
             print(
                 f"Successfully distilled model. Complexity: {complexity}, Generalization Gap: {generalization_gap}"
             )
-            data.append([complexity, generalization_gap])
-    table = wandb.Table(data=data, columns=["Complexity", "Generalization Gap"])
-    wandb.log(
-        {
-            "my_custom_plot_id": wandb.plot.scatter(
-                table,
-                "Complexity",
-                "Generalization Gap",
-                title="Generalization Gap vs Complexity",
-            )
-        }
-    )
+            model_log["Complexity"] = complexity
+            wandb.log(model_log)
+        print()
+
     wandb.finish()

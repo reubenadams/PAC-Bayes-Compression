@@ -349,7 +349,7 @@ class MLP(nn.Module):
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)
-            
+
         return overall_train_loss, False
 
     def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
@@ -410,6 +410,7 @@ class MLP(nn.Module):
         alpha=10**2,
         use_scheduler=True,
         target_kl_on_train=None,
+        patience=10,
     ):
 
         train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
@@ -420,6 +421,10 @@ class MLP(nn.Module):
             if use_scheduler
             else None
         )
+
+        if target_kl_on_train:
+            best_kl = float("inf")
+            epochs_since_improvement = 0
 
         for epoch in range(1, num_epochs + 1):
 
@@ -460,8 +465,11 @@ class MLP(nn.Module):
                 epoch_log[f"KL Loss on Train Data ({objective} {reduction})"] = (
                     total_kl_loss_on_train_data
                 )
-                if total_kl_loss_on_train_data < target_kl_on_train:
-                    return total_kl_loss_on_train_data
+                if total_kl_loss_on_train_data < best_kl:
+                    best_kl = total_kl_loss_on_train_data
+                    epochs_since_improvement = 0
+                else:
+                    epochs_since_improvement += 1
 
             if get_kl_on_test_data:
                 total_kl_loss_on_test_data = self.get_overall_kl_loss(
@@ -482,8 +490,16 @@ class MLP(nn.Module):
 
             wandb.log(epoch_log)
 
+            if target_kl_on_train:
+                if total_kl_loss_on_train_data <= target_kl_on_train:
+                    return total_kl_loss_on_train_data, True, epoch
+                if epochs_since_improvement >= patience:
+                    return total_kl_loss_on_train_data, False, epoch
+
             if epoch % 10 == 0 and callback:
                 callback(epoch)
+
+        return total_kl_loss_on_train_data, False, epoch
 
     def get_dist_dims(self, dim_skip):
         input_dim, hidden_dims, output_dim = (
@@ -510,7 +526,9 @@ class MLP(nn.Module):
         lr,
         num_epochs,
         target_kl_on_train,
+        patience=10,
     ):
+        epochs_taken_so_far = 0
         for hidden_dim in range(1, max_hidden_dim + 1, dim_skip):
             dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
             print(f"Attempting to distill into model with dims {dist_dims}")
@@ -521,21 +539,26 @@ class MLP(nn.Module):
                 shift_logits=shift_logits,
             )
 
-            total_kl_loss_on_train_data = dist_model.dist_from(
-                full_model=self,
-                domain_train_loader=domain_train_loader,
-                domain_test_loader=None,
-                data_test_loader=None,
-                lr=lr,
-                num_epochs=num_epochs,
-                get_kl_on_train_data=True,
-                get_kl_on_test_data=False,
-                get_accuracy_on_test_data=False,
-                objective="kl",
-                reduction="mean",
-                target_kl_on_train=target_kl_on_train,
+            total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
+                dist_model.dist_from(
+                    full_model=self,
+                    domain_train_loader=domain_train_loader,
+                    domain_test_loader=None,
+                    data_test_loader=None,
+                    lr=lr,
+                    num_epochs=num_epochs,
+                    epoch_shift=epochs_taken_so_far,
+                    get_kl_on_train_data=True,
+                    get_kl_on_test_data=False,
+                    get_accuracy_on_test_data=False,
+                    objective="kl",
+                    reduction="mean",
+                    target_kl_on_train=target_kl_on_train,
+                    patience=patience,
+                )
             )
-            if total_kl_loss_on_train_data:
+            epochs_taken_so_far += epochs_taken
+            if target_loss_achieved:
                 return dist_dims[1]
 
     def save(self, model_dir, model_name):

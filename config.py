@@ -26,7 +26,7 @@ class Config:
                 f"Invalid experiment: {self.experiment}. Must be one of {valid_experiments}"
             )
 
-        valid_datasets = {"MNIST", "CIFAR10"}
+        valid_datasets = {"MNIST", "CIFAR10", "MNIST1D"}
         if self.dataset not in valid_datasets:
             raise ValueError(
                 f"Invalid dataset: {self.dataset}. Must be one of {valid_datasets}"
@@ -38,18 +38,23 @@ class Config:
                 f"Invalid activation: {self.model_act}. Must be one of {valid_activations}"
             )
 
+        if self.new_data_shape is not None and self.dataset == "MNIST1D":
+            raise ValueError(f"MNIST1D does not support resizing.")
+
         if self.new_data_shape is None:
             if self.dataset == "MNIST":
                 self.new_data_shape = (28, 28)
             elif self.dataset == "CIFAR10":
                 self.new_data_shape = (32, 32)
+            elif self.dataset == "MNIST1D":
+                self.new_data_shape = (40,)
 
         if not (
             self.experiment == "hypernet"
             and self.model_type in {"hyper_scaled", "hyper_binary"}
         ):  # Dimension check for hypernetworks will have to occur elsewhere.
             data_input_dims = prod(self.new_data_shape)
-            num_channels = 1 if self.dataset == "MNIST" else 3
+            num_channels = 3 if self.dataset == "CIFAR10" else 1
             data_input_dims *= num_channels
             if data_input_dims != self.model_dims[0]:
                 raise ValueError(
