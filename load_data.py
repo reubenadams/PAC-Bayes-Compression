@@ -3,6 +3,8 @@ import os
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset, DataLoader, Subset
+import torch.nn.functional as F
+
 from mnist1d.data import get_dataset_args, get_dataset
 
 
@@ -222,7 +224,7 @@ def get_logits_dataloader(model, data_loader, batch_size, device):
         for data, _ in data_loader:
             data = data.to(device)
             inputs.append(data)
-            logits.append(model(data))
+            logits.append(F.log_softmax(model(data), dim=-1))
     inputs = torch.cat(inputs)
     logits = torch.cat(logits)
     logits_dataset = CustomDataset(inputs, logits)

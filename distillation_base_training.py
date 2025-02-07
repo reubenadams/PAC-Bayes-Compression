@@ -25,7 +25,7 @@ lrs = [0.01, 0.0032, 0.001]
 target_overall_train_loss = 0.01
 target_kl_loss = 0.01
 dist_batch_size = 128
-max_hidden_dim = 7
+max_hidden_dim = 2
 train_size, test_size = None, None
 max_base_epochs = 2000
 max_dist_epochs = 100
@@ -48,12 +48,12 @@ configs = {
 
 
 train_base_models, train_dist_models = False, True
-log = False
+log_with_wandb = True
 
 
-if train_base_models:
+def train_base_models():
     for (dim, batch_size, lr), config in configs.items():
-        if log:
+        if log_with_wandb:
             wandb.init(
                 project="Accelerating Distillation MNIST1D",
                 name=f"{dim[1]}_{batch_size}_{lr}",
@@ -84,9 +84,9 @@ if train_base_models:
             test_accuracy_name="Test Accuracy",
             target_overall_train_loss=target_overall_train_loss,
             patience=base_patience,
-            log_with_wandb=log,
+            log_with_wandb=log_with_wandb,
         )
-        if log:
+        if log_with_wandb:
             wandb.finish()
         if target_loss_achieved:  # Only save if model reached target train loss
             print(
@@ -98,14 +98,12 @@ if train_base_models:
                 f"Model did not reach target train loss {overall_train_loss} > {target_overall_train_loss}"
             )
 
-        break
-
 
 # if train_dist_models:
 def train_dist_models():
     for (dim, batch_size, lr), config in configs.items():
 
-        if log:
+        if log_with_wandb:
             wandb.init(
                 project="Accelerating Distillation MNIST1D",
                 name=f"{dim[1]}_{batch_size}_{lr}",
@@ -150,7 +148,7 @@ def train_dist_models():
             num_epochs=max_dist_epochs,
             target_kl_on_train=target_kl_loss,
             patience=dist_patience,
-            log_with_wandb=log,
+            log_with_wandb=log_with_wandb,
         )
 
         if complexity:
@@ -158,16 +156,18 @@ def train_dist_models():
                 f"Successfully distilled model. Complexity: {complexity}, Generalization Gap: {generalization_gap}"
             )
             model_log["Complexity"] = complexity
-            if log:
+            if log_with_wandb:
                 wandb.log(model_log)
         print()
         break
-    if log:
+    if log_with_wandb:
         wandb.finish()
 
 
-with cProfile.Profile() as pr:
-    train_dist_models()
+if __name__ == "__main__":
 
-stats = pstats.Stats(pr)
-stats.sort_stats(pstats.SortKey.TIME).print_stats(30)
+    with cProfile.Profile() as pr:
+        train_dist_models()
+
+    stats = pstats.Stats(pr)
+    stats.sort_stats(pstats.SortKey.TIME).print_stats(10)
