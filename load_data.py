@@ -95,8 +95,8 @@ def get_datasets(dataset_name, new_size=None):
             x_train = torch.tensor(data["x"], dtype=torch.float32)
             x_test = torch.tensor(data["x_test"], dtype=torch.float32)
             y_train, y_test = torch.tensor(data["y"]), torch.tensor(data["y_test"])
-            train = torch.utils.data.TensorDataset(x_train, y_train)
-            test = torch.utils.data.TensorDataset(x_test, y_test)
+            train = CustomDataset(x_train, y_train)
+            test = CustomDataset(x_test, y_test)
 
         os.makedirs(data_dir, exist_ok=True)
         torch.save(train, os.path.join(data_dir, "train.pt"))
@@ -106,7 +106,7 @@ def get_datasets(dataset_name, new_size=None):
 
 
 def get_dataloaders(
-    dataset_name, batch_size, train_size=None, test_size=None, new_size=None
+    dataset_name, batch_size, train_size=None, test_size=None, new_size=None, device="cpu"
 ):
 
     train, test = get_datasets(dataset_name, new_size)
@@ -115,6 +115,11 @@ def get_dataloaders(
         train = Subset(train, range(train_size))
     if test_size is not None:
         test = Subset(test, range(test_size))
+
+    train.data = train.data.to(device)
+    train.targets = train.targets.to(device)
+    test.data = test.data.to(device)
+    test.targets = test.targets.to(device)
 
     train_loader = DataLoader(train, batch_size, shuffle=True)
     test_loader = DataLoader(test, batch_size, shuffle=False)
@@ -128,6 +133,19 @@ def get_B(data_loader):
         fro_norms = torch.linalg.matrix_norm(data, ord="fro")
         max_fro_norm = max(max_fro_norm, fro_norms.max())
     return max_fro_norm
+
+
+class CustomDataset(Dataset):
+        
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]
 
 
 class RandomDomainDataset(Dataset):

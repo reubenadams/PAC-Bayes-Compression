@@ -293,6 +293,7 @@ class MLP(nn.Module):
         callback=None,  # TODO: Do we ever use this?
         target_overall_train_loss=None,
         patience=10,
+        log_with_wandb=True
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -312,7 +313,8 @@ class MLP(nn.Module):
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
                 if train_loss_name:
-                    wandb.log({train_loss_name: loss.item()})
+                    if log_with_wandb:
+                        wandb.log({train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -339,7 +341,8 @@ class MLP(nn.Module):
                 test_accuracy = self.get_overall_accuracy(test_loader)
                 epoch_log[test_accuracy_name] = test_accuracy
 
-            wandb.log(epoch_log)
+            if log_with_wandb:
+                wandb.log(epoch_log)
 
             if target_overall_train_loss:
                 if overall_train_loss <= target_overall_train_loss:
@@ -411,6 +414,7 @@ class MLP(nn.Module):
         use_scheduler=True,
         target_kl_on_train=None,
         patience=10,
+        log_with_wandb=True,
     ):
 
         train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
@@ -437,7 +441,8 @@ class MLP(nn.Module):
                 outputs = F.log_softmax(self(x), dim=-1)
                 targets = F.log_softmax(full_model(x), dim=-1)
                 loss = train_loss_fn(outputs, targets)
-                wandb.log({train_loss_name: loss.item()})
+                if log_with_wandb:
+                    wandb.log({train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -488,7 +493,8 @@ class MLP(nn.Module):
 
             # scheduler.step(max_l2_dev)
 
-            wandb.log(epoch_log)
+            if log_with_wandb:
+                wandb.log(epoch_log)
 
             if target_kl_on_train:
                 if total_kl_loss_on_train_data <= target_kl_on_train:
@@ -527,6 +533,7 @@ class MLP(nn.Module):
         num_epochs,
         target_kl_on_train,
         patience=10,
+        log_with_wandb=True,
     ):
         epochs_taken_so_far = 0
         for hidden_dim in range(1, max_hidden_dim + 1, dim_skip):
@@ -555,6 +562,7 @@ class MLP(nn.Module):
                     reduction="mean",
                     target_kl_on_train=target_kl_on_train,
                     patience=patience,
+                    log_with_wandb=log_with_wandb,
                 )
             )
             epochs_taken_so_far += epochs_taken
