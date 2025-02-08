@@ -4,6 +4,7 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset, DataLoader, Subset
 import torch.nn.functional as F
+import numpy as np
 
 from mnist1d.data import get_dataset_args, get_dataset
 
@@ -48,6 +49,10 @@ def get_datasets(dataset_name, new_size=None):
         print(f"Loading data from {data_dir}.")
         train = torch.load(os.path.join(data_dir, "train.pt"), weights_only=False)
         test = torch.load(os.path.join(data_dir, "test.pt"), weights_only=False)
+        # print("Heey!")
+        # print(type(train))
+        # print(type(train.data))
+        # assert False
 
     except FileNotFoundError:
 
@@ -117,16 +122,25 @@ def get_dataloaders(
 ):
 
     train, test = get_datasets(dataset_name, new_size)
-
-    if train_size is not None:
-        train = Subset(train, range(train_size))
-    if test_size is not None:
-        test = Subset(test, range(test_size))
+    
+    # if isinstance(train.data, np.ndarray):
+    #     train.data = torch.from_numpy(train.data)
+    # if isinstance(test.data, np.ndarray):
+    #     test.data = torch.from_numpy(test.data)
+    # if isinstance(train.targets, list):
+    #     train.targets = torch.tensor(train.targets)
+    # if isinstance(test.targets, list):
+    #     test.targets = torch.tensor(test.targets)
 
     train.data = train.data.to(device)
     train.targets = train.targets.to(device)
     test.data = test.data.to(device)
     test.targets = test.targets.to(device)
+
+    if train_size is not None:
+        train = Subset(train, range(train_size))
+    if test_size is not None:
+        test = Subset(test, range(test_size))
 
     train_loader = DataLoader(train, batch_size, shuffle=True)
     test_loader = DataLoader(test, batch_size, shuffle=False)

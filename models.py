@@ -10,7 +10,7 @@ import wandb
 from copy import deepcopy
 from itertools import product
 
-from config import Config
+from config import TrainConfig
 from load_data import get_epsilon_mesh, get_logits_dataloader
 
 
@@ -287,44 +287,45 @@ class MLP(nn.Module):
 
     def train(
         self,
-        train_loss_fn,
-        test_loss_fn,
-        lr,
         train_loader,
         test_loader,
-        num_epochs,
-        get_overall_train_loss=False,
+        train_loss_fn,
+        test_loss_fn,
+        train_config: TrainConfig,
         overall_train_loss_fn=None,
-        get_test_loss=False,
-        get_test_accuracy=False,
-        train_loss_name="Train Loss",
-        test_loss_name="Test Loss",
-        test_accuracy_name="Test Accuracy",
+        # lr,
+        # num_epochs,
+        # get_overall_train_loss=False,
+        # get_test_loss=False,
+        # get_test_accuracy=False,
+        # train_loss_name="Train Loss",
+        # test_loss_name="Test Loss",
+        # test_accuracy_name="Test Accuracy",
         callback=None,  # TODO: Do we ever use this?
-        target_overall_train_loss=None,
-        patience=10,
-        log_with_wandb=True,
+        # target_overall_train_loss=None,
+        # patience=10,
+        # log_with_wandb=True,
     ):
 
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr)
 
-        if target_overall_train_loss:
+        if train_config.target_overall_train_loss:
             best_loss = float("inf")
             epochs_since_improvement = 0
 
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(1, train_config.num_epochs + 1):
 
             if epoch % 10 == 1:
-                print(f"Epoch [{epoch}/{num_epochs}]")
+                print(f"Epoch [{epoch}/{train_config.num_epochs}]")
 
             for x, labels in train_loader:
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
-                if train_loss_name:
-                    if log_with_wandb:
-                        wandb.log({train_loss_name: loss.item()})
+                if train_config.train_loss_name:
+                    if train_config.log_with_wandb:
+                        wandb.log({train_config.train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -332,38 +333,40 @@ class MLP(nn.Module):
 
             epoch_log = {"Epoch": epoch}
 
-            if get_overall_train_loss:
+            if train_config.get_overall_train_loss:
                 overall_train_loss = self.get_overall_loss(
                     overall_train_loss_fn, train_loader
                 )
-                epoch_log["Overall " + train_loss_name] = overall_train_loss.item()
+                epoch_log["Overall " + train_config.train_loss_name] = overall_train_loss.item()
                 if overall_train_loss < best_loss:
                     best_loss = overall_train_loss
                     epochs_since_improvement = 0
                 else:
                     epochs_since_improvement += 1
 
-            if get_test_loss:
+            if train_config.get_test_loss:
                 test_loss = self.get_overall_loss(test_loss_fn, test_loader)
-                epoch_log[test_loss_name] = test_loss.item()
+                epoch_log[train_config.test_loss_name] = test_loss.item()
 
-            if get_test_accuracy:
+            if train_config.get_test_accuracy:
                 test_accuracy = self.get_overall_accuracy(test_loader)
-                epoch_log[test_accuracy_name] = test_accuracy
+                epoch_log[train_config.test_accuracy_name] = test_accuracy
 
-            if log_with_wandb:
+            if train_config.log_with_wandb:
                 wandb.log(epoch_log)
 
-            if target_overall_train_loss:
-                if overall_train_loss <= target_overall_train_loss:
+            if train_config.target_overall_train_loss:
+                if overall_train_loss <= train_config.target_overall_train_loss:
                     return overall_train_loss, True
-                if epochs_since_improvement >= patience:
+                if epochs_since_improvement >= train_config.patience:
                     return overall_train_loss, False
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)
 
-        return overall_train_loss, False
+        if train_config.get_overall_train_loss:
+            return overall_train_loss, False
+        return None, None
 
     def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
 
@@ -807,7 +810,7 @@ class BaseMLP(MLP):
                         else:  # Bias
                             layer.bias[row] = param_hat
 
-    def get_hyper_model_scaled_input(self, hyper_config: Config):
+    def get_hyper_model_scaled_input(self, hyper_config):
         assert (
             hyper_config.model_dims[0] == 3
         ), "The first dimension of the hyper_model must be 3"
@@ -820,7 +823,7 @@ class BaseMLP(MLP):
             transform=self.scale_indices_transform,
         )
 
-    def get_hyper_model_binary_input(self, hyper_config: Config):
+    def get_hyper_model_binary_input(self, hyper_config):
         if hyper_config.model_dims[0] != sum(self.bit_lengths):
             print(
                 f"Changing dimensions from {hyper_config.model_dims[0]} to {sum(self.bit_lengths)}"
@@ -884,4 +887,4 @@ def to_padded_binary(n, b):
 def get_reconstructed_accuracy(base_model, hyper_model, transform, dataloader):
     base_model_estimate = deepcopy(base_model)
     base_model_estimate.load_from_hyper_model(hyper_model, transform=transform)
-    return base_model_estimate.overall_accuracy(dataloader).item()
+    return base_model_estimate.get_overall_accuracy(dataloader).item()

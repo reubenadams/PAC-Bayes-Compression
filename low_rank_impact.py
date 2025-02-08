@@ -5,13 +5,34 @@ import torch
 import wandb
 
 from models import LowRankMLP
-from config import low_rank_CIFAR10_config as model_config
+from config import TrainConfig, ExperimentConfig
 from load_data import get_dataloaders, get_B
 
 
+batch_size = 128
+lr = 0.01
+
+
+train_config = TrainConfig(
+    lr=lr,
+    batch_size=batch_size,
+    num_epochs=100,
+    get_test_loss=True,
+    get_test_accuracy=True,
+)
+
+experiment_config = ExperimentConfig(
+    project_name="Margin loss against margin, MNIST, Refactored",
+    experiment="low_rank",
+    model_type="low_rank",
+    model_dims=[784, 128, 10],
+    lr=lr,
+    batch_size=batch_size,
+)
+
 train_loader, test_loader = get_dataloaders(
-    model_config.dataset,
-    model_config.batch_size,
+    experiment_config.dataset_name,
+    experiment_config.batch_size,
     train_size=100,
     test_size=100,
 )
@@ -20,35 +41,34 @@ max_fro_norm = get_B(train_loader)
 # max_fro_norm = torch.tensor(28.)  # Reinstate previous line
 print(f"Max Frobenius norm of training data: {max_fro_norm.item()}")
 
-wandb.init(
-    project="Margin loss against margin, CIFAR",
-    name=f"Model dims: {model_config.model_dims}",
-)
 
-model = LowRankMLP(model_config.model_dims, model_config.model_act)
+if train_config.log_with_wandb:
+    wandb.init(
+        project=experiment_config.project_name,
+        name=f"Model dims: {experiment_config.model_dims}",
+    )
+
+model = LowRankMLP(experiment_config.model_dims, experiment_config.model_act)
 
 
 try:
 
-    model.load(model_config.model_path)
-    print(f"File {model_config.model_path} found. Loading model...")
+    model.load(experiment_config.model_path)
+    print(f"File {experiment_config.model_path} found. Loading model...")
 
 except FileNotFoundError:
 
-    print(f"File {model_config.model_path} not found. Training model...")
+    print(f"File {experiment_config.model_path} not found. Training model...")
     base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
     base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
     model.train(
-        train_loss_fn=base_train_loss_fn,
-        test_loss_fn=base_test_loss_fn,
-        lr=model_config.lr,
         train_loader=train_loader,
         test_loader=test_loader,
-        num_epochs=model_config.epochs,
-        get_test_loss=True,
-        get_test_accuracy=True,
+        train_loss_fn=base_train_loss_fn,
+        test_loss_fn=base_test_loss_fn,
+        train_config=train_config,
     )
-    model.save(model_config.model_dir, model_config.model_name)
+    model.save(experiment_config.model_dir, experiment_config.model_name)
 
 
 # Log margin loss of full rank model:

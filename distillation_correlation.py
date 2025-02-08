@@ -22,7 +22,7 @@ full_models = [
 ]
 
 train_loader, test_loader = get_dataloaders(
-    full_model_configs[0].dataset,
+    full_model_configs[0].dataset_name,
     full_model_configs[0].batch_size,
     train_size=100,
     test_size=100,

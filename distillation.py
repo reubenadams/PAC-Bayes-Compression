@@ -21,7 +21,7 @@ dist_l2_mnist_config.model_path = dist_l2_mnist_config.model_path[:-2] + "_l2.t"
 
 
 train_loader, test_loader = get_dataloaders(
-    full_mnist_config.dataset,
+    full_mnist_config.dataset_name,
     full_mnist_config.batch_size,
     train_size=100,
     test_size=100,

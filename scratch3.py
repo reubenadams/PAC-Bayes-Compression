@@ -1,6 +1,7 @@
 import torch
 import torchvision
 from torchvision import transforms, datasets
+from torch.utils.data import Subset
 
 # Load MNIST
 
@@ -18,10 +19,11 @@ from torchvision import transforms, datasets
 # print(dir(train))
 
 
-train = datasets.CIFAR10(
+train = datasets.MNIST(
     root=".data/delete",
     train=True,
     download=True,
 )
-print(type(train.data))
-print(type(train.targets))
+# train = Subset(train, range(100))
+print(type(train.dataset.data))
+print(type(train.dataset.targets))
