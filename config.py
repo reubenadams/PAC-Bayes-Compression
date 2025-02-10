@@ -12,7 +12,7 @@ class TrainConfig:
     use_whole_dataset: bool = False
     use_early_stopping: bool = False
     target_overall_train_loss: Optional[float] = 0.01
-    patience: Optional[int] = 20
+    patience: Optional[int] = 50
 
     log_with_wandb: bool = True
     get_overall_train_loss: bool = False
@@ -39,14 +39,14 @@ class TrainConfig:
 
 
 @dataclass
-class DistConfig:
+class DistTrainConfig:
     lr: float = 0.01
     batch_size: int = 128
-    num_epochs: int = 100
+    num_epochs: int = 2000
     use_whole_dataset: bool = False
 
     dim_skip: int = 10
-    max_hidden_dim: int = 20
+    max_hidden_dim: int = 2000
     dist_activation: str = "relu"
     shift_logits: bool = False
 
@@ -55,8 +55,9 @@ class DistConfig:
     reduction: str = "mean"
     k: Optional[int] = 10
     alpha: Optional[float] = 10**2
-    target_kl_on_train: Optional[float] = 0.01
     use_scheduler: bool = False
+    use_early_stopping: bool = False
+    target_kl_on_train: Optional[float] = 0.01
     patience: Optional[int] = 20
 
     get_kl_on_train_data: bool = True

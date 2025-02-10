@@ -565,6 +565,7 @@ class MLP(nn.Module):
                     domain_train_loader=domain_train_loader,
                     domain_test_loader=None,
                     data_test_loader=None,
+                    epoch_shift=epochs_taken_so_far,
                 )
             )
             epochs_taken_so_far += epochs_taken

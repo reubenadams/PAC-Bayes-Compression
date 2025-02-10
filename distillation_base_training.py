@@ -8,7 +8,7 @@ import cProfile
 import pstats
 
 
-from config import TrainConfig, DistConfig, ExperimentConfig
+from config import TrainConfig, DistTrainConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -18,32 +18,39 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
-train_bases, train_dists = False, True
+train_bases, train_dists = True, True
 
 dataset_name = "MNIST1D"
 # base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
-# base_batch_sizes = [32, 64, 128]
-# base_lrs = [0.01, 0.0032, 0.001]
+base_dims = [(40, 500, 10)]
+base_batch_sizes = [32, 64, 128]
+base_lrs = [0.01, 0.0032, 0.001]
 
-base_dims = [(40, 100, 10)]
-base_batch_sizes = [32]
-base_lrs = [0.01]
+# base_dims = [(40, 100, 10)]
+# base_batch_sizes = [32]
+# base_lrs = [0.01]
 
 train_size, test_size = None, None
 
 
 base_train_configs = {}
 base_experiment_configs = {}
+dist_experiment_configs = {}
 
 for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
     base_train_configs[(batch_size, lr)] = TrainConfig(
         lr=lr,
         batch_size=batch_size,
+        num_epochs=2000,
         use_early_stopping=True,
         get_overall_train_loss=True,
+        get_test_accuracy=True,
+        train_loss_name="Base Train Loss",
+        test_loss_name="Base Test Loss",
+        test_accuracy_name="Base Test Accuracy",
     )
     base_experiment_configs[(dims, batch_size, lr)] = ExperimentConfig(
-        project_name="Refactoring Distillation MNIST1D",
+        project_name="Distillation MNIST1D Base",
         experiment="distillation",
         model_type="base",
         model_dims=dims,
@@ -51,14 +58,29 @@ for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         batch_size=batch_size,
         dataset_name="MNIST1D",
     )
+    dist_experiment_configs[(dims, batch_size, lr)] = ExperimentConfig(
+        project_name="Distillation MNIST1D Dist",
+        experiment="distillation",
+        model_type="dist",
+        model_dims=dims,
+        lr=lr,
+        batch_size=batch_size,
+        dataset_name="MNIST1D",
+    )
 
-dist_config = DistConfig()
+dist_train_config = DistTrainConfig(use_whole_dataset=True, use_early_stopping=True)
 
 
 def train_base_models():
     for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
+
         train_config = base_train_configs[(batch_size, lr)]
         experiment_config = base_experiment_configs[(dims, batch_size, lr)]
+
+        if os.path.exists(experiment_config.model_path):
+            print(f"File {experiment_config.model_path} found. Skipping model...")
+            continue
+
         if train_config.log_with_wandb:
             wandb.init(
                 project=experiment_config.project_name,
@@ -101,11 +123,12 @@ def train_dist_models():
 
     for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         base_experiment_config = base_experiment_configs[(dims, batch_size, lr)]
+        dist_experiment_config = dist_experiment_configs[(dims, batch_size, lr)]
 
-        if dist_config.log_with_wandb:
+        if dist_train_config.log_with_wandb:
             wandb.finish()
             wandb.init(
-                project=base_experiment_config.project_name,
+                project=dist_experiment_config.project_name,
                 name=f"{dims[1]}_{batch_size}_{lr}",
                 reinit=True,
             )
@@ -116,14 +139,14 @@ def train_dist_models():
             "Batch Size": batch_size,
             "Learning Rate": lr,
         }
-        model = MLP(
+        base_model = MLP(
             base_experiment_config.model_dims,
             base_experiment_config.model_act,
             device=device,
         )
 
         try:
-            model.load(base_experiment_config.model_path)
+            base_model.load(base_experiment_config.model_path)
             print(f"File {base_experiment_config.model_path} found. Loading model...")
         except FileNotFoundError:
             print(
@@ -134,22 +157,20 @@ def train_dist_models():
         torch.manual_seed(0)
         train_loader, test_loader = get_dataloaders(
             dataset_name=base_experiment_config.dataset_name,
-            batch_size=dist_config.batch_size,
+            batch_size=dist_train_config.batch_size,
             train_size=train_size,
             test_size=test_size,
-            use_whole_dataset=dist_config.use_whole_dataset,
+            use_whole_dataset=dist_train_config.use_whole_dataset,
             device=device,
         )
 
-        # if dist_config.use_whole_dataset:
-        #     train_loader = [(train_loader[0], train_loader[1])]
-        #     test_loader = [(test_loader[0], test_loader[1])]
-
-        generalization_gap = model.get_generalization_gap(train_loader, test_loader)
+        generalization_gap = base_model.get_generalization_gap(
+            train_loader, test_loader
+        )
         model_log["Generalization Gap"] = generalization_gap
 
-        complexity = model.get_dist_complexity(
-            dist_config,
+        complexity = base_model.get_dist_complexity(
+            dist_train_config,
             domain_train_loader=train_loader,
         )
 
@@ -158,11 +179,10 @@ def train_dist_models():
                 f"Successfully distilled model. Complexity: {complexity}, Generalization Gap: {generalization_gap}"
             )
             model_log["Complexity"] = complexity
-            if dist_config.log_with_wandb:
+            if dist_train_config.log_with_wandb:
                 wandb.log(model_log)
         print()
-        break
-    if dist_config.log_with_wandb:
+    if dist_train_config.log_with_wandb:
         wandb.finish()
 
 
