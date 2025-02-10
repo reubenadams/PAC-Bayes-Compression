@@ -287,24 +287,13 @@ class MLP(nn.Module):
 
     def train(
         self,
+        train_config: TrainConfig,
         train_loader,
         test_loader,
         train_loss_fn,
         test_loss_fn,
-        train_config: TrainConfig,
         overall_train_loss_fn=None,
-        # lr,
-        # num_epochs,
-        # get_overall_train_loss=False,
-        # get_test_loss=False,
-        # get_test_accuracy=False,
-        # train_loss_name="Train Loss",
-        # test_loss_name="Test Loss",
-        # test_accuracy_name="Test Accuracy",
         callback=None,  # TODO: Do we ever use this?
-        # target_overall_train_loss=None,
-        # patience=10,
-        # log_with_wandb=True,
     ):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr)
@@ -337,7 +326,9 @@ class MLP(nn.Module):
                 overall_train_loss = self.get_overall_loss(
                     overall_train_loss_fn, train_loader
                 )
-                epoch_log["Overall " + train_config.train_loss_name] = overall_train_loss.item()
+                epoch_log["Overall " + train_config.train_loss_name] = (
+                    overall_train_loss.item()
+                )
                 if overall_train_loss < best_loss:
                     best_loss = overall_train_loss
                     epochs_since_improvement = 0
@@ -409,61 +400,60 @@ class MLP(nn.Module):
     def dist_from(
         self,
         full_model,
+        dist_config,
         domain_train_loader,
         domain_test_loader,
         data_test_loader,
-        lr,
-        batch_size,
-        num_epochs,
         epoch_shift=0,
-        get_kl_on_train_data=False,
-        get_kl_on_test_data=False,
-        get_accuracy_on_test_data=False,
-        get_l2_on_test_data=False,
         callback=None,
-        objective="kl",
-        reduction="mean",
-        k=10,
-        alpha=10**2,
-        use_scheduler=True,
-        target_kl_on_train=None,
-        patience=10,
-        log_with_wandb=True,
     ):
 
-        train_loss_fn = self.get_dist_loss_fn(objective, reduction, k, alpha)
-        train_loss_name = f"Dist Train ({objective} {reduction})"
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        train_loss_fn = self.get_dist_loss_fn(
+            dist_config.objective,
+            dist_config.reduction,
+            dist_config.k,
+            dist_config.alpha,
+        )
+        train_loss_name = (
+            f"Dist Train ({dist_config.objective} {dist_config.reduction})"
+        )
+        optimizer = torch.optim.Adam(self.parameters(), lr=dist_config.lr)
         scheduler = (
             torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
-            if use_scheduler
+            if dist_config.use_scheduler
             else None
         )
 
         if domain_train_loader:
             logit_train_loader = get_logits_dataloader(
-                full_model, domain_train_loader, batch_size=batch_size, device=self.device
+                full_model,
+                domain_train_loader,
+                batch_size=dist_config.batch_size,
+                device=self.device,
             )
         if domain_test_loader:
             logit_test_loader = get_logits_dataloader(
-                full_model, domain_test_loader, batch_size=batch_size, device=self.device
+                full_model,
+                domain_test_loader,
+                batch_size=dist_config.batch_size,
+                device=self.device,
             )
 
-        if target_kl_on_train:
+        if dist_config.target_kl_on_train:
             best_kl = float("inf")
             epochs_since_improvement = 0
 
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(1, dist_config.num_epochs + 1):
 
             if epoch % 10 == 1:
-                print(f"Epoch [{epoch}/{num_epochs}]")
+                print(f"Epoch [{epoch}/{dist_config.num_epochs}]")
 
             for x, targets in logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = F.log_softmax(self(x), dim=-1)
                 loss = train_loss_fn(outputs, targets)
-                if log_with_wandb:
+                if dist_config.log_with_wandb:
                     wandb.log({train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
@@ -474,54 +464,58 @@ class MLP(nn.Module):
             # alpha = min(alpha, 10**5)
 
             epoch_log = {"Epoch": epoch + epoch_shift}
-            if objective == "l2":
-                epoch_log["Alpha"] = alpha
+            if dist_config.objective == "l2":
+                epoch_log["Alpha"] = dist_config.alpha
             if scheduler:
                 epoch_log["lr"] = scheduler.get_last_lr()[0]
 
-            if get_accuracy_on_test_data:
+            if dist_config.get_accuracy_on_test_data:
                 test_accuracy = self.get_overall_accuracy(data_test_loader)
-                epoch_log[f"Dist Test Accuracy ({objective} {reduction})"] = (
-                    test_accuracy
-                )
+                epoch_log[
+                    f"Dist Test Accuracy ({dist_config.objective} {dist_config.reduction})"
+                ] = test_accuracy
 
-            if get_kl_on_train_data:
-                total_kl_loss_on_train_data = self.get_overall_kl_loss_with_logit_loader(
-                    logit_train_loader
+            if dist_config.get_kl_on_train_data:
+                total_kl_loss_on_train_data = (
+                    self.get_overall_kl_loss_with_logit_loader(logit_train_loader)
                 )
-                epoch_log[f"KL Loss on Train Data ({objective} {reduction})"] = (
-                    total_kl_loss_on_train_data
-                )
+                epoch_log[
+                    f"KL Loss on Train Data ({dist_config.objective} {dist_config.reduction})"
+                ] = total_kl_loss_on_train_data
                 if total_kl_loss_on_train_data < best_kl:
                     best_kl = total_kl_loss_on_train_data
                     epochs_since_improvement = 0
                 else:
                     epochs_since_improvement += 1
 
-            if get_kl_on_test_data:
+            if dist_config.get_kl_on_test_data:
                 total_kl_loss_on_test_data = self.get_overall_kl_loss_with_logit_loader(
                     logit_test_loader
                 )
-                epoch_log[f"KL Loss on Test Data ({objective} {reduction})"] = (
-                    total_kl_loss_on_test_data
-                )
+                epoch_log[
+                    f"KL Loss on Test Data ({dist_config.objective} {dist_config.reduction})"
+                ] = total_kl_loss_on_test_data
 
-            if get_l2_on_test_data:
+            if dist_config.get_l2_on_test_data:
                 max_l2_dev, mean_l2_dev = self.get_max_and_mean_l2_deviation(
                     full_model, domain_test_loader
                 )
-                epoch_log[f"Max l2 Deviation ({objective} {reduction})"] = max_l2_dev
-                epoch_log[f"Mean l2 Deviation ({objective} {reduction})"] = mean_l2_dev
+                epoch_log[
+                    f"Max l2 Deviation ({dist_config.objective} {dist_config.reduction})"
+                ] = max_l2_dev
+                epoch_log[
+                    f"Mean l2 Deviation ({dist_config.objective} {dist_config.reduction})"
+                ] = mean_l2_dev
 
             # scheduler.step(max_l2_dev)
 
-            if log_with_wandb:
+            if dist_config.log_with_wandb:
                 wandb.log(epoch_log)
 
-            if target_kl_on_train:
-                if total_kl_loss_on_train_data <= target_kl_on_train:
+            if dist_config.target_kl_on_train:
+                if total_kl_loss_on_train_data <= dist_config.target_kl_on_train:
                     return total_kl_loss_on_train_data, True, epoch
-                if epochs_since_improvement >= patience:
+                if epochs_since_improvement >= dist_config.patience:
                     return total_kl_loss_on_train_data, False, epoch
 
             if epoch % 10 == 0 and callback:
@@ -546,47 +540,29 @@ class MLP(nn.Module):
 
     def get_dist_complexity(
         self,
-        dim_skip,
-        max_hidden_dim,
-        dist_activation,
-        shift_logits,
+        dist_config,
         domain_train_loader,
-        lr,
-        batch_size,
-        num_epochs,
-        target_kl_on_train,
-        patience=10,
-        log_with_wandb=True,
     ):
         epochs_taken_so_far = 0
-        for hidden_dim in range(1, max_hidden_dim + 1, dim_skip):
+        for hidden_dim in range(
+            1, dist_config.max_hidden_dim + 1, dist_config.dim_skip
+        ):
             dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
             print(f"Attempting to distill into model with dims {dist_dims}")
             dist_model = MLP(
                 dimensions=dist_dims,
-                activation=dist_activation,
+                activation=dist_config.dist_activation,
                 device=self.device,
-                shift_logits=shift_logits,
+                shift_logits=dist_config.shift_logits,
             )
 
             total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
                 dist_model.dist_from(
                     full_model=self,
+                    dist_config=dist_config,
                     domain_train_loader=domain_train_loader,
                     domain_test_loader=None,
                     data_test_loader=None,
-                    lr=lr,
-                    batch_size=batch_size,
-                    num_epochs=num_epochs,
-                    epoch_shift=epochs_taken_so_far,
-                    get_kl_on_train_data=True,
-                    get_kl_on_test_data=False,
-                    get_accuracy_on_test_data=False,
-                    objective="kl",
-                    reduction="mean",
-                    target_kl_on_train=target_kl_on_train,
-                    patience=patience,
-                    log_with_wandb=log_with_wandb,
                 )
             )
             epochs_taken_so_far += epochs_taken

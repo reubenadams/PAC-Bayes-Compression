@@ -8,10 +8,10 @@ from math import prod
 class TrainConfig:
     lr: float = 0.01
     batch_size: int = 64
-    num_epochs: int = 100
+    num_epochs: int = 10
     use_early_stopping: bool = False
-    target_overall_train_loss: Optional[float] = None
-    patience: int = None
+    target_overall_train_loss: Optional[float] = 0.01
+    patience: Optional[int] = 20
 
     log_with_wandb: bool = True
     get_overall_train_loss: bool = False
@@ -34,6 +34,55 @@ class TrainConfig:
             if self.get_overall_train_loss is False:
                 raise ValueError(
                     "Must set get_overall_train_loss to True when use_early_stopping is True"
+                )
+
+
+@dataclass
+class DistConfig:
+    lr: float = 0.01
+    batch_size: int = 128
+    num_epochs: int = 100
+
+    dim_skip: int = 10
+    max_hidden_dim: int = 1000
+    dist_activation: str = "relu"
+    shift_logits: bool = False
+
+    log_with_wandb: bool = True
+    objective: str = "kl"
+    reduction: str = "mean"
+    k: Optional[int] = 10
+    alpha: Optional[float] = 10**2
+    target_kl_on_train: Optional[float] = 0.01
+    use_scheduler: bool = False
+    patience: Optional[int] = 20
+
+    get_kl_on_train_data: bool = True
+    get_kl_on_test_data: bool = False
+    get_accuracy_on_test_data: bool = False
+    get_l2_on_test_data: bool = False
+
+    def __post_init__(self):
+        valid_objectives = {"kl", "l2"}
+        if self.objective not in valid_objectives:
+            raise ValueError(
+                f"Invalid objective: {self.objective}. Must be one of {valid_objectives}"
+            )
+
+        valid_reductions = {"mean", "sum"}
+        if self.reduction not in valid_reductions:
+            raise ValueError(
+                f"Invalid reduction: {self.reduction}. Must be one of {valid_reductions}"
+            )
+
+        if self.target_kl_on_train is not None:
+            if self.objective != "kl":
+                raise ValueError(
+                    "target_kl_on_train is only valid when objective is 'kl'"
+                )
+            if self.get_kl_on_train_data is False:
+                raise ValueError(
+                    "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
                 )
 
 
@@ -97,66 +146,8 @@ class ExperimentConfig:
         self.new_data_shape_str = "x".join(map(str, self.new_data_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_dir = (
-            f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
+        self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
+        self.model_name = (
+            f"{self.model_type}_{self.model_dims_str}_B{self.batch_size}_lr{self.lr}.t"
         )
-        self.model_name = f"{self.model_type}_{self.model_dims_str}_B{self.batch_size}_lr{self.lr}.t"
         self.model_path = f"{self.model_dir}/{self.model_name}"
-
-
-# base_mnist_config = Config(
-#     experiment="hypernet",
-#     model_type="base",
-#     model_dims=[784, 128, 10],
-# )
-
-# hyper_mnist_config_scaled = Config(
-#     experiment="hypernet",
-#     model_type="hyper_scaled",
-#     model_dims=[3, 1024, 1],
-#     lr=0.01,
-# )
-
-# hyper_mnist_config_binary = Config(
-#     experiment="hypernet",
-#     model_type="hyper_binary",
-#     model_dims=[3, 64, 512, 64, 1],
-#     lr=0.0001,
-# )
-
-# low_rank_mnist_config = Config(
-#     experiment="low_rank",
-#     model_type="low_rank",
-#     model_dims=[784, 128, 10],
-# )
-
-# low_rank_CIFAR10_config = Config(
-#     experiment="low_rank",
-#     model_type="low_rank",
-#     model_dims=[3 * 32**2, 100, 100],
-#     dataset_name="CIFAR10",
-# )
-
-# full_mnist_config = Config(
-#     experiment="distillation",
-#     model_type="full",
-#     model_dims=[4, 256, 10],
-#     new_data_shape=(2, 2),
-# )
-
-# dist_kl_mnist_config = Config(
-#     experiment="distillation",
-#     model_type="dist",
-#     model_dims=[4, 4096, 10],
-#     new_data_shape=(2, 2),
-#     epochs=100,
-#     lr=0.1,
-# )
-
-# dist_l2_mnist_config = Config(
-#     experiment="distillation",
-#     model_type="dist",
-#     model_dims=[4, 4096, 10],
-#     new_data_shape=(2, 2),
-#     epochs=100,
-# )

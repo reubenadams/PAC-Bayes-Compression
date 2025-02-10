@@ -49,10 +49,6 @@ def get_datasets(dataset_name, new_size=None):
         print(f"Loading data from {data_dir}.")
         train = torch.load(os.path.join(data_dir, "train.pt"), weights_only=False)
         test = torch.load(os.path.join(data_dir, "test.pt"), weights_only=False)
-        # print("Heey!")
-        # print(type(train))
-        # print(type(train.data))
-        # assert False
 
     except FileNotFoundError:
 
