@@ -429,6 +429,7 @@ class MLP(nn.Module):
                 full_model,
                 domain_train_loader,
                 batch_size=dist_config.batch_size,
+                use_whole_dataset=dist_config.use_whole_dataset,
                 device=self.device,
             )
         if domain_test_loader:
@@ -436,6 +437,7 @@ class MLP(nn.Module):
                 full_model,
                 domain_test_loader,
                 batch_size=dist_config.batch_size,
+                use_whole_dataset=dist_config.use_whole_dataset,
                 device=self.device,
             )
 

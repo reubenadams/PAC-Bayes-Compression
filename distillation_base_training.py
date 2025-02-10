@@ -18,16 +18,16 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
-train_bases, train_dists = True, True
+train_bases, train_dists = False, True
 
 dataset_name = "MNIST1D"
-base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
-base_batch_sizes = [32, 64, 128]
-base_lrs = [0.01, 0.0032, 0.001]
+# base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
+# base_batch_sizes = [32, 64, 128]
+# base_lrs = [0.01, 0.0032, 0.001]
 
-# base_dims = [(40, 100, 10)]
-# base_batch_sizes = [32]
-# base_lrs = [0.01]
+base_dims = [(40, 100, 10)]
+base_batch_sizes = [32]
+base_lrs = [0.01]
 
 train_size, test_size = None, None
 
@@ -137,8 +137,13 @@ def train_dist_models():
             batch_size=dist_config.batch_size,
             train_size=train_size,
             test_size=test_size,
+            use_whole_dataset=dist_config.use_whole_dataset,
             device=device,
         )
+
+        # if dist_config.use_whole_dataset:
+        #     train_loader = [(train_loader[0], train_loader[1])]
+        #     test_loader = [(test_loader[0], test_loader[1])]
 
         generalization_gap = model.get_generalization_gap(train_loader, test_loader)
         model_log["Generalization Gap"] = generalization_gap

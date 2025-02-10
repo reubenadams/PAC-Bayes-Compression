@@ -8,7 +8,8 @@ from math import prod
 class TrainConfig:
     lr: float = 0.01
     batch_size: int = 64
-    num_epochs: int = 10
+    num_epochs: int = 100
+    use_whole_dataset: bool = False
     use_early_stopping: bool = False
     target_overall_train_loss: Optional[float] = 0.01
     patience: Optional[int] = 20
@@ -42,9 +43,10 @@ class DistConfig:
     lr: float = 0.01
     batch_size: int = 128
     num_epochs: int = 100
+    use_whole_dataset: bool = False
 
     dim_skip: int = 10
-    max_hidden_dim: int = 1000
+    max_hidden_dim: int = 20
     dist_activation: str = "relu"
     shift_logits: bool = False
 
