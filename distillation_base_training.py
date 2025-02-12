@@ -18,7 +18,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
-train_bases, train_dists = True, True
+train_bases, test_dist_variance, train_dists = False, True, False
 
 dataset_name = "MNIST1D"
 # base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
@@ -29,6 +29,9 @@ base_lrs = [0.01, 0.0032, 0.001]
 # base_dims = [(40, 100, 10)]
 # base_batch_sizes = [32]
 # base_lrs = [0.01]
+
+dist_hidden_dims = [10, 30, 100, 300, 1000]
+num_dist_repeats = 5
 
 train_size, test_size = None, None
 
@@ -59,7 +62,7 @@ for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         dataset_name="MNIST1D",
     )
     dist_experiment_configs[(dims, batch_size, lr)] = ExperimentConfig(
-        project_name="Distillation MNIST1D Dist",
+        project_name="Distillation MNIST1D Dist, Reinitialization Test",
         experiment="distillation",
         model_type="dist",
         model_dims=dims,
@@ -117,6 +120,73 @@ def train_base_models():
             print(
                 f"Model did not reach target train loss {overall_train_loss} > {train_config.target_overall_train_loss}"
             )
+
+
+def dist_variance_test():
+
+    for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
+        base_experiment_config = base_experiment_configs[(dims, batch_size, lr)]
+        dist_experiment_config = dist_experiment_configs[(dims, batch_size, lr)]
+
+        for hidden_dim in dist_hidden_dims:
+
+            if dist_train_config.log_with_wandb:
+                wandb.finish()
+                wandb.init(
+                    project=dist_experiment_config.project_name,
+                    name=f"{dims[1]}_{batch_size}_{lr}_{hidden_dim}",
+                    reinit=True,
+                )
+
+            print(
+                f"Dims: {dims[1]}, Batch Size: {batch_size}, LR: {lr}, Dist Hidden Dim: {hidden_dim}"
+            )
+            model_log = {
+                "Dim": dims[1],
+                "Batch Size": batch_size,
+                "Learning Rate": lr,
+                "Dist Hidden Dim": hidden_dim,
+            }
+            base_model = MLP(
+                base_experiment_config.model_dims,
+                base_experiment_config.model_act,
+                device=device,
+            )
+
+            try:
+                base_model.load(base_experiment_config.model_path)
+                print(
+                    f"File {base_experiment_config.model_path} found. Loading model..."
+                )
+            except FileNotFoundError:
+                print(
+                    f"File {base_experiment_config.model_path} not found. Skipping model..."
+                )
+                continue
+
+            torch.manual_seed(0)
+            train_loader, test_loader = get_dataloaders(
+                dataset_name=base_experiment_config.dataset_name,
+                batch_size=dist_train_config.batch_size,
+                train_size=train_size,
+                test_size=test_size,
+                use_whole_dataset=dist_train_config.use_whole_dataset,
+                device=device,
+            )
+
+            kl_losses_and_epochs = base_model.get_dist_variance(
+                dist_config=dist_train_config,
+                domain_train_loader=train_loader,
+                hidden_dim=hidden_dim,
+                num_repeats=num_dist_repeats,
+            )
+
+            for kl_loss, num_epochs in kl_losses_and_epochs:
+                model_log |= {"KL Loss": kl_loss, "Num Epochs": num_epochs}
+
+            if dist_train_config.log_with_wandb:
+                wandb.log(model_log)
+            print()
 
 
 def train_dist_models():
@@ -192,6 +262,9 @@ if __name__ == "__main__":
         if train_bases:
             print("Training base")
             train_base_models()
+        if test_dist_variance:
+            print("Dist variance")
+            dist_variance_test()
         if train_dists:
             print("Training dist")
             train_dist_models()

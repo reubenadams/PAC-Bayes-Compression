@@ -211,6 +211,10 @@ class MLP(nn.Module):
     def layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
 
+    def reinitialize_weights(self):
+        for layer in self.layers:
+            layer.reset_parameters()
+
     def get_overall_loss(self, loss_fn, dataloader):
         assert loss_fn.reduction == "sum"
         total_loss = torch.tensor(0.0, device=self.device)
@@ -547,7 +551,7 @@ class MLP(nn.Module):
     ):
         epochs_taken_so_far = 0
         for hidden_dim in range(
-            1, dist_config.max_hidden_dim + 1, dist_config.dim_skip
+            dist_config.min_hidden_dim, dist_config.max_hidden_dim + 1, dist_config.dim_skip
         ):
             dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
             print(f"Attempting to distill into model with dims {dist_dims}")
@@ -571,6 +575,40 @@ class MLP(nn.Module):
             epochs_taken_so_far += epochs_taken
             if target_loss_achieved:
                 return dist_dims[1]
+
+    def get_dist_variance(
+        self,
+        dist_config,
+        domain_train_loader,
+        hidden_dim,
+        num_repeats,
+    ):
+
+        dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
+        print(f"Attempting to distill into model with dims {dist_dims}")
+        dist_model = MLP(
+            dimensions=dist_dims,
+            activation=dist_config.dist_activation,
+            device=self.device,
+            shift_logits=dist_config.shift_logits,
+        )
+
+        kl_losses_and_epochs = []
+        for _ in range(num_repeats):
+            
+            total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
+                dist_model.dist_from(
+                    full_model=self,
+                    dist_config=dist_config,
+                    domain_train_loader=domain_train_loader,
+                    domain_test_loader=None,
+                    data_test_loader=None,
+                )
+            )
+            kl_losses_and_epochs.append((total_kl_loss_on_train_data, epochs_taken))
+            dist_model.reinitialize_weights()
+        
+        return kl_losses_and_epochs
 
     def save(self, model_dir, model_name):
         os.makedirs(model_dir, exist_ok=True)

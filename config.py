@@ -46,6 +46,7 @@ class DistTrainConfig:
     use_whole_dataset: bool = False
 
     dim_skip: int = 10
+    min_hidden_dim: int = 1
     max_hidden_dim: int = 2000
     dist_activation: str = "relu"
     shift_logits: bool = False
