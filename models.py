@@ -449,10 +449,10 @@ class MLP(nn.Module):
             best_kl = float("inf")
             epochs_since_improvement = 0
 
-        for epoch in range(1, dist_config.num_epochs + 1):
+        for epoch in range(1, dist_config.max_epochs + 1):
 
             if epoch % 10 == 1:
-                print(f"Epoch [{epoch}/{dist_config.num_epochs}]")
+                print(f"Epoch [{epoch}/{dist_config.max_epochs}]")
 
             for x, targets in logit_train_loader:
                 x = x.to(self.device)
@@ -538,7 +538,7 @@ class MLP(nn.Module):
 
         dist_hidden_dims = product(
             *[list(range(1, dim + 1, dim_skip)) for dim in hidden_dims]
-        )  # TODO: Currently you only test every 5
+        )
         dist_dims = [
             [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
         ]
@@ -551,12 +551,12 @@ class MLP(nn.Module):
     ):
         epochs_taken_so_far = 0
         for hidden_dim in range(
-            dist_config.min_hidden_dim, dist_config.max_hidden_dim + 1, dist_config.dim_skip
+            dist_config.min_hidden_dim,
+            dist_config.max_hidden_dim + 1,
+            dist_config.dim_skip,
         ):
-            dist_dims = [self.dimensions[0], hidden_dim, self.dimensions[-1]]
-            print(f"Attempting to distill into model with dims {dist_dims}")
             dist_model = MLP(
-                dimensions=dist_dims,
+                dimensions=[self.dimensions[0], hidden_dim, self.dimensions[-1]],
                 activation=dist_config.dist_activation,
                 device=self.device,
                 shift_logits=dist_config.shift_logits,
@@ -574,7 +574,7 @@ class MLP(nn.Module):
             )
             epochs_taken_so_far += epochs_taken
             if target_loss_achieved:
-                return dist_dims[1]
+                return hidden_dim
 
     def get_dist_variance(
         self,
@@ -594,8 +594,8 @@ class MLP(nn.Module):
         )
 
         kl_losses_and_epochs = []
-        for _ in range(num_repeats):
-            
+        for rep in range(num_repeats):
+
             total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
                 dist_model.dist_from(
                     full_model=self,
@@ -603,11 +603,12 @@ class MLP(nn.Module):
                     domain_train_loader=domain_train_loader,
                     domain_test_loader=None,
                     data_test_loader=None,
+                    epoch_shift=rep * dist_config.max_epochs,
                 )
             )
             kl_losses_and_epochs.append((total_kl_loss_on_train_data, epochs_taken))
             dist_model.reinitialize_weights()
-        
+
         return kl_losses_and_epochs
 
     def save(self, model_dir, model_name):

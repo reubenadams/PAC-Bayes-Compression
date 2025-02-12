@@ -22,16 +22,15 @@ train_bases, test_dist_variance, train_dists = False, True, False
 
 dataset_name = "MNIST1D"
 # base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
-base_dims = [(40, 500, 10)]
-base_batch_sizes = [32, 64, 128]
-base_lrs = [0.01, 0.0032, 0.001]
+# base_batch_sizes = [32, 64, 128]
+# base_lrs = [0.01, 0.0032, 0.001]
 
-# base_dims = [(40, 100, 10)]
-# base_batch_sizes = [32]
-# base_lrs = [0.01]
+base_dims = [(40, 100, 10)]
+base_batch_sizes = [32]
+base_lrs = [0.01]
 
-dist_hidden_dims = [10, 30, 100, 300, 1000]
-num_dist_repeats = 5
+dist_hidden_dims = [60, 61, 62, 63, 64, 66, 67, 68, 69, 70]
+num_dist_repeats = 10
 
 train_size, test_size = None, None
 
@@ -62,7 +61,7 @@ for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         dataset_name="MNIST1D",
     )
     dist_experiment_configs[(dims, batch_size, lr)] = ExperimentConfig(
-        project_name="Distillation MNIST1D Dist, Reinitialization Test",
+        project_name="Distillation MNIST1D Dist, Reinitialization Test, Patience 100",
         experiment="distillation",
         model_type="dist",
         model_dims=dims,
@@ -135,18 +134,12 @@ def dist_variance_test():
                 wandb.init(
                     project=dist_experiment_config.project_name,
                     name=f"{dims[1]}_{batch_size}_{lr}_{hidden_dim}",
-                    reinit=True,
                 )
 
             print(
                 f"Dims: {dims[1]}, Batch Size: {batch_size}, LR: {lr}, Dist Hidden Dim: {hidden_dim}"
             )
-            model_log = {
-                "Dim": dims[1],
-                "Batch Size": batch_size,
-                "Learning Rate": lr,
-                "Dist Hidden Dim": hidden_dim,
-            }
+
             base_model = MLP(
                 base_experiment_config.model_dims,
                 base_experiment_config.model_act,
@@ -181,11 +174,11 @@ def dist_variance_test():
                 num_repeats=num_dist_repeats,
             )
 
-            for kl_loss, num_epochs in kl_losses_and_epochs:
-                model_log |= {"KL Loss": kl_loss, "Num Epochs": num_epochs}
-
             if dist_train_config.log_with_wandb:
-                wandb.log(model_log)
+                for trial, (kl_loss, num_epochs) in enumerate(kl_losses_and_epochs):
+                    wandb.log(
+                        {"Trial": trial, "KL Loss": kl_loss, "Num Epochs": num_epochs}
+                    )
             print()
 
 

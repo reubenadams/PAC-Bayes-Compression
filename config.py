@@ -40,9 +40,9 @@ class TrainConfig:
 
 @dataclass
 class DistTrainConfig:
-    lr: float = 0.01
+    lr: float = 0.003  # Was 0.01 but for some models this was too high
     batch_size: int = 128
-    num_epochs: int = 2000
+    max_epochs: int = 100000
     use_whole_dataset: bool = False
 
     dim_skip: int = 10
@@ -59,7 +59,7 @@ class DistTrainConfig:
     use_scheduler: bool = False
     use_early_stopping: bool = False
     target_kl_on_train: Optional[float] = 0.01
-    patience: Optional[int] = 20
+    patience: Optional[int] = 100
 
     get_kl_on_train_data: bool = True
     get_kl_on_test_data: bool = False
