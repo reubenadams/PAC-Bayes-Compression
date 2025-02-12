@@ -60,6 +60,7 @@ class DistTrainConfig:
     use_early_stopping: bool = False
     target_kl_on_train: Optional[float] = 0.01
     patience: Optional[int] = 100
+    print_every: int = 1000
 
     get_kl_on_train_data: bool = True
     get_kl_on_test_data: bool = False

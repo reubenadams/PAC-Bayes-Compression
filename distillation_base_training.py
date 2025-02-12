@@ -18,7 +18,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
-train_bases, test_dist_variance, train_dists = False, True, False
+train_bases, test_dist_variance, train_dists = False, False, True
 
 dataset_name = "MNIST1D"
 # base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
@@ -30,7 +30,7 @@ base_batch_sizes = [32]
 base_lrs = [0.01]
 
 dist_hidden_dims = [60, 61, 62, 63, 64, 66, 67, 68, 69, 70]
-num_dist_repeats = 10
+num_dist_attempts = 1
 
 train_size, test_size = None, None
 
@@ -61,7 +61,7 @@ for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         dataset_name="MNIST1D",
     )
     dist_experiment_configs[(dims, batch_size, lr)] = ExperimentConfig(
-        project_name="Distillation MNIST1D Dist, Reinitialization Test, Patience 100",
+        project_name="Distillation MNIST1D Dist, Binary Search",
         experiment="distillation",
         model_type="dist",
         model_dims=dims,
@@ -171,7 +171,7 @@ def dist_variance_test():
                 dist_config=dist_train_config,
                 domain_train_loader=train_loader,
                 hidden_dim=hidden_dim,
-                num_repeats=num_dist_repeats,
+                num_repeats=num_dist_attempts,
             )
 
             if dist_train_config.log_with_wandb:
@@ -235,15 +235,18 @@ def train_dist_models():
         complexity = base_model.get_dist_complexity(
             dist_train_config,
             domain_train_loader=train_loader,
+            num_attempts=num_dist_attempts,
         )
+        model_log["Complexity"] = complexity
 
-        if complexity:
-            print(
-                f"Successfully distilled model. Complexity: {complexity}, Generalization Gap: {generalization_gap}"
-            )
-            model_log["Complexity"] = complexity
-            if dist_train_config.log_with_wandb:
-                wandb.log(model_log)
+        # if complexity:
+        #     print(
+        #         f"Successfully distilled model. Complexity: {complexity}, Generalization Gap: {generalization_gap}"
+        #     )
+
+        if dist_train_config.log_with_wandb:
+            wandb.log(model_log)
+
         print()
     if dist_train_config.log_with_wandb:
         wandb.finish()

@@ -451,7 +451,7 @@ class MLP(nn.Module):
 
         for epoch in range(1, dist_config.max_epochs + 1):
 
-            if epoch % 10 == 1:
+            if epoch % dist_config.print_every == 1:
                 print(f"Epoch [{epoch}/{dist_config.max_epochs}]")
 
             for x, targets in logit_train_loader:
@@ -529,7 +529,37 @@ class MLP(nn.Module):
 
         return total_kl_loss_on_train_data, False, epoch
 
+    def dist_best_of_n(self, dist_config, dist_dims, domain_train_loader, num_attempts):
+
+        dist_model = MLP(
+            dimensions=dist_dims,
+            activation=dist_config.dist_activation,
+            device=self.device,
+            shift_logits=dist_config.shift_logits,
+        )
+
+        for attempt in range(num_attempts):
+
+            total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
+                dist_model.dist_from(
+                    full_model=self,
+                    dist_config=dist_config,
+                    domain_train_loader=domain_train_loader,
+                    domain_test_loader=None,
+                    data_test_loader=None,
+                    epoch_shift=attempt * dist_config.max_epochs,
+                )
+            )
+
+            if target_loss_achieved:
+                return True
+
+            dist_model.reinitialize_weights()
+
+        return False
+
     def get_dist_dims(self, dim_skip):
+
         input_dim, hidden_dims, output_dim = (
             self.dimensions[0],
             self.dimensions[1:-1],
@@ -544,37 +574,37 @@ class MLP(nn.Module):
         ]
         return dist_dims
 
-    def get_dist_complexity(
-        self,
-        dist_config,
-        domain_train_loader,
-    ):
-        epochs_taken_so_far = 0
-        for hidden_dim in range(
-            dist_config.min_hidden_dim,
-            dist_config.max_hidden_dim + 1,
-            dist_config.dim_skip,
-        ):
-            dist_model = MLP(
-                dimensions=[self.dimensions[0], hidden_dim, self.dimensions[-1]],
-                activation=dist_config.dist_activation,
-                device=self.device,
-                shift_logits=dist_config.shift_logits,
+    def get_dist_complexity(self, dist_config, domain_train_loader, num_attempts=1):
+
+        hidden_dim_low, hidden_dim_high = (1, 2)
+
+        while True:
+
+            print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
+            dist_dims = [self.dimensions[0], hidden_dim_high, self.dimensions[-1]]
+            dist_successful = self.dist_best_of_n(
+                dist_config, dist_dims, domain_train_loader, num_attempts
+            )
+            if not dist_successful:
+                hidden_dim_low, hidden_dim_high = hidden_dim_high, hidden_dim_high * 2
+            else:
+                break
+
+        while hidden_dim_high - hidden_dim_low > 1:
+
+            print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
+            hidden_dim_mid = (hidden_dim_low + hidden_dim_high) // 2
+            dist_dims = [self.dimensions[0], hidden_dim_mid, self.dimensions[-1]]
+            dist_successful = self.dist_best_of_n(
+                dist_config, dist_dims, domain_train_loader, num_attempts
             )
 
-            total_kl_loss_on_train_data, target_loss_achieved, epochs_taken = (
-                dist_model.dist_from(
-                    full_model=self,
-                    dist_config=dist_config,
-                    domain_train_loader=domain_train_loader,
-                    domain_test_loader=None,
-                    data_test_loader=None,
-                    epoch_shift=epochs_taken_so_far,
-                )
-            )
-            epochs_taken_so_far += epochs_taken
-            if target_loss_achieved:
-                return hidden_dim
+            if dist_successful:
+                hidden_dim_high = hidden_dim_mid
+            else:
+                hidden_dim_low = hidden_dim_mid
+
+        return hidden_dim_low
 
     def get_dist_variance(
         self,
