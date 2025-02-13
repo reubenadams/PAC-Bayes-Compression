@@ -27,6 +27,7 @@ date  # Print the current time.
 cd $HOME/PAC-Bayes-Compression  # Get this by running pwd in terminal.
 
 module load python/3.11.4
+source .venv/bin/activate
 
 # This is software you don't need.
 # source $UCL_CONDA_PATH/etc/profile.d/conda.sh
