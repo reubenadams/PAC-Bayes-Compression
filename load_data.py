@@ -4,7 +4,6 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
-import numpy as np
 
 from mnist1d.data import get_dataset_args, get_dataset
 

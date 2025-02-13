@@ -22,12 +22,13 @@ train_bases, test_dist_variance, train_dists = False, False, True
 
 dataset_name = "MNIST1D"
 # base_dims = [(40, d, 10) for d in [100, 200, 300, 400]]
-# base_batch_sizes = [32, 64, 128]
-# base_lrs = [0.01, 0.0032, 0.001]
+base_dims = [(40, 500, 10)]
+base_batch_sizes = [32, 64, 128]
+base_lrs = [0.01, 0.0032, 0.001]
 
-base_dims = [(40, 100, 10)]
-base_batch_sizes = [32]
-base_lrs = [0.01]
+# base_dims = [(40, 100, 10)]
+# base_batch_sizes = [32]
+# base_lrs = [0.01]
 
 dist_hidden_dims = [60, 61, 62, 63, 64, 66, 67, 68, 69, 70]
 num_dist_attempts = 1
