@@ -1,10 +1,12 @@
-# Force bash as the executing shell.
+#################### SGE DIRECTIVES ####################
+
+# Tells SGE to use bash as the interpreting shell for the job script.
 #$ -S /bin/bash
 
-# Wallclock time (format hours:minutes:seconds).
+# Sets a hard limit on how long your job can run. It's wallclock time (format hours:minutes:seconds), i.e. the time measured by a clock on the wall, rather than CPU time ()
 #$ -l h_rt=6:0:0
 
-# Request memory. Check in Process Memory in Use (MB) in wandb. Actual memory is num cores x this value (because smp 8 below).
+# Request memory per core. Check in Process Memory in Use (MB) in wandb. Total memory is num cores x this value.
 #$ -l mem=1G
 
 # -l gpu=1  # Change to #$ if you want to use GPUs.
@@ -20,6 +22,9 @@
 #$ -j y  # Merge the error and output streams into a single file (stdout, stderr). You definitely want this.
 
 #$ -cwd  # All scripts have to work in a directory. This line says to use the directory we launched the script in.
+
+
+#################### BASH COMMANDS ####################
 
 date  # Print the current time.
 # nvidia-smi  # Prints the GPUs available.
@@ -46,5 +51,6 @@ mkdir $TMPDIR/wandb
 export WANDB_DIR=$TMPDIR/wandb
 export WANDB_API_KEY=$(head -n 1 $HOME/PAC-Bayes-Compression/wandb_api_key.txt)  # Setting the API key for wandb.
 
-# wandb agent daguerro/cramming-pretrain/ted60tg3 --count 20  # Count is the number of runs to do.
+# Count is the number of runs to do. Syntax is `wandb agent username/project/sweep_id`, where sweep_id is what was returned by wandb.sweep
+# wandb agent daguerro/cramming-pretrain/ted60tg3 --count 20
 python distillation_base_training.py
