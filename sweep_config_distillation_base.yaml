@@ -2,8 +2,8 @@ program: distillation_base.py
 method: grid
 parameters:
   dims:
-    values: [[40, 200, 10], [40, 300, 10], [40, 400, 10], [40, 500, 10]]
+    values: [[40, 200, 10], [40, 300, 10], [40, 400, 10], [40, 500, 10], [40, 600, 10]]
   batch_size:
-    values: [32, 64, 128]
+    values: [16, 32, 64, 128, 256]
   lr:
-    values: [0.01, 0.0032, 0.001]
+    values: [0.01, 0.0032, 0.001, 0.00032]
