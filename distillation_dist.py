@@ -17,7 +17,7 @@ dataset_name = "MNIST1D"
 train_size, test_size = None, None
 
 
-num_dist_attempts = 1
+num_dist_attempts = 5
 
 run = wandb.init(reinit=True)
 wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}"
@@ -48,49 +48,51 @@ dist_train_config = DistTrainConfig(use_whole_dataset=True, use_early_stopping=T
 
 def train_dist_models():
 
-    print(wandb.config.dims, wandb.config.batch_size, wandb.config.lr)
-    model_log = {
-        "Dim": wandb.config.dims[1],
-        "Batch Size": wandb.config.batch_size,
-        "Learning Rate": wandb.config.lr,
-    }
-    base_model = MLP(
-        base_experiment_config.model_dims,
-        base_experiment_config.model_act,
-        device=device,
-    )
+    if os.path.isfile(base_experiment_config.model_path):
 
-    base_model.load(base_experiment_config.model_path)
+        print(wandb.config.dims, wandb.config.batch_size, wandb.config.lr)
+        model_log = {
+            "Dim": wandb.config.dims[1],
+            "Batch Size": wandb.config.batch_size,
+            "Learning Rate": wandb.config.lr,
+        }
+        base_model = MLP(
+            base_experiment_config.model_dims,
+            base_experiment_config.model_act,
+            device=device,
+        )
 
-    torch.manual_seed(0)
-    train_loader, test_loader = get_dataloaders(
-        dataset_name=base_experiment_config.dataset_name,
-        batch_size=dist_train_config.batch_size,
-        train_size=train_size,
-        test_size=test_size,
-        use_whole_dataset=dist_train_config.use_whole_dataset,
-        device=device,
-    )
+        base_model.load(base_experiment_config.model_path)
 
-    generalization_gap = base_model.get_generalization_gap(
-        train_loader, test_loader
-    )
-    model_log["Generalization Gap"] = generalization_gap
+        torch.manual_seed(0)
+        train_loader, test_loader = get_dataloaders(
+            dataset_name=base_experiment_config.dataset_name,
+            batch_size=dist_train_config.batch_size,
+            train_size=train_size,
+            test_size=test_size,
+            use_whole_dataset=dist_train_config.use_whole_dataset,
+            device=device,
+        )
 
-    complexity = base_model.get_dist_complexity(
-        dist_train_config,
-        domain_train_loader=train_loader,
-        num_attempts=num_dist_attempts,
-    )
-    model_log["Complexity"] = complexity
+        generalization_gap = base_model.get_generalization_gap(
+            train_loader, test_loader
+        )
+        model_log["Generalization Gap"] = generalization_gap
 
-    if dist_train_config.log_with_wandb:
-        wandb.log(model_log)
+        complexity = base_model.get_dist_complexity(
+            dist_train_config,
+            domain_train_loader=train_loader,
+            num_attempts=num_dist_attempts,
+        )
+        model_log["Complexity"] = complexity
 
-    print()
+        if dist_train_config.log_with_wandb:
+            wandb.log(model_log)
 
-    if dist_train_config.log_with_wandb:
-        wandb.finish()
+        print()
+
+        if dist_train_config.log_with_wandb:
+            wandb.finish()
 
 
 if __name__ == "__main__":
