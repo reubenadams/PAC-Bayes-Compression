@@ -17,8 +17,9 @@ dataset_name = "MNIST1D"
 train_size, test_size = None, None
 num_epochs = 2000
 
-
-wandb.init(project="distillation_base")
+run = wandb.init()
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}"
+wandb.run.save()
 
 
 base_train_config = TrainConfig(
@@ -33,7 +34,7 @@ base_train_config = TrainConfig(
     test_accuracy_name="Base Test Accuracy",
 )
 base_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Base",
+    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=wandb.config.dims,

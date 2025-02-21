@@ -19,26 +19,28 @@ train_size, test_size = None, None
 
 num_dist_attempts = 1
 
-wandb.init(project="distillation_dist", reinit=True)
+run = wandb.init(reinit=True)
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}"
+wandb.run.save()
 
 
 base_experiment_config = ExperimentConfig(
-    project_name="Distillation MNIST1D Base",
+    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=wandb.config.dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
-    dataset_name="MNIST1D",
+    dataset_name=dataset_name,
 )
 dist_experiment_config = ExperimentConfig(
-    project_name="Distillation MNIST1D Dist, Binary Search",
+    project_name=f"Distillation {dataset_name} Dist, Binary Search",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="dist",
     model_dims=wandb.config.dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
-    dataset_name="MNIST1D",
+    dataset_name=dataset_name,
 )
 
 dist_train_config = DistTrainConfig(use_whole_dataset=True, use_early_stopping=True)

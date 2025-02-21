@@ -482,9 +482,12 @@ class MLP(nn.Module):
                 ] = test_accuracy
 
             if dist_config.get_kl_on_train_data:
-                total_kl_loss_on_train_data = (
-                    self.get_overall_kl_loss_with_logit_loader(logit_train_loader)
-                )
+                if dist_config.use_whole_dataset:
+                    total_kl_loss_on_train_data = loss
+                else:
+                    total_kl_loss_on_train_data = (
+                        self.get_overall_kl_loss_with_logit_loader(logit_train_loader)
+                    )
                 epoch_log[
                     f"KL Loss on Train Data ({dist_config.objective} {dist_config.reduction})"
                 ] = total_kl_loss_on_train_data
@@ -576,20 +579,51 @@ class MLP(nn.Module):
 
     def get_dist_complexity(self, dist_config, domain_train_loader, num_attempts=1):
 
-        hidden_dim_low, hidden_dim_high = (1, 2)
+        hidden_dim_guess = dist_config.guess_hidden_dim
 
-        while True:
+        print(f"Hidden dim guess: {hidden_dim_guess}")
+        dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
+        dist_successful = self.dist_best_of_n(
+            dist_config, dist_dims, domain_train_loader, num_attempts
+        )
 
-            print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
-            dist_dims = [self.dimensions[0], hidden_dim_high, self.dimensions[-1]]
-            dist_successful = self.dist_best_of_n(
-                dist_config, dist_dims, domain_train_loader, num_attempts
-            )
-            if not dist_successful:
-                hidden_dim_low, hidden_dim_high = hidden_dim_high, hidden_dim_high * 2
-            else:
-                break
+        # If the first guess worked, divide until it doesn't
+        if dist_successful:
+            while dist_successful:
+                hidden_dim_guess //= 2
+                print(f"Hidden dim guess: {hidden_dim_guess}")
+                dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
+                dist_successful = self.dist_best_of_n(
+                    dist_config, dist_dims, domain_train_loader, num_attempts
+                )
+            hidden_dim_low, hidden_dim_high = hidden_dim_guess, hidden_dim_guess * 2
 
+        # If the first guess didn't work, multiply until it does
+        else:
+            while not dist_successful:
+                hidden_dim_guess *= 2
+                print(f"Hidden dim guess: {hidden_dim_guess}")
+                dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
+                dist_successful = self.dist_best_of_n(
+                    dist_config, dist_dims, domain_train_loader, num_attempts
+                )
+            hidden_dim_low, hidden_dim_high = hidden_dim_guess // 2, hidden_dim_guess * 2
+
+        # hidden_dim_low, hidden_dim_high = (1, 2)
+
+        # while True:
+
+        #     print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
+        #     dist_dims = [self.dimensions[0], hidden_dim_high, self.dimensions[-1]]
+        #     dist_successful = self.dist_best_of_n(
+        #         dist_config, dist_dims, domain_train_loader, num_attempts
+        #     )
+        #     if not dist_successful:
+        #         hidden_dim_low, hidden_dim_high = hidden_dim_high, hidden_dim_high * 2
+        #     else:
+        #         break
+
+        # Start the binary search
         while hidden_dim_high - hidden_dim_low > 1:
 
             print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")

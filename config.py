@@ -48,6 +48,7 @@ class DistTrainConfig:
     dim_skip: int = 10
     min_hidden_dim: int = 1
     max_hidden_dim: int = 2000
+    guess_hidden_dim: int = 128
     dist_activation: str = "relu"
     shift_logits: bool = False
 
