@@ -1,0 +1,9 @@
+program: distillation_dist.py
+method: grid
+parameters:
+  dims:
+    values: [[40, 200, 10], [40, 300, 10]]
+  batch_size:
+    values: [64, 128]
+  lr:
+    values: [0.01, 0.001]

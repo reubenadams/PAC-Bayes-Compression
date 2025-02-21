@@ -1,12 +1,8 @@
 import os
 
-
 import torch
 import wandb
 from itertools import product
-import cProfile
-import pstats
-
 
 from config import TrainConfig, DistTrainConfig, ExperimentConfig
 from models import MLP
@@ -255,16 +251,14 @@ def train_dist_models():
 
 if __name__ == "__main__":
 
-    with cProfile.Profile() as pr:
-        if train_bases:
-            print("Training base")
-            train_base_models()
-        if test_dist_variance:
-            print("Dist variance")
-            dist_variance_test()
-        if train_dists:
-            print("Training dist")
-            train_dist_models()
+    os.makedirs("trained_models", exist_ok=True)
 
-    stats = pstats.Stats(pr)
-    stats.sort_stats(pstats.SortKey.TIME).print_stats(10)
+    if train_bases:
+        print("Training base")
+        train_base_models()
+    if test_dist_variance:
+        print("Dist variance")
+        dist_variance_test()
+    if train_dists:
+        print("Training dist")
+        train_dist_models()

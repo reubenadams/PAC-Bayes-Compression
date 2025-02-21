@@ -34,16 +34,6 @@ cd $HOME/PAC-Bayes-Compression  # Get this by running pwd in terminal.
 module load python/3.11.4
 source .venv/bin/activate
 
-# This is software you don't need.
-# source $UCL_CONDA_PATH/etc/profile.d/conda.sh
-# conda activate stackingbert
-
-# module load beta-modules
-# module unload gcc-libs/4.9.2
-# module load gcc-libs/10.2.0
-# module unload compilers/intel/2018/update3
-# module load compilers/gnu/10.2.0
-
 # export HF_DATASETS_CACHE=$HOME/Scratch/hf_dataset_cache  # Put datasets on scratch space. You're not using this as your datasets are small.
 mkdir $TMPDIR/wandb_cache  # Put wandb data on tmp as wandb writes lots of small files. This might speed up the job, and is polite.
 export WANDB_CACHE_DIR=$TMPDIR/wandb_cache
@@ -52,5 +42,5 @@ export WANDB_DIR=$TMPDIR/wandb
 export WANDB_API_KEY=$(head -n 1 $HOME/PAC-Bayes-Compression/wandb_api_key.txt)  # Setting the API key for wandb.
 
 # Count is the number of runs to do. Syntax is `wandb agent username/project/sweep_id`, where sweep_id is what was returned by wandb.sweep
-# wandb agent daguerro/cramming-pretrain/ted60tg3 --count 20
-python distillation_base_training.py
+wandb agent teamreuben/distillation_dist/2iykt8ch --count 1
+# python distillation_base.py

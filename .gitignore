@@ -165,6 +165,7 @@ cython_debug/
 trained_models/
 wandb/
 data/
+wandb_api_key.txt
 scratch.py
 scratch2.py
 scratch3.py

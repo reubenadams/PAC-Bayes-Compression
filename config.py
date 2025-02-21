@@ -97,7 +97,7 @@ class ExperimentConfig:
     project_name: str
     experiment: str  # "low_rank", "hypernet", "distillation"
     model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, dist
-    model_dims: List[int]
+    model_dims: List[int] = None
     lr: float = 0.01
     batch_size: int = 64
 

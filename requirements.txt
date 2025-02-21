@@ -1,4 +1,5 @@
+numpy
 torch
 wandb
 torchvision
-mnist1d
+git+https://github.com/greydanus/mnist1d.git
