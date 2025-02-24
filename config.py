@@ -6,6 +6,7 @@ from math import prod
 
 @dataclass
 class TrainConfig:
+    optimizer_name: str = "adam"
     lr: float = 0.01
     batch_size: int = 64
     dropout_prob: float = 0.0
@@ -101,6 +102,7 @@ class ExperimentConfig:
     experiment: str  # "low_rank", "hypernet", "distillation"
     model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, dist
     model_dims: List[int] = None
+    optimizer_name: str = "adam"
     lr: float = 0.01
     batch_size: int = 64
     dropout_prob: float = 0.0
@@ -109,6 +111,7 @@ class ExperimentConfig:
     dataset_name: str = "MNIST"
     new_data_shape: Optional[tuple[int, int]] = None
     model_act: str = "relu"
+    model_name: Optional[str] = None
 
     def __post_init__(self):
 
@@ -157,7 +160,8 @@ class ExperimentConfig:
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
         self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
-        self.model_name = (
-            f"{self.model_type}_{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
-        )
+        if self.model_name is None:
+            self.model_name = (
+                f"{self.model_type}_{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
+            )
         self.model_path = f"{self.model_dir}/{self.model_name}"

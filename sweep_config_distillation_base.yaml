@@ -6,13 +6,13 @@ parameters:
     values: [40]
   output_dim:
     values: [10]
-  model_width:
-    values: [200, 300]
-  model_depth:
-    values: [1, 2]
-  # dims:
-  #   values: [[40, 500, 10]]
+  hidden_layer_width:
+    values: [300]
+  num_hidden_layers:
+    values: [1]
 
+  optimizer_name:
+    values: ['adam', 'sgd', 'rmsprop']
   batch_size:
     values: [32]
   lr:

@@ -311,7 +311,14 @@ class MLP(nn.Module):
 
         self.train()
 
-        optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+        if train_config.optimizer_name == "sgd":
+            optimizer = torch.optim.SGD(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+        elif train_config.optimizer_name == "adam":
+            optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+        elif train_config.optimizer_name == "rmsprop":
+            optimizer = torch.optim.RMSprop(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+        else:
+            raise ValueError(f"Invalid optimizer name {train_config.optimizer_name}. Should be 'sgd', 'adam' or 'rmsprop'.")
 
         if train_config.target_overall_train_loss:
             best_loss = float("inf")

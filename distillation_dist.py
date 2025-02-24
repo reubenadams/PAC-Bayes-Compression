@@ -32,21 +32,23 @@ else:
 
 
 run = wandb.init(reinit=True)
-wandb.run.name = f"hw{wandb.config.model_width}_nl{wandb.config.model_depth}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
+wandb.run.name = f"op{wandb.config.optimizer_name}_hw{wandb.config.hidden_layer_width}_nl{wandb.config.num_hidden_layers}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
 wandb.run.save()
 
-model_dims = [wandb.config.input_dim] + [wandb.config.model_width] * wandb.config.model_depth + [wandb.config.output_dim]
+model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
 
 base_experiment_config = ExperimentConfig(
     project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=model_dims,
+    optimizer_name=wandb.config.optimizer_name,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
     weight_decay=wandb.config.weight_decay,
     dataset_name=dataset_name,
+    model_name=wandb.run.name,
 )
 dist_experiment_config = ExperimentConfig(
     project_name=f"Distillation {dataset_name} Dist, Binary Search",  # This isn't used when running a wandb sweep
@@ -75,8 +77,9 @@ def train_dist_models():
 
         print(model_dims, wandb.config.batch_size, wandb.config.lr)
         model_log = {
-            "Width": wandb.config.model_width,
-            "Depth": wandb.config.model_depth,
+            "Optimizer": wandb.config.optimizer_name,
+            "Width": wandb.config.hidden_layer_width,
+            "Depth": wandb.config.num_hidden_layers,
             "Batch Size": wandb.config.batch_size,
             "Learning Rate": wandb.config.lr,
             "Dropout Probability": wandb.config.dropout_prob,
