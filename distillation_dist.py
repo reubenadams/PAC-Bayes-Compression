@@ -59,8 +59,9 @@ def train_dist_models():
             "Learning Rate": wandb.config.lr,
         }
         base_model = MLP(
-            base_experiment_config.model_dims,
-            base_experiment_config.model_act,
+            dimensions=base_experiment_config.model_dims,
+            activation=base_experiment_config.model_act,
+            dropout_prob=base_experiment_config.dropout_prob,
             device=device,
         )
 

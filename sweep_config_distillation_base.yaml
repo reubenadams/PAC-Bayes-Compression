@@ -2,7 +2,7 @@ program: distillation_base.py
 method: grid
 parameters:
   dims:
-    values: [[40, 200, 10]]
+    values: [[40, 500, 10]]
   batch_size:
     values: [128]
   lr:

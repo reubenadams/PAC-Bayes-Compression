@@ -39,22 +39,22 @@ print(f"Using device: {device}")
 
 torch.manual_seed(0)
 full_model = MLP(
-    full_mnist_config.model_dims,
-    full_mnist_config.model_act,
+    dimensions=full_mnist_config.model_dims,
+    activation=full_mnist_config.model_act,
     device=device,
     shift_logits=True,
 )
 torch.manual_seed(0)
 dist_kl_data_model = MLP(
-    full_mnist_config.model_dims,
-    dist_kl_mnist_config.model_act,
+    dimensions=full_mnist_config.model_dims,
+    activation=dist_kl_mnist_config.model_act,
     device=device,
     shift_logits=True,
 )
 torch.manual_seed(0)
 dist_l2_data_model = MLP(
-    full_mnist_config.model_dims,
-    dist_l2_mnist_config.model_act,
+    dimensions=full_mnist_config.model_dims,
+    activation=dist_l2_mnist_config.model_act,
     device=device,
     shift_logits=True,
 )
@@ -69,7 +69,7 @@ try:
 except FileNotFoundError:
 
     print(f"File {full_mnist_config.model_path} not found. Training model...")
-    full_model.train(
+    full_model.train_model(
         train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
         test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
         lr=full_mnist_config.lr,

@@ -17,7 +17,11 @@ full_model_configs = [
 ]
 
 full_models = [
-    MLP(config.model_dims, config.model_act, device=device)
+    MLP(
+        dimensions=config.model_dims,
+        activation=config.model_act,
+        device=device,
+        )
     for config in full_model_configs
 ]
 
@@ -40,7 +44,7 @@ for full_config, full_model in zip(full_model_configs, full_models):
     except FileNotFoundError:
         wandb.init(project="Distillation complexity", name=f"{full_model.dimensions}")
         print(f"File {full_config.model_path} not found. Training model...")
-        full_model.train(
+        full_model.train_model(
             train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
             test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
             lr=full_config.lr,

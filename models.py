@@ -219,6 +219,7 @@ class MLP(nn.Module):
             layer.reset_parameters()
 
     def get_overall_loss(self, loss_fn, dataloader):
+        assert not self.training, "Model should be in eval mode."
         assert loss_fn.reduction == "sum"
         total_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
@@ -229,6 +230,7 @@ class MLP(nn.Module):
         return total_loss / len(dataloader.dataset)
 
     def get_overall_accuracy(self, dataloader):
+        assert not self.training, "Model should be in eval mode."
         num_correct = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
@@ -244,6 +246,7 @@ class MLP(nn.Module):
         return overall_test_01_error - overall_train_01_error
 
     def get_overall_margin_loss(self, dataloader, margin, take_softmax=False):
+        assert not self.training, "Model should be in eval mode."
         total_margin_loss = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
@@ -258,6 +261,7 @@ class MLP(nn.Module):
         return total_margin_loss / len(dataloader.dataset)
 
     def get_overall_kl_loss(self, full_model, domain_dataloader):
+        assert not self.training, "Model should be in eval mode."
         total_dist_kl_loss = torch.tensor(0.0, device=self.device)
         kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
         for x, _ in domain_dataloader:
@@ -269,6 +273,7 @@ class MLP(nn.Module):
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
     def get_overall_kl_loss_with_logit_loader(self, logit_loader):
+        assert not self.training, "Model should be in eval mode."
         total_dist_kl_loss = torch.tensor(0.0, device=self.device)
         kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
         for x, targets in logit_loader:
@@ -279,6 +284,7 @@ class MLP(nn.Module):
         return total_dist_kl_loss / len(logit_loader.dataset)
 
     def get_max_and_mean_l2_deviation(self, full_model, domain_loader):
+        assert not self.training, "Model should be in eval mode."
         max_l2 = torch.tensor(0.0, device=self.device)
         for x, _ in domain_loader:
             x = x.to(self.device)
@@ -292,7 +298,7 @@ class MLP(nn.Module):
             mean_l2 = l2_norms.mean()
         return max_l2, mean_l2
 
-    def train(
+    def train_model(
         self,
         train_config: TrainConfig,
         train_loader,
@@ -302,6 +308,8 @@ class MLP(nn.Module):
         overall_train_loss_fn=None,
         callback=None,  # TODO: Do we ever use this?
     ):
+
+        self.train()
 
         optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr)
 
@@ -315,6 +323,7 @@ class MLP(nn.Module):
                 print(f"Epoch [{epoch}/{train_config.num_epochs}]")
 
             for x, labels in train_loader:
+                assert self.training
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = self(x)
@@ -329,6 +338,8 @@ class MLP(nn.Module):
 
             epoch_log = {"Epoch": epoch}
 
+            ########## Evaluate model and return to training mode ##########
+            self.eval()
             if train_config.get_overall_train_loss:
                 overall_train_loss = self.get_overall_loss(
                     overall_train_loss_fn, train_loader
@@ -349,10 +360,14 @@ class MLP(nn.Module):
             if train_config.get_test_accuracy:
                 test_accuracy = self.get_overall_accuracy(test_loader)
                 epoch_log[train_config.test_accuracy_name] = test_accuracy
+            self.train()
+            ########## Evaluate model and return to training mode ##########
 
+            # Log metrics
             if train_config.log_with_wandb:
                 wandb.log(epoch_log)
 
+            # Test if reached target loss
             if train_config.target_overall_train_loss:
                 if overall_train_loss <= train_config.target_overall_train_loss:
                     return overall_train_loss, True

@@ -74,7 +74,10 @@ if base_train_config.log_with_wandb:
     wandb.init(project="hypertraining")
 
 
-base_model = BaseMLP(base_experiment_config.model_dims, base_experiment_config.model_act)
+base_model = BaseMLP(
+    dimensions=base_experiment_config.model_dims,
+    activation=base_experiment_config.model_act,
+    )
 hyper_model_scaled = base_model.get_hyper_model_scaled_input(hyper_scaled_experiment_config)
 print(f"hyper config scaled dims: {hyper_scaled_experiment_config.model_dims}")
 hyper_model_binary = base_model.get_hyper_model_binary_input(hyper_binary_experiment_config)
@@ -98,7 +101,7 @@ except FileNotFoundError:
         print(f"File {base_experiment_config.model_path} not found. Training model...")
         base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
         base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
-        base_model.train(
+        base_model.train_model(
             train_loader=train_loader,
             test_loader=test_loader,
             train_loss_fn=base_train_loss_fn,
@@ -136,7 +139,7 @@ except FileNotFoundError:
             )
             wandb.log({"epoch": epoch, "Rec Acc Scaled": reconstructed_accuracy})
 
-        hyper_model_scaled.train(
+        hyper_model_scaled.train_model(
             train_loader=param_dataloader_scaled,
             test_loader=param_dataloader_scaled,
             train_loss_fn=hyper_train_loss_fn,
@@ -177,7 +180,7 @@ except FileNotFoundError:
             )
             wandb.log({"epoch": epoch, "Rec Acc Binary": reconstructed_accuracy})
 
-        hyper_model_binary.train(
+        hyper_model_binary.train_model(
             train_loader=param_dataloader_binary,
             test_loader=param_dataloader_binary,
             train_loss_fn=hyper_train_loss_fn,

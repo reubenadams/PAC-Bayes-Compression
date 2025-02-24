@@ -48,7 +48,10 @@ if train_config.log_with_wandb:
         name=f"Model dims: {experiment_config.model_dims}",
     )
 
-model = LowRankMLP(experiment_config.model_dims, experiment_config.model_act)
+model = LowRankMLP(
+    dimensions=experiment_config.model_dims,
+    activation=experiment_config.model_act,
+    )
 
 
 try:
@@ -61,7 +64,7 @@ except FileNotFoundError:
     print(f"File {experiment_config.model_path} not found. Training model...")
     base_train_loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
     base_test_loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
-    model.train(
+    model.train_model(
         train_loader=train_loader,
         test_loader=test_loader,
         train_loss_fn=base_train_loss_fn,

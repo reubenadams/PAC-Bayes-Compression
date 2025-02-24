@@ -88,7 +88,9 @@ def train_base_models():
         print(dims, batch_size, lr)
         torch.manual_seed(0)
         model = MLP(
-            experiment_config.model_dims, experiment_config.model_act, device=device
+            dimensions=experiment_config.model_dims,
+            activation=experiment_config.model_act,
+            device=device
         )
         torch.manual_seed(0)
         train_loader, test_loader = get_dataloaders(
@@ -97,7 +99,7 @@ def train_base_models():
             train_size=train_size,
             test_size=test_size,
         )
-        overall_train_loss, target_loss_achieved = model.train(
+        overall_train_loss, target_loss_achieved = model.train_model(
             train_config,
             train_loader=train_loader,
             test_loader=test_loader,
@@ -138,8 +140,8 @@ def dist_variance_test():
             )
 
             base_model = MLP(
-                base_experiment_config.model_dims,
-                base_experiment_config.model_act,
+                dimensions=base_experiment_config.model_dims,
+                activation=base_experiment_config.model_act,
                 device=device,
             )
 
@@ -200,8 +202,8 @@ def train_dist_models():
             "Learning Rate": lr,
         }
         base_model = MLP(
-            base_experiment_config.model_dims,
-            base_experiment_config.model_act,
+            dimensions=base_experiment_config.model_dims,
+            activation=base_experiment_config.model_act,
             device=device,
         )
 

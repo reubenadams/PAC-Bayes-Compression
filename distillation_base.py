@@ -49,7 +49,10 @@ base_experiment_config = ExperimentConfig(
 def train_base_models():
 
     model = MLP(
-        base_experiment_config.model_dims, base_experiment_config.model_act, device=device
+        dimensions=base_experiment_config.model_dims,
+        activation=base_experiment_config.model_act,
+        dropout_prob=base_experiment_config.dropout_prob,
+        device=device
     )
 
     torch.manual_seed(0)
@@ -60,7 +63,7 @@ def train_base_models():
         test_size=test_size,
     )
 
-    overall_train_loss, target_loss_achieved = model.train(
+    overall_train_loss, target_loss_achieved = model.train_model(
         base_train_config,
         train_loader=train_loader,
         test_loader=test_loader,
