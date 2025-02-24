@@ -30,7 +30,7 @@ train_loader, test_loader = get_dataloaders(
     full_model_configs[0].batch_size,
     train_size=100,
     test_size=100,
-    new_size=full_model_configs[0].new_data_shape,
+    new_input_size=full_model_configs[0].new_data_shape,
 )
 
 

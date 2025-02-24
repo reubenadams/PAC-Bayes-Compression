@@ -4,8 +4,10 @@ parameters:
   dims:
     values: [[40, 500, 10]]
   batch_size:
-    values: [128]
+    values: [32]
   lr:
     values: [0.0032]
   dropout_prob:
-    values: [0.0, 0.25, 0.5]
+    values: [0.0]
+  weight_decay:
+    values: [0, 1e-3, 1e-4]

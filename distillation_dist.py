@@ -8,19 +8,31 @@ from models import MLP
 from load_data import get_dataloaders
 
 
+toy_run = True
+
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
 dataset_name = "MNIST1D"
-train_size, test_size = None, None
 
+if toy_run:
+    train_size, test_size = 100, 100
+    max_epochs = 10000
+    num_dist_attempts = 1
+    target_kl_on_train = 0.1
+    patience = 10
+else:
+    train_size, test_size = None, None
+    max_epochs = 100000
+    num_dist_attempts = 5
+    target_kl_on_train = 0.01
+    patience = 100
 
-num_dist_attempts = 5
 
 run = wandb.init(reinit=True)
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}"
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
 wandb.run.save()
 
 
@@ -32,6 +44,7 @@ base_experiment_config = ExperimentConfig(
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
+    weight_decay=wandb.config.weight_decay,
     dataset_name=dataset_name,
 )
 dist_experiment_config = ExperimentConfig(
@@ -42,10 +55,17 @@ dist_experiment_config = ExperimentConfig(
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
+    weight_decay=wandb.config.weight_decay,
     dataset_name=dataset_name,
 )
 
-dist_train_config = DistTrainConfig(use_whole_dataset=True, use_early_stopping=True)
+dist_train_config = DistTrainConfig(
+    max_epochs=max_epochs,
+    use_whole_dataset=True,
+    use_early_stopping=True,
+    target_kl_on_train=target_kl_on_train,
+    patience=patience,
+)
 
 
 def train_dist_models():
@@ -64,6 +84,7 @@ def train_dist_models():
             dropout_prob=base_experiment_config.dropout_prob,
             device=device,
         )
+        base_model.eval()
 
         base_model.load(base_experiment_config.model_path)
 

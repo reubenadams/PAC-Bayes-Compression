@@ -8,17 +8,29 @@ from models import MLP
 from load_data import get_dataloaders
 
 
+toy_run = True
+
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"
 torch.manual_seed(0)
 os.environ["WANDB_SILENT"] = "true"
 
 dataset_name = "MNIST1D"
-train_size, test_size = None, None
-num_epochs = 2000
+
+if toy_run:
+    train_size, test_size = 100, 100
+    num_epochs = 200
+    patience = 10
+    target_overall_train_loss = 0.1
+else:
+    train_size, test_size = None, None
+    num_epochs = 2000
+    patience = 50
+    target_overall_train_loss = 0.01
+
 
 run = wandb.init()
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}"
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
 wandb.run.save()
 
 
@@ -26,8 +38,11 @@ base_train_config = TrainConfig(
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
+    weight_decay=wandb.config.weight_decay,
     num_epochs=num_epochs,
     use_early_stopping=True,
+    target_overall_train_loss=target_overall_train_loss,
+    patience=patience,
     get_overall_train_loss=True,
     get_test_accuracy=True,
     train_loss_name="Base Train Loss",
@@ -42,6 +57,7 @@ base_experiment_config = ExperimentConfig(
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
+    weight_decay=wandb.config.weight_decay,
     dataset_name=dataset_name,
 )
 
@@ -64,7 +80,7 @@ def train_base_models():
     )
 
     overall_train_loss, target_loss_achieved = model.train_model(
-        base_train_config,
+        train_config=base_train_config,
         train_loader=train_loader,
         test_loader=test_loader,
         train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),

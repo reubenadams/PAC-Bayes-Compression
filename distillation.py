@@ -25,7 +25,7 @@ train_loader, test_loader = get_dataloaders(
     full_mnist_config.batch_size,
     train_size=100,
     test_size=100,
-    new_size=full_mnist_config.new_data_shape,
+    new_input_size=full_mnist_config.new_data_shape,
 )
 
 wandb.init(

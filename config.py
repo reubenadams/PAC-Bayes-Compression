@@ -9,6 +9,7 @@ class TrainConfig:
     lr: float = 0.01
     batch_size: int = 64
     dropout_prob: float = 0.0
+    weight_decay: float = 0.0
     num_epochs: int = 100
     use_whole_dataset: bool = False
     use_early_stopping: bool = False
@@ -103,6 +104,7 @@ class ExperimentConfig:
     lr: float = 0.01
     batch_size: int = 64
     dropout_prob: float = 0.0
+    weight_decay: float = 0.0
 
     dataset_name: str = "MNIST"
     new_data_shape: Optional[tuple[int, int]] = None
@@ -156,6 +158,6 @@ class ExperimentConfig:
 
         self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
         self.model_name = (
-            f"{self.model_type}_{self.model_dims_str}_B{self.batch_size}_lr{self.lr}.t"
+            f"{self.model_type}_{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
         )
         self.model_path = f"{self.model_dir}/{self.model_name}"

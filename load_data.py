@@ -2,42 +2,42 @@ import os
 
 import torch
 from torchvision import datasets, transforms
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, Subset, DataLoader
 import torch.nn.functional as F
 
 from mnist1d.data import get_dataset_args, get_dataset
 
 
-def get_datasets(dataset_name, new_size=None):
+def get_datasets(dataset_name, new_input_size=None, train_size=None, test_size=None):
 
     valid_datasets = ["MNIST", "CIFAR10", "MNIST1D"]
     data_root = f"./data/{dataset_name}"
 
     if dataset_name == "MNIST":
-        if new_size is None:
-            new_size = (28, 28)
-            if new_size[0] > 28 or new_size[1] > 28:
+        if new_input_size is None:
+            new_input_size = (28, 28)
+            if new_input_size[0] > 28 or new_input_size[1] > 28:
                 raise ValueError(
-                    f"New MNIST size {new_size} should not be larger than original size 28x28."
+                    f"New MNIST size {new_input_size} should not be larger than original size 28x28."
                 )
-        data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
+        data_dir = os.path.join(data_root, f"{new_input_size[0]}x{new_input_size[1]}")
 
     elif dataset_name == "CIFAR10":
-        if new_size is None:
-            new_size = (32, 32)
-            if new_size[0] > 32 or new_size[1] > 32:
+        if new_input_size is None:
+            new_input_size = (32, 32)
+            if new_input_size[0] > 32 or new_input_size[1] > 32:
                 raise ValueError(
-                    f"New CIFAR10 size {new_size} should not be larger than original size 32x32."
+                    f"New CIFAR10 size {new_input_size} should not be larger than original size 32x32."
                 )
-        data_dir = os.path.join(data_root, f"{new_size[0]}x{new_size[1]}")
+        data_dir = os.path.join(data_root, f"{new_input_size[0]}x{new_input_size[1]}")
 
     elif dataset_name == "MNIST1D":
-        if new_size is None:
-            new_size = (40,)
+        if new_input_size is None:
+            new_input_size = (40,)
         else:
-            if new_size != (40,):
+            if new_input_size != (40,):
                 raise ValueError(f"MNIST1D does not support resizing.")
-        data_dir = os.path.join(data_root, f"{new_size[0]}")
+        data_dir = os.path.join(data_root, f"{new_input_size[0]}")
 
     else:
         raise ValueError(
@@ -53,7 +53,7 @@ def get_datasets(dataset_name, new_size=None):
 
         transform = transforms.Compose(
             [
-                transforms.Resize(new_size),
+                transforms.Resize(new_input_size),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,), (0.5,)),
             ]
@@ -74,6 +74,11 @@ def get_datasets(dataset_name, new_size=None):
                 transform=transform,
             )
 
+            if train_size is not None:
+                train = Subset(dataset=train, indices=range(train_size))
+            if test_size is not None:
+                test = Subset(dataset=test, indices=range(test_size))
+
         elif dataset_name == "CIFAR10":
 
             train = datasets.CIFAR10(
@@ -89,6 +94,11 @@ def get_datasets(dataset_name, new_size=None):
                 transform=transform,
             )
 
+            if train_size is not None:
+                train = Subset(dataset=train, indices=range(train_size))
+            if test_size is not None:
+                test = Subset(dataset=test, indices=range(test_size))
+
         elif dataset_name == "MNIST1D":
             os.makedirs(data_root, exist_ok=True)
             path = os.path.join(data_root, "mnist1d_data.pkl")
@@ -97,6 +107,12 @@ def get_datasets(dataset_name, new_size=None):
             x_train = torch.tensor(data["x"], dtype=torch.float32)
             x_test = torch.tensor(data["x_test"], dtype=torch.float32)
             y_train, y_test = torch.tensor(data["y"]), torch.tensor(data["y_test"])
+
+            if train_size is not None:
+                x_train, y_train = x_train[:train_size], y_train[:train_size]
+            if test_size is not None:
+                x_test, y_test = x_test[:test_size], y_test[:test_size]
+
             train = CustomDataset(x_train, y_train)
             test = CustomDataset(x_test, y_test)
 
@@ -112,22 +128,17 @@ def get_dataloaders(
     batch_size,
     train_size=None,
     test_size=None,
-    new_size=None,
+    new_input_size=None,
     use_whole_dataset=False,
     device="cpu",
 ):
 
-    train, test = get_datasets(dataset_name, new_size)
+    train, test = get_datasets(dataset_name, new_input_size, train_size, test_size)
 
     train.data = train.data.to(device)
     train.targets = train.targets.to(device)
     test.data = test.data.to(device)
     test.targets = test.targets.to(device)
-
-    if train_size is not None:
-        train = train[:train_size]
-    if test_size is not None:
-        test = test[:test_size]
 
     if use_whole_dataset:
         return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets)

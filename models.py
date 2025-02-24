@@ -179,7 +179,7 @@ class LowRankLinear(nn.Linear):
 
 class MLP(nn.Module):
     def __init__(
-        self, dimensions, activation, low_rank=False, dropout_prob=0.0, device="cpu", shift_logits=False
+        self, dimensions, activation, dropout_prob=0.0, low_rank=False, device="cpu", shift_logits=False
     ):
         super(MLP, self).__init__()
         self.dimensions = dimensions
@@ -311,7 +311,7 @@ class MLP(nn.Module):
 
         self.train()
 
-        optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
 
         if train_config.target_overall_train_loss:
             best_loss = float("inf")
