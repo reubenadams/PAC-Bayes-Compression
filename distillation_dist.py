@@ -8,7 +8,7 @@ from models import MLP
 from load_data import get_dataloaders
 
 
-toy_run = True
+toy_run = False
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"

@@ -6,19 +6,19 @@ parameters:
     values: [40]
   output_dim:
     values: [10]
+
   hidden_layer_width:
-    values: [300]
+    values: [300, 500]
   num_hidden_layers:
-    values: [1]
+    values: [1, 2]
 
   optimizer_name:
     values: ['adam', 'sgd', 'rmsprop']
   batch_size:
-    values: [32]
+    values: [32, 64]
   lr:
-    values: [0.0032]
+    values: [0.01, 0.0032]
   dropout_prob:
-    values: [0.0]
+    values: [0.0, 0.2]
   weight_decay:
-    # values: [0, 1e-4, 1e-3]
-    values: [0]
+    values: [0, 1e-5, 1e-4]
