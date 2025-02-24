@@ -1,8 +1,18 @@
 program: distillation_dist.py
 method: grid
 parameters:
-  dims:
-    values: [[40, 500, 10]]
+
+  input_dim:
+    values: [40]
+  output_dim:
+    values: [10]
+  model_width:
+    values: [200, 300]
+  model_depth:
+    values: [1, 2]
+  # dims:
+  #   values: [[40, 500, 10]]
+
   batch_size:
     values: [32]
   lr:
@@ -10,4 +20,5 @@ parameters:
   dropout_prob:
     values: [0.0]
   weight_decay:
-    values: [0, 1e-3, 1e-4]
+    # values: [0, 1e-4, 1e-3]
+    values: [0]

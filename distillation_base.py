@@ -30,9 +30,10 @@ else:
 
 
 run = wandb.init()
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
+wandb.run.name = f"hw{wandb.config.model_width}_nl{wandb.config.model_depth}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
 wandb.run.save()
 
+model_dims = [wandb.config.input_dim] + [wandb.config.model_width] * wandb.config.model_depth + [wandb.config.output_dim]
 
 base_train_config = TrainConfig(
     lr=wandb.config.lr,
@@ -53,7 +54,7 @@ base_experiment_config = ExperimentConfig(
     project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
-    model_dims=wandb.config.dims,
+    model_dims=model_dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,

@@ -32,15 +32,16 @@ else:
 
 
 run = wandb.init(reinit=True)
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
+wandb.run.name = f"hw{wandb.config.model_width}_nl{wandb.config.model_depth}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}_wd{wandb.config.weight_decay}"
 wandb.run.save()
 
+model_dims = [wandb.config.input_dim] + [wandb.config.model_width] * wandb.config.model_depth + [wandb.config.output_dim]
 
 base_experiment_config = ExperimentConfig(
     project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
-    model_dims=wandb.config.dims,
+    model_dims=model_dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
@@ -51,7 +52,7 @@ dist_experiment_config = ExperimentConfig(
     project_name=f"Distillation {dataset_name} Dist, Binary Search",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="dist",
-    model_dims=wandb.config.dims,
+    model_dims=model_dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
     dropout_prob=wandb.config.dropout_prob,
@@ -72,11 +73,14 @@ def train_dist_models():
 
     if os.path.isfile(base_experiment_config.model_path):
 
-        print(wandb.config.dims, wandb.config.batch_size, wandb.config.lr)
+        print(model_dims, wandb.config.batch_size, wandb.config.lr)
         model_log = {
-            "Dim": wandb.config.dims[1],
+            "Width": wandb.config.model_width,
+            "Depth": wandb.config.model_depth,
             "Batch Size": wandb.config.batch_size,
             "Learning Rate": wandb.config.lr,
+            "Dropout Probability": wandb.config.dropout_prob,
+            "Weight Decay": wandb.config.weight_decay,
         }
         base_model = MLP(
             dimensions=base_experiment_config.model_dims,
