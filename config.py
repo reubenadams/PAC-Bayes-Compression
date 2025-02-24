@@ -8,6 +8,7 @@ from math import prod
 class TrainConfig:
     lr: float = 0.01
     batch_size: int = 64
+    dropout_prob: float = 0.0
     num_epochs: int = 100
     use_whole_dataset: bool = False
     use_early_stopping: bool = False
@@ -101,6 +102,7 @@ class ExperimentConfig:
     model_dims: List[int] = None
     lr: float = 0.01
     batch_size: int = 64
+    dropout_prob: float = 0.0
 
     dataset_name: str = "MNIST"
     new_data_shape: Optional[tuple[int, int]] = None

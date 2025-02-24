@@ -20,7 +20,7 @@ train_size, test_size = None, None
 num_dist_attempts = 5
 
 run = wandb.init(reinit=True)
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}"
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}"
 wandb.run.save()
 
 
@@ -31,6 +31,7 @@ base_experiment_config = ExperimentConfig(
     model_dims=wandb.config.dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
+    dropout_prob=wandb.config.dropout_prob,
     dataset_name=dataset_name,
 )
 dist_experiment_config = ExperimentConfig(
@@ -40,6 +41,7 @@ dist_experiment_config = ExperimentConfig(
     model_dims=wandb.config.dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
+    dropout_prob=wandb.config.dropout_prob,
     dataset_name=dataset_name,
 )
 

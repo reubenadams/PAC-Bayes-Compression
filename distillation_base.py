@@ -18,13 +18,14 @@ train_size, test_size = None, None
 num_epochs = 2000
 
 run = wandb.init()
-wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}"
+wandb.run.name = f"hw{wandb.config.dims[1]}_lr{wandb.config.lr}_bs{wandb.config.batch_size}_dp{wandb.config.dropout_prob}"
 wandb.run.save()
 
 
 base_train_config = TrainConfig(
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
+    dropout_prob=wandb.config.dropout_prob,
     num_epochs=num_epochs,
     use_early_stopping=True,
     get_overall_train_loss=True,
@@ -40,6 +41,7 @@ base_experiment_config = ExperimentConfig(
     model_dims=wandb.config.dims,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
+    dropout_prob=wandb.config.dropout_prob,
     dataset_name=dataset_name,
 )
 

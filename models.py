@@ -179,11 +179,12 @@ class LowRankLinear(nn.Linear):
 
 class MLP(nn.Module):
     def __init__(
-        self, dimensions, activation, low_rank=False, device="cpu", shift_logits=False
+        self, dimensions, activation, low_rank=False, dropout_prob=0.0, device="cpu", shift_logits=False
     ):
         super(MLP, self).__init__()
         self.dimensions = dimensions
         self.activation = self.get_act(activation)
+        self.dropout_prob = dropout_prob
         self.network_modules = []
         self.device = torch.device(device)
         self.shift_logits = shift_logits
@@ -195,8 +196,10 @@ class MLP(nn.Module):
                 )
             else:
                 self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
-            if i < len(dimensions) - 2:  # No activation on the last layer
+            if i < len(dimensions) - 2:  # No activation or dropout on the last layer
                 self.network_modules.append(self.activation())
+                if self.dropout_prob > 0:
+                    self.network_modules.append(nn.Dropout(p=self.dropout_prob))
         self.network = nn.Sequential(*self.network_modules).to(self.device)
         self.num_parameters = sum([p.numel() for p in self.parameters()])
 
