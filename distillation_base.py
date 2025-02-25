@@ -8,7 +8,7 @@ from models import MLP
 from load_data import get_dataloaders
 
 
-toy_run = False
+toy_run = True
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"
@@ -24,7 +24,7 @@ if toy_run:
     target_overall_train_loss = 0.1
 else:
     train_size, test_size = None, None
-    num_epochs = 2000
+    num_epochs = 20000
     patience = 50
     target_overall_train_loss = 0.01
 
@@ -46,9 +46,11 @@ base_train_config = TrainConfig(
     target_overall_train_loss=target_overall_train_loss,
     patience=patience,
     get_overall_train_loss=True,
+    get_train_accuracy=True,
     get_test_accuracy=True,
     train_loss_name="Base Train Loss",
     test_loss_name="Base Test Loss",
+    train_accuracy_name="Base Train Accuracy",
     test_accuracy_name="Base Test Accuracy",
 )
 base_experiment_config = ExperimentConfig(
@@ -83,7 +85,7 @@ def train_base_models():
         test_size=test_size,
     )
 
-    overall_train_loss, target_loss_achieved = model.train_model(
+    overall_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
         train_config=base_train_config,
         train_loader=train_loader,
         test_loader=test_loader,
@@ -92,7 +94,14 @@ def train_base_models():
         overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
     )
 
-    if target_loss_achieved:  # Only save if model reached target train loss
+    wandb.log({
+        "Final Overall " + base_train_config.train_loss_name: overall_train_loss,
+        "Reached Target": reached_target,
+        "Lost Patience": lost_patience,
+        "Epochs Taken": epochs_taken,
+    })
+
+    if reached_target:  # Only save if model reached target train loss
         print(
             f"Model reached target train loss {overall_train_loss} <= {base_train_config.target_overall_train_loss}"
         )

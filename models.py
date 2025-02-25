@@ -364,6 +364,10 @@ class MLP(nn.Module):
                 test_loss = self.get_overall_loss(test_loss_fn, test_loader)
                 epoch_log[train_config.test_loss_name] = test_loss.item()
 
+            if train_config.get_train_accuracy:
+                train_accuracy = self.get_overall_accuracy(test_loader)
+                epoch_log[train_config.train_accuracy_name] = train_accuracy
+
             if train_config.get_test_accuracy:
                 test_accuracy = self.get_overall_accuracy(test_loader)
                 epoch_log[train_config.test_accuracy_name] = test_accuracy
@@ -376,17 +380,28 @@ class MLP(nn.Module):
 
             # Test if reached target loss
             if train_config.target_overall_train_loss:
-                if overall_train_loss <= train_config.target_overall_train_loss:
-                    return overall_train_loss, True
-                if epochs_since_improvement >= train_config.patience:
-                    return overall_train_loss, False
+                if overall_train_loss <= train_config.target_overall_train_loss:  # Reached target
+                    reached_target = True
+                    lost_patience = False
+                    return overall_train_loss, reached_target, lost_patience, epoch
+                if epochs_since_improvement >= train_config.patience:  # Ran out of patience
+                    reached_target = False
+                    lost_patience = True
+                    return overall_train_loss, reached_target, lost_patience, epoch
 
             if epoch % 10 == 0 and callback:
                 callback(epoch)
 
-        if train_config.get_overall_train_loss:
-            return overall_train_loss, False
-        return None, None
+        if train_config.get_overall_train_loss:  # Didn't reach target within num_epochs
+            reached_target = False
+            lost_patience = False
+            return overall_train_loss, reached_target, lost_patience, epoch
+        
+        # Weren't targeting an overall train loss
+        overall_train_loss = None
+        reached_target = None
+        lost_patience = None
+        return overall_train_loss, reached_target, lost_patience, epoch
 
     def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
 

@@ -20,9 +20,11 @@ class TrainConfig:
     log_with_wandb: bool = True
     get_overall_train_loss: bool = False
     get_test_loss: bool = False
+    get_train_accuracy: bool = False
     get_test_accuracy: bool = False
     train_loss_name: str = "Train Loss"
     test_loss_name: str = "Test Loss"
+    train_accuracy_name: str = "Train Accuracy"
     test_accuracy_name: str = "Test Accuracy"
 
     def __post_init__(self):
