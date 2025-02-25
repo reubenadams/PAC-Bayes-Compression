@@ -1,7 +1,7 @@
 import wandb
 import pandas as pd
 
-def download_sweep_results(sweep_id, project_name, entity=None):
+def download_sweep_results(sweep_id, project_name, entity):
     """
     Download results from a wandb sweep as a pandas DataFrame.
     
@@ -16,7 +16,7 @@ def download_sweep_results(sweep_id, project_name, entity=None):
     api = wandb.Api()
     
     # Get the sweep object
-    sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}" if entity else f"{project_name}/{sweep_id}")
+    sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
     
     # Get all runs in the sweep
     runs = sweep.runs
@@ -48,10 +48,10 @@ def download_sweep_results(sweep_id, project_name, entity=None):
 
 # Example usage
 sweep_results = download_sweep_results(
-    sweep_id="4z6z5ovc", 
-    project_name="log-final",
-    entity="teamreuben"  # optional
+    sweep_id="avg612py", 
+    project_name="base-more-epochs",
+    entity="teamreuben"
 )
 
 # Save to CSV
-sweep_results.to_csv("sweep_results_toy.csv", index=False)
+sweep_results.to_csv("sweep_results_more_epochs.csv", index=False)

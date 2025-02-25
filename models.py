@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+from __future__ import annotations
 
 import torch
 from torch.utils.data import Dataset
@@ -365,7 +367,7 @@ class MLP(nn.Module):
                 epoch_log[train_config.test_loss_name] = test_loss.item()
 
             if train_config.get_train_accuracy:
-                train_accuracy = self.get_overall_accuracy(test_loader)
+                train_accuracy = self.get_overall_accuracy(train_loader)
                 epoch_log[train_config.train_accuracy_name] = train_accuracy
 
             if train_config.get_test_accuracy:
@@ -572,7 +574,7 @@ class MLP(nn.Module):
 
         return total_kl_loss_on_train_data, False, epoch
 
-    def dist_best_of_n(self, dist_config, dist_dims, domain_train_loader, num_attempts):
+    def dist_best_of_n(self, dist_config, dist_dims, domain_train_loader, num_attempts) -> tuple[bool, Optional[MLP]]:
 
         dist_model = MLP(
             dimensions=dist_dims,
@@ -595,11 +597,11 @@ class MLP(nn.Module):
             )
 
             if target_loss_achieved:
-                return True
+                return True, dist_model
 
             dist_model.reinitialize_weights()
 
-        return False
+        return False, None
 
     def get_dist_dims(self, dim_skip):
 
@@ -617,51 +619,41 @@ class MLP(nn.Module):
         ]
         return dist_dims
 
-    def get_dist_complexity(self, dist_config, domain_train_loader, num_attempts=1):
+    def get_dist_complexity(self, dist_config, domain_train_loader, num_attempts=1) -> tuple[int, Optional[MLP]]:
 
         hidden_dim_guess = dist_config.guess_hidden_dim
 
         print(f"Hidden dim guess: {hidden_dim_guess}")
         dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
-        dist_successful = self.dist_best_of_n(
+        dist_successful, dist_model = self.dist_best_of_n(
             dist_config, dist_dims, domain_train_loader, num_attempts
         )
 
-        # If the first guess worked, divide until it doesn't
+        # If the first guess worked, halve until it doesn't
         if dist_successful:
             while dist_successful:
+                dist_model_high = dist_model
                 hidden_dim_guess //= 2
                 print(f"Hidden dim guess: {hidden_dim_guess}")
                 dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
-                dist_successful = self.dist_best_of_n(
+                dist_successful, dist_model = self.dist_best_of_n(
                     dist_config, dist_dims, domain_train_loader, num_attempts
                 )
             hidden_dim_low, hidden_dim_high = hidden_dim_guess, hidden_dim_guess * 2
+            dist_model_low = dist_model
 
-        # If the first guess didn't work, multiply until it does
+        # If the first guess didn't work, double until it does
         else:
             while not dist_successful:
+                dist_model_low = dist_model
                 hidden_dim_guess *= 2
                 print(f"Hidden dim guess: {hidden_dim_guess}")
                 dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
-                dist_successful = self.dist_best_of_n(
+                dist_successful, dist_model = self.dist_best_of_n(
                     dist_config, dist_dims, domain_train_loader, num_attempts
                 )
             hidden_dim_low, hidden_dim_high = hidden_dim_guess // 2, hidden_dim_guess * 2
-
-        # hidden_dim_low, hidden_dim_high = (1, 2)
-
-        # while True:
-
-        #     print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
-        #     dist_dims = [self.dimensions[0], hidden_dim_high, self.dimensions[-1]]
-        #     dist_successful = self.dist_best_of_n(
-        #         dist_config, dist_dims, domain_train_loader, num_attempts
-        #     )
-        #     if not dist_successful:
-        #         hidden_dim_low, hidden_dim_high = hidden_dim_high, hidden_dim_high * 2
-        #     else:
-        #         break
+            dist_model_high = dist_model
 
         # Start the binary search
         while hidden_dim_high - hidden_dim_low > 1:
@@ -669,16 +661,18 @@ class MLP(nn.Module):
             print(f"Hidden dim range: ({hidden_dim_low}, {hidden_dim_high})")
             hidden_dim_mid = (hidden_dim_low + hidden_dim_high) // 2
             dist_dims = [self.dimensions[0], hidden_dim_mid, self.dimensions[-1]]
-            dist_successful = self.dist_best_of_n(
+            dist_successful, dist_model = self.dist_best_of_n(
                 dist_config, dist_dims, domain_train_loader, num_attempts
             )
 
             if dist_successful:
                 hidden_dim_high = hidden_dim_mid
+                dist_model_high = dist_model
             else:
                 hidden_dim_low = hidden_dim_mid
+                dist_model_low = dist_model
 
-        return hidden_dim_low
+        return hidden_dim_high, dist_model_high
 
     def get_dist_variance(
         self,

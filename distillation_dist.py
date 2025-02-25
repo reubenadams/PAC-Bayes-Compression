@@ -60,6 +60,7 @@ dist_experiment_config = ExperimentConfig(
     dropout_prob=wandb.config.dropout_prob,
     weight_decay=wandb.config.weight_decay,
     dataset_name=dataset_name,
+    model_name=wandb.run.name,
 )
 
 dist_train_config = DistTrainConfig(
@@ -110,12 +111,14 @@ def train_dist_models():
         )
         model_log["Generalization Gap"] = generalization_gap
 
-        complexity = base_model.get_dist_complexity(
+        complexity, dist_model = base_model.get_dist_complexity(
             dist_train_config,
             domain_train_loader=train_loader,
             num_attempts=num_dist_attempts,
         )
         model_log["Complexity"] = complexity
+
+        dist_model.save(dist_experiment_config.model_dir, dist_experiment_config.model_name)
 
         if dist_train_config.log_with_wandb:
             wandb.log(model_log)

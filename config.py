@@ -161,9 +161,9 @@ class ExperimentConfig:
         self.new_data_shape_str = "x".join(map(str, self.new_data_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
+        self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/{self.model_type}"
         if self.model_name is None:
             self.model_name = (
-                f"{self.model_type}_{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
+                f"{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
             )
         self.model_path = f"{self.model_dir}/{self.model_name}"

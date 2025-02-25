@@ -8,7 +8,7 @@ from models import MLP
 from load_data import get_dataloaders
 
 
-toy_run = True
+toy_run = False
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
 device = "cpu"
@@ -24,8 +24,8 @@ if toy_run:
     target_overall_train_loss = 0.1
 else:
     train_size, test_size = None, None
-    num_epochs = 20000
-    patience = 50
+    num_epochs = 100000
+    patience = 100
     target_overall_train_loss = 0.01
 
 
