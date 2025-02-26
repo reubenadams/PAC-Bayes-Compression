@@ -20,15 +20,15 @@ dataset_name = "MNIST1D"
 if toy_run:
     train_size, test_size = 100, 100
     max_epochs = 10000
-    num_dist_attempts = 1
-    target_kl_on_train = 0.1
     patience = 10
+    target_kl_on_train = 0.1
+    num_dist_attempts = 1
 else:
     train_size, test_size = None, None
     max_epochs = 100000
-    num_dist_attempts = 5
-    target_kl_on_train = 0.01
     patience = 100
+    target_kl_on_train = 0.01
+    num_dist_attempts = 5
 
 
 run = wandb.init(reinit=True)
