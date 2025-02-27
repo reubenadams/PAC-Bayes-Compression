@@ -24,7 +24,7 @@ if toy_run:
     target_overall_train_loss = 0.1
 else:
     train_size, test_size = None, None
-    num_epochs = 100000
+    num_epochs = 1000000
     patience = 1000
     target_overall_train_loss = 0.01
 
