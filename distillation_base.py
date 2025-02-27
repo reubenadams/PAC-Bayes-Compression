@@ -98,6 +98,7 @@ def train_base_models():
         "Final Overall " + base_train_config.train_loss_name: overall_train_loss,
         "Reached Target": reached_target,
         "Lost Patience": lost_patience,
+        "Ran out of epochs": not (reached_target or lost_patience),
         "Epochs Taken": epochs_taken,
     })
 

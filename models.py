@@ -1,16 +1,16 @@
 from __future__ import annotations
 import os
 from typing import Optional
+from copy import deepcopy
+from itertools import product
 
 import torch
 from torch.utils.data import Dataset
 import torch.nn as nn
 import torch.nn.functional as F
 
+import math
 import wandb
-
-from copy import deepcopy
-from itertools import product
 
 from config import TrainConfig
 from load_data import get_epsilon_mesh, get_logits_dataloader
@@ -328,7 +328,10 @@ class MLP(nn.Module):
 
         for epoch in range(1, train_config.num_epochs + 1):
 
-            if epoch % 10 == 1:
+            # Log every epoch for the first 100, every 10th until 1000, every 100th until 10000 etc.
+            log_freq = 10 ** max(0, math.floor(math.log(epoch, 10)) - 1)
+
+            if epoch % log_freq == 0:
                 print(f"Epoch [{epoch}/{train_config.num_epochs}]")
 
             for x, labels in train_loader:
@@ -362,17 +365,18 @@ class MLP(nn.Module):
                 else:
                     epochs_since_improvement += 1
 
-            if train_config.get_test_loss:
-                test_loss = self.get_overall_loss(test_loss_fn, test_loader)
-                epoch_log[train_config.test_loss_name] = test_loss.item()
+            if (epoch % log_freq == 0) or (epoch == train_config.num_epochs):
+                if train_config.get_test_loss:
+                    test_loss = self.get_overall_loss(test_loss_fn, test_loader)
+                    epoch_log[train_config.test_loss_name] = test_loss.item()
 
-            if train_config.get_train_accuracy:
-                train_accuracy = self.get_overall_accuracy(train_loader)
-                epoch_log[train_config.train_accuracy_name] = train_accuracy
+                if train_config.get_train_accuracy:
+                    train_accuracy = self.get_overall_accuracy(train_loader)
+                    epoch_log[train_config.train_accuracy_name] = train_accuracy
 
-            if train_config.get_test_accuracy:
-                test_accuracy = self.get_overall_accuracy(test_loader)
-                epoch_log[train_config.test_accuracy_name] = test_accuracy
+                if train_config.get_test_accuracy:
+                    test_accuracy = self.get_overall_accuracy(test_loader)
+                    epoch_log[train_config.test_accuracy_name] = test_accuracy
             self.train()
             ########## Evaluate model and return to training mode ##########
 
