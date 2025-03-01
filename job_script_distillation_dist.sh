@@ -4,7 +4,7 @@
 #$ -S /bin/bash
 
 # Sets a hard limit on how long your job can run. It's wallclock time (format hours:minutes:seconds), i.e. the time measured by a clock on the wall, rather than CPU time ()
-#$ -l h_rt=24:0:0
+#$ -l h_rt=96:0:0
 
 # Request memory per core. Check in Process Memory in Use (MB) in wandb. Total memory is num cores x this value.
 #$ -l mem=1G
@@ -42,5 +42,5 @@ export WANDB_DIR=$TMPDIR/wandb
 export WANDB_API_KEY=$(head -n 1 $HOME/PAC-Bayes-Compression/wandb_api_key.txt)  # Setting the API key for wandb.
 
 # Count is the number of runs to do. Syntax is `wandb agent username/project/sweep_id`, where sweep_id is what was returned by wandb.sweep
-wandb agent teamreuben/2187-runs/j2wex9zs --count 25
+wandb agent teamreuben/2187-big/e8qaxkrj --count 22
 # python distillation_base.py

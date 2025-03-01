@@ -48,10 +48,10 @@ def download_sweep_results(sweep_id, project_name, entity):
 
 # Example usage
 sweep_results = download_sweep_results(
-    sweep_id="smsx7eew", 
-    project_name="2187-runs",
+    sweep_id="7spkiovz", 
+    project_name="2187-big",
     entity="teamreuben"
 )
 
 # Save to CSV
-sweep_results.to_csv("sweep_results_2187_runs.csv", index=False)
+sweep_results.to_csv("sweep_results_2187_big.csv", index=False)
