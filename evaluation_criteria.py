@@ -1,13 +1,14 @@
 import torch
 from scipy import stats
-import yaml
+from yaml import safe_load
 import wandb
 
 
+# Keep this
 def get_hyp_vals(sweep_config_path: str) -> dict:
     hyp_vals = dict()
     with open(sweep_config_path, "r") as file:
-        sweep_config = yaml.safe_load(file)
+        sweep_config = safe_load(file)
         for name, vals in sweep_config["parameters"].items():
             vals = vals["values"]
             if name not in ["input_dim", "output_dim"]:
@@ -15,6 +16,7 @@ def get_hyp_vals(sweep_config_path: str) -> dict:
     return hyp_vals
 
 
+# Change this
 def get_sweep_results(hyp_vals: dict, dist_sweep_id: str, project_name: str, entity: str = "teamreuben") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
     hyp_names = sorted(list(hyp_vals.keys()))  # TODO: Make sure we're always sorting.
@@ -142,19 +144,16 @@ def conditional_mutual_inf(pmf_joint_triple: torch.Tensor) -> float:
 
 
 if __name__ == "__main__":
-    # base_hyp_vals = get_hyp_vals("sweep_config_distillation_base.yaml")
-    # print(base_hyp_vals)
-    # print()
-    # dist_hyp_vals = get_hyp_vals("sweep_config_distillation_dist.yaml")
-    # print(dist_hyp_vals)
-    # print()
-    # successes, complexities, gen_gaps = get_sweep_results(hyp_vals=dist_hyp_vals, dist_sweep_id="nrmfqbij", project_name="big-run")
-    # print(successes)
-    # print(complexities)
-    # print(gen_gaps)
 
-    a = torch.arange(24).reshape(2, 3, 4)
-    print(a)
-    print(flatten_except_dim(a, 0))
-    print(flatten_except_dim(a, 1))
-    print(flatten_except_dim(a, 2))
+    api = wandb.Api()
+    sweep = api.sweep("teamreuben/2187-big/7spkiovz")
+    runs = sweep.runs
+    for run in runs:
+        print(f"Run ID: {run.id}, Name: {run.name}")
+        print(f"Config: {run.config}")
+        print(f"Metrics: {run.summary}")
+        break
+    # hyp_vals = get_hyp_vals("sweep_config_distillation_base.yaml")
+    # print(hyp_vals)
+    # successes, complexities, gen_gaps = get_sweep_results(hyp_vals, "e8qaxkrj", "2187-big")
+    # print(f"{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")

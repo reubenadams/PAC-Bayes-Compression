@@ -567,6 +567,7 @@ class MLP(nn.Module):
             if dist_config.log_with_wandb:
                 wandb.log(epoch_log)
 
+            # TODO: If successful, you should log one last time
             if dist_config.target_kl_on_train:
                 if total_kl_loss_on_train_data <= dist_config.target_kl_on_train:
                     return total_kl_loss_on_train_data, True, epoch

@@ -1,7 +1,31 @@
 import wandb
 import pandas as pd
 
-def download_sweep_results(sweep_id, project_name, entity):
+
+def download_sweep_results_raw(sweep_id, project_name, entity, save_to_path):
+
+    api = wandb.Api()
+    sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
+    runs = sweep.runs
+
+    runs_data = []
+    for run in runs:
+
+        # Combine into one row
+        run_data = {
+            "run_id": run.id,
+            "run_name": run.name,
+            **run.config,
+            **run.summary,
+        }
+        runs_data.append(run_data)
+    
+    df = pd.DataFrame(runs_data)
+    
+    df.to_csv(save_to_path, index=False)
+
+
+def download_sweep_results_clean(sweep_id, project_name, entity, save_to_path, base):
     """
     Download results from a wandb sweep as a pandas DataFrame.
     
@@ -14,24 +38,21 @@ def download_sweep_results(sweep_id, project_name, entity):
         pd.DataFrame: DataFrame containing all runs from the sweep
     """
     api = wandb.Api()
-    
-    # Get the sweep object
     sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
-    
-    # Get all runs in the sweep
     runs = sweep.runs
     
-    # Extract the data we want
+    config_ignore = {"input_dim", "output_dim"}
+    if base:
+        summary_ignore = {"Epoch", "Base Train Loss", "Final Overall Base Train Loss"}
+    else:
+        summary_ignore = {"Batch Size", "Depth", "Dist Train (kl mean)", "Dropout Probability", "Learning Rate", "Optimizer", "Weight Decay", "Width"}
+
     runs_data = []
     for run in runs:
-        # Get config (hyperparameters)
-        config = {f"config/{k}": v for k, v in run.config.items() 
-                 if not k.startswith('_')}
-        
-        # Get summary (metrics)
-        summary = {f"metric/{k}": v for k, v in run.summary.items() 
-                  if not k.startswith('_')}
-        
+
+        config = {k: v for k, v in run.config.items() if (not k.startswith('_') and not k in config_ignore)}
+        summary = {k: v for k, v in run.summary.items() if (not k.startswith('_') and not k in summary_ignore)}
+
         # Combine into one row
         run_data = {
             "run_id": run.id,
@@ -41,17 +62,49 @@ def download_sweep_results(sweep_id, project_name, entity):
         }
         runs_data.append(run_data)
     
-    # Convert to DataFrame
     df = pd.DataFrame(runs_data)
+    df = df.drop_duplicates(keep="first")
     
-    return df
+    df.to_csv(save_to_path, index=False)
 
-# Example usage
-sweep_results = download_sweep_results(
-    sweep_id="7spkiovz", 
-    project_name="2187-big",
-    entity="teamreuben"
-)
 
-# Save to CSV
-sweep_results.to_csv("sweep_results_2187_big.csv", index=False)
+def combine_results(base_path, dist_path, combined_path):
+    df_base = pd.read_csv(base_path)
+    df_dist = pd.read_csv(dist_path)[["run_name", "Complexity", "Epoch", "Generalization Gap", "KL Loss on Train Data (kl mean)"]]
+    df_base.rename(columns={"Epochs Taken": "Epochs Taken Base", "Reached Target": "Reached Target Base"}, inplace=True)
+    df_dist.rename(columns={"Epoch": "Epochs Taken Dist"}, inplace=True)
+    df_comb = pd.merge(df_base, df_dist, on="run_name", how="left")
+    df_comb.to_csv(combined_path, index=False)
+
+
+
+if __name__ == "__main__":
+
+    base_results_path = "sweep_results_2187_big_base.csv"
+    dist_results_path = "sweep_results_2187_big_dist.csv"
+    comb_results_path = "sweep_results_2187_big_comb.csv"
+    download_sweep_results_raw(
+        sweep_id="7spkiovz",
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path="sweep_results_2187_big_base_raw.csv",
+        )
+    download_sweep_results_clean(
+        sweep_id="7spkiovz", 
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path=base_results_path,
+        base=True
+    )
+    download_sweep_results_clean(
+        sweep_id="e8qaxkrj", 
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path=dist_results_path,
+        base=False
+    )
+    combine_results(
+        base_results_path,
+        dist_results_path,
+        comb_results_path,
+    )
