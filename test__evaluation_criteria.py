@@ -1,7 +1,7 @@
 import torch
 from scipy import stats
 
-from evaluation_criteria import get_granulated_krccs, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf
+from evaluation_criteria import get_granulated_krccs, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf, get_differences, get_signs, get_joint_probs, get_joint_probs
 
 
 
@@ -160,8 +160,71 @@ def test__conditional_mutual_inf():
     assert torch.isclose(result, expected)
 
 
+def test__get_differences():
+    a = torch.tensor([1, 2, 2, 3])
+    expected = torch.tensor([-1, -1, -2, 1, 0, -1, 1, 0, -1, 2, 1, 1])
+    result = get_differences(a)
+    assert (result == expected).all()
+
+
+def test__get_signs():
+    a = torch.tensor([1, 2, 2, 3])
+    expected = torch.tensor([-1, -1, -1, 1, 1, -1, 1, 1, -1, 1, 1, 1])
+    result = get_signs(a)
+    assert (result == expected).all()
+
+
+def test__get_joint_probs():
+    complexities_signs = torch.tensor([1,  1,  1,  1, -1, -1, -1, -1])
+    gen_gaps_signs =     torch.tensor([1, -1, -1, -1, -1, -1,  1, -1])
+    prob_hyp1_hyp2 = torch.tensor(1/9)
+    prob_nn = 3/8
+    prob_np = 1/8
+    prob_pn = 3/8
+    prob_pp = 1/8
+    expected = tuple(p * prob_hyp1_hyp2 for p in [prob_nn, prob_np, prob_pn, prob_pp])
+    result = get_joint_probs(complexities_signs, gen_gaps_signs, prob_hyp1_hyp2)
+    assert result == expected, f"{result=}, {expected=}"
+
+
+def test__get_joint_probs():
+    successes = torch.tensor([[True, True, False], [True, True, False]])
+    complexities = torch.tensor([[2, 4, 100], [8, 16, 100]])
+    gen_gaps = torch.tensor([[0.1, 0.3, 100], [0.2, 0.01, 100]])
+
+    successes = successes.reshape(2, 1, 3, 1)
+    complexities = complexities.reshape(2, 1, 3, 1)
+    gen_gaps = gen_gaps.reshape(2, 1, 3, 1)
+
+    successes = torch.tile(successes, (1, 7, 1, 5))
+    complexities = torch.tile(complexities, (1, 7, 1, 5))
+    gen_gaps = torch.tile(gen_gaps, (1, 7, 1, 5))
+
+    slices = [slice(None), 0, slice(None), 0]
+    prob_hyp1_hyp2 = torch.tensor(1/9)
+
+    complexities_signs = torch.tensor([-1, -1, -1, 1, -1, -1, 1,  1, -1,  1,  1,  1])
+    gen_gaps_signs =     torch.tensor([-1, -1,  1, 1,  1,  1, 1, -1,  1, -1, -1, -1])
+    count_nn = 2 / 12
+    count_np = 4 / 12
+    count_pn = 4 / 12
+    count_pp = 2 / 12
+    
+    expected = tuple(p * prob_hyp1_hyp2 for p in [count_nn, count_np, count_pn, count_pp])
+    result = get_joint_probs(successes, complexities, gen_gaps, slices, prob_hyp1_hyp2)
+    assert result == expected
+    
+
+
+
+
+
+
 if __name__ == "__main__":
     for _ in range(10):
+        # test__get_differences()
+        # test__get_signs()
+        test__get_joint_probs()
         pass
         # test__get_granulated_krccs__2x3()
         # test__get_granulated_krccs__2x3x4()

@@ -2,6 +2,7 @@ import torch
 from scipy import stats
 from yaml import safe_load
 import wandb
+from itertools import product
 
 
 # Keep this
@@ -101,24 +102,6 @@ def conditional_entropy(pmf_joint: torch.Tensor) -> float:
     return torch.sum(torch.tensor(entropies))
 
 
-# def mutual_inf(pmf1: torch.Tensor, pmf2: torch.Tensor, pmf_joint: torch.Tensor) -> float:
-#     assert len(pmf1.shape) == 1
-#     assert len(pmf2.shape) == 1
-#     assert pmf_joint.shape == (pmf1.shape[0], pmf2.shape[0])
-    
-#     d1, d2 = pmf_joint.shape
-#     pmf1 = pmf1.reshape(d1, 1).tile(1, d2).flatten()
-#     pmf2 = pmf2.reshape(1, d2).tile(d1, 1).flatten()
-#     pmf_joint = pmf_joint.flatten()
-
-#     joint_support = pmf_joint != 0
-#     pmf1 = pmf1[joint_support]
-#     pmf2 = pmf2[joint_support]
-#     pmf_joint = pmf_joint[joint_support]
-
-#     return torch.sum(pmf_joint * torch.log(pmf_joint / (pmf1 * pmf2)))
-
-
 def mutual_inf(pmf_joint: torch.Tensor) -> float:
     pmf0 = pmf_joint.sum(dim=1, keepdim=True).expand_as(pmf_joint).flatten()
     pmf1 = pmf_joint.sum(dim=0, keepdim=True).expand_as(pmf_joint).flatten()
@@ -141,6 +124,92 @@ def conditional_mutual_inf(pmf_joint_triple: torch.Tensor) -> float:
     assert torch.allclose(conditional_sums, torch.ones_like(conditional_sums))
     mut_infs = [pmf_z[k] * mutual_inf(pmf_xy_given_z[:, :, k]) for k in range(pmf_joint_triple.shape[2])]
     return torch.sum(torch.tensor(mut_infs))
+
+
+def get_differences(tensor: torch.Tensor) -> torch.Tensor:
+    assert tensor.ndim == 1
+    num_elements = tensor.size(0)
+    diffs =  torch.tensor([tensor[i] - tensor[j] for i, j in product(range(num_elements), repeat=2) if i != j])
+    assert diffs.numel() == num_elements * (num_elements - 1)
+    return diffs
+
+
+def get_signs(tensor: torch.Tensor) -> torch.Tensor:
+    diffs = get_differences(tensor)
+    diffs[diffs == 0] = 1
+    return torch.sign(diffs)
+
+
+def get_joint_probs_from_signs(complexities_signs: torch.Tensor, gen_gaps_signs: torch.Tensor, prob_hyp1_hyp2: torch.Tensor) -> tuple[torch.Tensor]:
+    prob_nn = ((complexities_signs == -1) & (gen_gaps_signs == -1)).float().mean() * prob_hyp1_hyp2
+    prob_np = ((complexities_signs == -1) & (gen_gaps_signs == 1)).float().mean() * prob_hyp1_hyp2
+    prob_pn = ((complexities_signs == 1) & (gen_gaps_signs == -1)).float().mean() * prob_hyp1_hyp2
+    prob_pp = ((complexities_signs == 1) & (gen_gaps_signs == 1)).float().mean() * prob_hyp1_hyp2
+    return prob_nn, prob_np, prob_pn, prob_pp
+
+
+def get_joint_probs(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice], prob_hyp1_hyp2:torch.Tensor):
+    successes_slice = successes[slices].flatten()
+    complexities_slice = complexities[slices].flatten()
+    gen_gaps_slice = gen_gaps[slices].flatten()
+
+    complexities_slice = complexities_slice[successes_slice]
+    gen_gaps_slice = gen_gaps_slice[successes_slice]
+    assert complexities_slice.shape == gen_gaps_slice.shape
+
+    complexities_signs = get_signs(complexities_slice)
+    gen_gaps_signs = get_signs(gen_gaps_slice)
+    assert complexities_signs.shape == gen_gaps_signs.shape
+
+    return get_joint_probs_from_signs(complexities_signs, gen_gaps_signs, prob_hyp1_hyp2)
+
+
+def get_pmf_joint_triple_Vmu_Vg_US(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, hyp_dim1: int, hyp_dim2: int) -> torch.Tensor:
+    
+    assert successes.shape == complexities.shape == gen_gaps.shape
+    num_vals_at_dim1 = successes.size(hyp_dim1)
+    num_vals_at_dim2 = successes.size(hyp_dim2)
+    assert num_vals_at_dim1 == num_vals_at_dim2 == 3
+    
+    pmf_joint_triple = torch.zeros((2, 2, num_vals_at_dim1 * num_vals_at_dim2))  # Vmu, Vg \in {-1, 1}, and 9 vals for the conditioned hyperparameters
+    prob_hyp1_hyp2 = 1 / (num_vals_at_dim1 * num_vals_at_dim2)
+    
+    for idx1 in range(num_vals_at_dim1):
+        for idx2 in range(num_vals_at_dim2):
+
+            slices = [slice(None)] * successes.ndim
+            slices[hyp_dim1] = idx1
+            slices[hyp_dim2] = idx2
+
+            prob_nn, prob_np, prob_pn, prob_pp = get_joint_probs(successes, complexities, gen_gaps, slices, prob_hyp1_hyp2)
+
+            pmf_joint_triple[0, 0, num_vals_at_dim1 * idx1 + idx2] = prob_nn
+            pmf_joint_triple[0, 1, num_vals_at_dim1 * idx1 + idx2] = prob_np
+            pmf_joint_triple[1, 0, num_vals_at_dim1 * idx1 + idx2] = prob_pn
+            pmf_joint_triple[1, 1, num_vals_at_dim1 * idx1 + idx2] = prob_pp
+    
+    return pmf_joint_triple
+
+
+def get_normalized_conditional_entropies(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    num_hyp_dims = successes.ndim
+    normed_cond_entropies = []
+    for hyp_dim1 in range(num_hyp_dims):
+        for hyp_dim2 in range(num_hyp_dims):
+            if hyp_dim1 == hyp_dim2:
+                continue
+            pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US(successes, complexities, gen_gaps, hyp_dim1, hyp_dim2)
+            pmf_joint_Vg_US = pmf_joint_triple_Vmu_Vg_US.sum(dim=0)
+            cond_mut_inf = conditional_mutual_inf(pmf_joint_triple=pmf_joint_triple_Vmu_Vg_US)
+            cond_entropy = conditional_entropy(pmf_joint=pmf_joint_Vg_US)
+            normed_cond_entropies.append(cond_mut_inf / cond_entropy)
+    assert len(normed_cond_entropies) == num_hyp_dims * (num_hyp_dims - 1) // 2
+    return torch.tensor(normed_cond_entropies)
+
+
+def CIP_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    return get_normalized_conditional_entropies(successes, complexities, gen_gaps).min()
+
 
 
 if __name__ == "__main__":
