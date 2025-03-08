@@ -212,6 +212,21 @@ class MLP(nn.Module):
             logits = logits - min_logit
         return logits
 
+    def forward_with_noise(self, x, sigma):
+        if self.training:
+            raise RuntimeError("forward_with_noise should only be called when the model is in evaluation mode")
+        if sigma <= 0:
+            raise ValueError(f"{sigma=} must be positive")
+        with torch.no_grad():
+            for layer in self.network:
+                if isinstance(layer, nn.Linear):
+                    noisy_weight = layer.weight + torch.randn(layer.weight.shape) * sigma
+                    noisy_bias = layer.bias + torch.randn(layer.bias.shape) + sigma
+                    x = nn.functional.linear(x, noisy_weight, noisy_bias)
+                else:
+                    x = layer(x)  # Take care of dropout and activation functions
+            return x
+
     @property
     def layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
@@ -231,13 +246,16 @@ class MLP(nn.Module):
             total_loss += loss_fn(outputs, labels)
         return total_loss / len(dataloader.dataset)
 
-    def get_overall_accuracy(self, dataloader):
+    def get_overall_accuracy(self, dataloader, noise_sigma=None):
         assert not self.training, "Model should be in eval mode."
         num_correct = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
             x = x.view(x.size(0), -1)
-            outputs = self(x)
+            if noise_sigma is None:
+                outputs = self(x)
+            else:
+                outputs = self.forward_with_noise(x, sigma=noise_sigma)
             _, predicted = torch.max(outputs, -1)
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)

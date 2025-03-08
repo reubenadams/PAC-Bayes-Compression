@@ -41,6 +41,10 @@ def get_sweep_results(hyp_vals: dict, dist_sweep_id: str, project_name: str, ent
     return successes, complexities, gen_gaps
 
 
+def epsilon_oracle(gen_gaps: torch.Tensor, epsilon: float) -> torch.Tensor:
+    return gen_gaps + torch.randn(gen_gaps.shape) * epsilon
+
+
 def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the
     Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""

@@ -6,6 +6,7 @@ def download_sweep_results_raw(sweep_id, project_name, entity, save_to_path):
 
     api = wandb.Api()
     sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
+    sweep.runs.per_page = len(sweep.runs)
     runs = sweep.runs
 
     runs_data = []
@@ -80,31 +81,39 @@ def combine_results(base_path, dist_path, combined_path):
 
 if __name__ == "__main__":
 
-    # base_results_path = "sweep_results_2187_big_base.csv"
-    # dist_results_path = "sweep_results_2187_big_dist.csv"
-    # comb_results_path = "sweep_results_2187_big_comb.csv"
+    base_results_path_raw = "sweep_results_2187_big_base_raw_new.csv"
+    dist_results_path_raw = "sweep_results_2187_big_dist_raw_new.csv"
+    base_results_path = "sweep_results_2187_big_base_new.csv"
+    dist_results_path = "sweep_results_2187_big_dist_new.csv"
+    comb_results_path = "sweep_results_2187_big_comb_new.csv"
+    download_sweep_results_raw(
+        sweep_id="7spkiovz",
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path=base_results_path_raw
+        )
     download_sweep_results_raw(
         sweep_id="e8qaxkrj",
         project_name="2187-big",
         entity="teamreuben",
-        save_to_path="sweep_results_2187_big_dist_raw.csv",
+        save_to_path=dist_results_path_raw
         )
-    # download_sweep_results_clean(
-    #     sweep_id="7spkiovz", 
-    #     project_name="2187-big",
-    #     entity="teamreuben",
-    #     save_to_path=base_results_path,
-    #     base=True
-    # )
-    # download_sweep_results_clean(
-    #     sweep_id="e8qaxkrj", 
-    #     project_name="2187-big",
-    #     entity="teamreuben",
-    #     save_to_path=dist_results_path,
-    #     base=False
-    # )
-    # combine_results(
-    #     base_results_path,
-    #     dist_results_path,
-    #     comb_results_path,
-    # )
+    download_sweep_results_clean(
+        sweep_id="7spkiovz", 
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path=base_results_path,
+        base=True
+    )
+    download_sweep_results_clean(
+        sweep_id="e8qaxkrj", 
+        project_name="2187-big",
+        entity="teamreuben",
+        save_to_path=dist_results_path,
+        base=False
+    )
+    combine_results(
+        base_results_path,
+        dist_results_path,
+        comb_results_path,
+    )
