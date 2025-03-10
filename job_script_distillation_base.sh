@@ -4,7 +4,7 @@
 #$ -S /bin/bash
 
 # Sets a hard limit on how long your job can run. It's wallclock time (format hours:minutes:seconds), i.e. the time measured by a clock on the wall, rather than CPU time ()
-#$ -l h_rt=48:0:0
+#$ -l h_rt=12:0:0
 
 # Request memory per core. Check in Process Memory in Use (MB) in wandb. Total memory is num cores x this value.
 #$ -l mem=1G
