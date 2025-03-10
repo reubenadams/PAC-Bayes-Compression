@@ -1,7 +1,7 @@
 import torch
 from scipy import stats
 
-from evaluation_criteria import get_granulated_krccs, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf, get_differences, get_signs, get_joint_probs, get_joint_probs
+from evaluation_criteria import get_granulated_krcc_components, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf, get_differences, get_signs, get_joint_probs, get_joint_probs
 
 
 
@@ -21,7 +21,7 @@ def test__get_granulated_krccs__2x3():
     krcc1 = (tau_col1 + tau_col2 + tau_col3) / 3
     krcc2 = (tau_row1 + tau_row2) / 2
     expected = [krcc1, krcc2]
-    result = get_granulated_krccs(successes, complexities, gen_gaps)
+    result = get_granulated_krcc_components(successes, complexities, gen_gaps)
     assert result == expected
 
 
@@ -36,7 +36,7 @@ def test__get_granulated_krccs__2x3x4():
     taus_dim2 = torch.tensor([stats.kendalltau(complexities[i, j, :], gen_gaps[i, j, :]).statistic for i in range(shape[0]) for j in range(shape[1])])
     
     expected = [taus_dim0.mean(), taus_dim1.mean(), taus_dim2.mean()]
-    result = get_granulated_krccs(successes, complexities, gen_gaps)
+    result = get_granulated_krcc_components(successes, complexities, gen_gaps)
     assert torch.tensor(result).allclose(torch.tensor(expected))
 
 

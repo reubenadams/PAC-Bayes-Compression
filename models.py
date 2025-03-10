@@ -5,7 +5,7 @@ from copy import deepcopy
 from itertools import product
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, RandomSampler, DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -14,6 +14,7 @@ import wandb
 
 from config import TrainConfig
 from load_data import get_epsilon_mesh, get_logits_dataloader
+from kl_utils import kl_scalars_inverse
 
 
 class LowRankLinear(nn.Linear):
@@ -231,6 +232,31 @@ class MLP(nn.Module):
     def layers(self):
         return [layer for layer in self.network if isinstance(layer, nn.Linear)]
 
+    def square_l2_dist(self: MLP, other: MLP) -> torch.Tensor:
+        with torch.no_grad():
+            total = 0
+            for layer_self, layer_other in zip(self.layers, other.layers):
+                total += torch.sum((layer_self.weight - layer_other.weight)**2)
+                total += torch.sum((layer_self.bias - layer_other.bias)**2)
+            return total
+    
+    def KL(self: MLP, prior: MLP, sigma: float) -> torch.Tensor:
+        return self.square_l2_dist(prior) / (2 * sigma ** 2)
+
+    def pac_bayes_kl_bound(self: MLP, prior: MLP, sigma: float, n: int, delta: float):
+        return (self.KL(prior, sigma) + torch.log(2 * torch.sqrt(torch.tensor(n)) / delta)) / n
+
+    def pac_bayes_error_bound(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float):
+        empirical_error = self.monte_carlo_accuracy(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
+        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta)
+        return kl_scalars_inverse(q=empirical_error, B=kl_bound)
+
+    def min_pac_bayes_error_bound(self: MLP, prior: MLP, sigmas: list[float], dataloader: DataLoader, num_mc_samples, delta: float):
+        bounds = [self.pac_bayes_error_bound(prior, sigma, dataloader, num_mc_samples, delta) for sigma in sigmas]
+        min_bound = min(bounds)
+        best_sigma = sigmas[bounds.index(min_bound)]
+        return min_bound, best_sigma
+
     def reinitialize_weights(self):
         for layer in self.layers:
             layer.reset_parameters()
@@ -246,19 +272,31 @@ class MLP(nn.Module):
             total_loss += loss_fn(outputs, labels)
         return total_loss / len(dataloader.dataset)
 
-    def get_overall_accuracy(self, dataloader, noise_sigma=None):
+    def get_overall_accuracy(self, dataloader):
         assert not self.training, "Model should be in eval mode."
         num_correct = torch.tensor(0.0, device=self.device)
         for x, labels in dataloader:
             x, labels = x.to(self.device), labels.to(self.device)
             x = x.view(x.size(0), -1)
-            if noise_sigma is None:
-                outputs = self(x)
-            else:
-                outputs = self.forward_with_noise(x, sigma=noise_sigma)
+            outputs = self(x)
             _, predicted = torch.max(outputs, -1)
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
+
+    def monte_carlo_accuracy(self, dataset: Dataset, num_mc_samples: int, sigma: float):
+        assert not self.training, "Model should be in eval mode."
+        sampler = RandomSampler(dataset, replacement=True, num_samples=num_mc_samples)
+        # batch_size has to be 1 so that new weights are drawn for every sample
+        dataloader = DataLoader(dataset, sampler=sampler, batch_size=1, pin_memory=True)
+        num_correct = torch.tensor(0.0, device=self.device)
+        with torch.no_grad():
+            for x, labels in dataloader:
+                x, labels = x.to(self.device), labels.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs = self.forward_with_noise(x, sigma=sigma)
+                _, predicted = torch.max(outputs, -1)
+                num_correct += (predicted == labels).sum().item()
+            return num_correct / num_mc_samples
 
     def get_generalization_gap(self, train_loader, test_loader):
         overall_train_01_error = 1 - self.get_overall_accuracy(train_loader)

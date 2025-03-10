@@ -6,7 +6,7 @@ def download_sweep_results_raw(sweep_id, project_name, entity, save_to_path):
 
     api = wandb.Api()
     sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
-    sweep.runs.per_page = len(sweep.runs)
+    sweep.runs.per_page = 2 * len(sweep.runs)
     runs = sweep.runs
 
     runs_data = []
@@ -40,6 +40,7 @@ def download_sweep_results_clean(sweep_id, project_name, entity, save_to_path, b
     """
     api = wandb.Api()
     sweep = api.sweep(f"{entity}/{project_name}/{sweep_id}")
+    sweep.runs.per_page = 2 * len(sweep.runs)
     runs = sweep.runs
     
     config_ignore = {"input_dim", "output_dim"}
@@ -81,11 +82,11 @@ def combine_results(base_path, dist_path, combined_path):
 
 if __name__ == "__main__":
 
-    base_results_path_raw = "sweep_results_2187_big_base_raw_new.csv"
-    dist_results_path_raw = "sweep_results_2187_big_dist_raw_new.csv"
-    base_results_path = "sweep_results_2187_big_base_new.csv"
-    dist_results_path = "sweep_results_2187_big_dist_new.csv"
-    comb_results_path = "sweep_results_2187_big_comb_new.csv"
+    base_results_path_raw = "sweep_results_2187_big_base_raw.csv"
+    dist_results_path_raw = "sweep_results_2187_big_dist_raw.csv"
+    base_results_path = "sweep_results_2187_big_base.csv"
+    dist_results_path = "sweep_results_2187_big_dist.csv"
+    comb_results_path = "sweep_results_2187_big_comb.csv"
     download_sweep_results_raw(
         sweep_id="7spkiovz",
         project_name="2187-big",

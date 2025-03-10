@@ -1,8 +1,10 @@
 import torch
 from scipy import stats
+import numpy as np
 from yaml import safe_load
 import wandb
 from itertools import product
+import pandas as pd
 
 
 # Keep this
@@ -17,8 +19,8 @@ def get_hyp_vals(sweep_config_path: str) -> dict:
     return hyp_vals
 
 
-# Change this
-def get_sweep_results(hyp_vals: dict, dist_sweep_id: str, project_name: str, entity: str = "teamreuben") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+# TODO: We need to deal with the missing row caused by wandb bug.
+def get_sweep_results(hyp_vals: dict, df: pd.DataFrame) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
     hyp_names = sorted(list(hyp_vals.keys()))  # TODO: Make sure we're always sorting.
     
@@ -27,16 +29,16 @@ def get_sweep_results(hyp_vals: dict, dist_sweep_id: str, project_name: str, ent
     complexities = torch.zeros(results_shape)
     gen_gaps = torch.zeros(results_shape)
 
-    api = wandb.Api()
-    sweep = api.sweep(f"{entity}/{project_name}/{dist_sweep_id}")
-    runs = sweep.runs
-    
-    for run in runs:
-        config = [(name, run.config[name]) for name in hyp_names]  # List to ensure order
-        index = tuple(hyp_vals[name].index(val) for name, val in config)
-        complexities[index] = run.summary["Complexity"]
-        gen_gaps[index] = run.summary["Generalization Gap"]
-        successes[index] = True  # N.B. Existance of run is sufficient to say model reached target loss otherwise base run would not have saved model.
+    for _, row in df.iterrows():
+        run_config = [(name, row[name]) for name in hyp_names]
+        index = tuple(hyp_vals[name].index(val) for name, val in run_config)
+        if row["Reached Target Base"]:
+            complexities[index] = row["Complexity"]
+            gen_gaps[index] = row["Generalization Gap"]
+            successes[index] = True
+        else:
+            print(f"Run {row["run_name"]} with index {index} did not reach target")
+            successes[index] = False
     
     return successes, complexities, gen_gaps
 
@@ -45,16 +47,17 @@ def epsilon_oracle(gen_gaps: torch.Tensor, epsilon: float) -> torch.Tensor:
     return gen_gaps + torch.randn(gen_gaps.shape) * epsilon
 
 
-def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
+def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> tuple[float, bool]:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the
     Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
     assert successes.shape == complexities.shape == gen_gaps.shape
     complexities = complexities[successes].flatten()
     gen_gaps = gen_gaps[successes].flatten()
-    return stats.kendalltau(complexities, gen_gaps).statistic
+    undefined = ((complexities == complexities[0]).all()) or ((gen_gaps == gen_gaps[0]).all())  # KRCC is undefined
+    return stats.kendalltau(complexities, gen_gaps).statistic, undefined
 
 
-def get_granulated_krccs(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
+def get_granulated_krcc_components(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> list[float]:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the *granulated*
     Kendall rank correlation coefficient*s* between complexities and generalization gaps where successes is True"""
     assert successes.shape == complexities.shape == gen_gaps.shape
@@ -66,22 +69,23 @@ def get_granulated_krccs(successes: torch.Tensor, complexities: torch.Tensor, ge
         krccs_for_dim = []
 
         num_krccs = 0
-        num_combs = successes_flattened.shape[0]
         total_krcc = 0
         for success_batch, comp_batch, gap_batch in zip(successes_flattened, complexities_flattened, gen_gaps_flattened):
-            if not success_batch.all():
-                print("Oh dear, no success to measure KRCC across.")
-            else:
-                num_krccs += 1
-                comp_batch = comp_batch[success_batch]
-                gap_batch = gap_batch[success_batch]
-                krcc = get_krcc(success_batch, comp_batch, gap_batch)
-                total_krcc += krcc
-                krccs_for_dim.append(krcc)
-        granulated_krccs.append(total_krcc / num_krccs)
-        if num_krccs != num_combs:
-            print(f"Oh dear, not all of the batches contributed to the granulated KRCC for dim {dim}")
+            krcc, undefined = get_krcc(success_batch, comp_batch, gap_batch)
+            if undefined:
+                continue
+            assert not np.isnan(krcc)
+            num_krccs += 1
+            total_krcc += krcc
+            krccs_for_dim.append(krcc)
+        assert num_krccs > 0
+        granulated_krccs.append(total_krcc.item() / num_krccs)
     return granulated_krccs
+
+
+def get_granulated_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
+    components = get_granulated_krcc_components(successes, complexities, gen_gaps)
+    return torch.tensor(components).mean().item()
 
 
 def flatten_except_dim(tensor: torch.Tensor, dim: int) -> torch.Tensor:
@@ -199,9 +203,9 @@ def get_normalized_conditional_entropies(successes: torch.Tensor, complexities: 
     num_hyp_dims = successes.ndim
     normed_cond_entropies = []
     for hyp_dim1 in range(num_hyp_dims):
-        for hyp_dim2 in range(num_hyp_dims):
-            if hyp_dim1 == hyp_dim2:
-                continue
+        print(f"{hyp_dim1=}")
+        for hyp_dim2 in range(hyp_dim1 + 1, num_hyp_dims):
+            print(f"{hyp_dim2=}")
             pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US(successes, complexities, gen_gaps, hyp_dim1, hyp_dim2)
             pmf_joint_Vg_US = pmf_joint_triple_Vmu_Vg_US.sum(dim=0)
             cond_mut_inf = conditional_mutual_inf(pmf_joint_triple=pmf_joint_triple_Vmu_Vg_US)
@@ -211,22 +215,23 @@ def get_normalized_conditional_entropies(successes: torch.Tensor, complexities: 
     return torch.tensor(normed_cond_entropies)
 
 
-def CIP_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+def CIT_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     return get_normalized_conditional_entropies(successes, complexities, gen_gaps).min()
 
 
 
 if __name__ == "__main__":
 
-    api = wandb.Api()
-    sweep = api.sweep("teamreuben/2187-big/7spkiovz")
-    runs = sweep.runs
-    for run in runs:
-        print(f"Run ID: {run.id}, Name: {run.name}")
-        print(f"Config: {run.config}")
-        print(f"Metrics: {run.summary}")
-        break
-    # hyp_vals = get_hyp_vals("sweep_config_distillation_base.yaml")
-    # print(hyp_vals)
-    # successes, complexities, gen_gaps = get_sweep_results(hyp_vals, "e8qaxkrj", "2187-big")
-    # print(f"{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")
+    hyp_vals = get_hyp_vals("sweep_config_distillation_base.yaml")
+    print(hyp_vals)
+    combined_df = pd.read_csv("sweep_results_2187_big_comb.csv")
+    successes, complexities, gen_gaps = get_sweep_results(hyp_vals, combined_df)
+    print(f"{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")
+    print(f"Num successes = {(successes == True).sum()}")
+    print(f"Num failures = {(successes == False).sum()}")
+
+    # granulated_krccs = get_granulated_krcc_components(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps)
+    # print(granulated_krccs)
+    # granulated_krcc = get_granulated_krcc(successes, complexities=gen_gaps, gen_gaps=gen_gaps)
+    # print(granulated_krcc)
+    print(CIT_K(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps))
