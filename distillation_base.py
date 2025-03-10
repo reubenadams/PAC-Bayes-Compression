@@ -76,7 +76,9 @@ def train_base_models():
         dropout_prob=base_experiment_config.dropout_prob,
         device=device
     )
-
+    model.save(base_experiment_config.model_dir + "/init", base_experiment_config.model_name)
+    assert False
+    
     torch.manual_seed(0)
     train_loader, test_loader = get_dataloaders(
         base_experiment_config.dataset_name,

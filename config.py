@@ -102,7 +102,7 @@ class DistTrainConfig:
 class ExperimentConfig:
     project_name: str
     experiment: str  # "low_rank", "hypernet", "distillation"
-    model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, dist
+    model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, base, dist
     model_dims: List[int] = None
     optimizer_name: str = "adam"
     lr: float = 0.01
