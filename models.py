@@ -216,14 +216,38 @@ class MLP(nn.Module):
     def forward_with_noise(self, x, sigma):
         if self.training:
             raise RuntimeError("forward_with_noise should only be called when the model is in evaluation mode")
-        if sigma <= 0:
+        if sigma < 0:
             raise ValueError(f"{sigma=} must be positive")
         with torch.no_grad():
             for layer in self.network:
                 if isinstance(layer, nn.Linear):
                     noisy_weight = layer.weight + torch.randn(layer.weight.shape) * sigma
-                    noisy_bias = layer.bias + torch.randn(layer.bias.shape) + sigma
+                    noisy_bias = layer.bias + torch.randn(layer.bias.shape) * sigma
                     x = nn.functional.linear(x, noisy_weight, noisy_bias)
+                else:
+                    x = layer(x)  # Take care of dropout and activation functions
+            return x
+
+    def forward_with_indep_noise(self, x, sigma):
+        if self.training:
+            raise RuntimeError("forward_with_noise should only be called when the model is in evaluation mode")
+        if sigma < 0:
+            raise ValueError(f"{sigma=} must be positive")
+        with torch.no_grad():
+            for layer in self.network:
+                if isinstance(layer, nn.Linear):
+                    batch_size = x.size(0)
+                    expanded_weight = torch.tile(layer.weight, (batch_size, 1, 1))  # (b, d_out, d_in)
+                    print(f"{expanded_weight.shape=}")
+                    noisy_expanded_weight = expanded_weight + torch.randn(expanded_weight.shape) * sigma  # (b, d_out, d_in)
+
+                    expanded_x = x.unsqueeze(-1)  # (b, d_in, 1)
+                    noisy_wx = torch.matmul(noisy_expanded_weight, expanded_x)  # (b, d_out, d_in) @ (b, d_in, 1) = (b, d_out, 1)
+                    noisy_wx = noisy_wx.squeeze(-1)  # (b, d_out)
+
+                    expanded_bias = torch.tile(layer.bias, (batch_size, 1))  # (b, d_out)
+                    noisy_expanded_bias = expanded_bias + torch.randn(expanded_bias.shape) * sigma  # (b, d_out)
+                    x = noisy_wx + noisy_expanded_bias  # (b, d_out) + (b, d_out) = (b, d_out)
                 else:
                     x = layer(x)  # Take care of dropout and activation functions
             return x
@@ -247,7 +271,7 @@ class MLP(nn.Module):
         return (self.KL(prior, sigma) + torch.log(2 * torch.sqrt(torch.tensor(n)) / delta)) / n
 
     def pac_bayes_error_bound(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float):
-        empirical_error = self.monte_carlo_accuracy(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
+        empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
         kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta)
         return kl_scalars_inverse(q=empirical_error, B=kl_bound)
 
@@ -283,20 +307,66 @@ class MLP(nn.Module):
             num_correct += (predicted == labels).sum().item()
         return num_correct / len(dataloader.dataset)
 
-    def monte_carlo_accuracy(self, dataset: Dataset, num_mc_samples: int, sigma: float):
+    def monte_carlo_01_error(self, dataset: Dataset, sigma: float, num_mc_samples: int=10**4, new_noise_every: int=32):
         assert not self.training, "Model should be in eval mode."
         sampler = RandomSampler(dataset, replacement=True, num_samples=num_mc_samples)
-        # batch_size has to be 1 so that new weights are drawn for every sample
-        dataloader = DataLoader(dataset, sampler=sampler, batch_size=1, pin_memory=True)
-        num_correct = torch.tensor(0.0, device=self.device)
+        # New weights are drawn for every batch, but not for every sample
+        dataloader = DataLoader(dataset, sampler=sampler, batch_size=new_noise_every, pin_memory=True)
+        num_errors = torch.tensor(0.0, device=self.device)
         with torch.no_grad():
             for x, labels in dataloader:
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = self.forward_with_noise(x, sigma=sigma)
                 _, predicted = torch.max(outputs, -1)
-                num_correct += (predicted == labels).sum().item()
-            return num_correct / num_mc_samples
+                num_errors += (predicted != labels).sum()
+            return num_errors / num_mc_samples
+
+    # def monte_carlo_01_error_indep_noise(self, dataset: Dataset, num_mc_samples: int, sigma: float):
+    #     assert not self.training, "Model should be in eval mode."
+    #     sampler = RandomSampler(dataset, replacement=True, num_samples=num_mc_samples)
+    #     # batch_size has to be 1 so that new weights are drawn for every sample
+    #     dataloader = DataLoader(dataset, sampler=sampler, batch_size=64, pin_memory=True)
+    #     num_errors = torch.tensor(0.0, device=self.device)
+    #     with torch.no_grad():
+    #         for x, labels in dataloader:
+    #             x, labels = x.to(self.device), labels.to(self.device)
+    #             x = x.view(x.size(0), -1)
+    #             outputs = self.forward_with_indep_noise(x, sigma=sigma)
+    #             _, predicted = torch.max(outputs, -1)
+    #             num_errors += (predicted != labels).sum()
+    #         return num_errors / num_mc_samples
+
+    def get_max_sigma(
+            self,
+            dataset: Dataset,
+            target_error_increase: float,
+            sigma_min: float=0,
+            sigma_max: float=1,
+            num_mc_samples: int=10**4,  # TODO: Make as high as you can get away with
+            sigma_tol:float=2**(-14),
+            ) -> float:
+        """Returns the maximum value of sigma within [sigma_min, sigma_max] such that the noisy accuracy is at most target_acc + acc_prec"""
+        full_dataloader = DataLoader(dataset, batch_size=128, shuffle=False)
+        deterministic_error = 1 - self.get_overall_accuracy(dataloader=full_dataloader)
+        target_error = deterministic_error + target_error_increase
+        noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_max, num_mc_samples=num_mc_samples)
+        if noisy_error <= target_error:
+            raise ValueError(f"Error at {sigma_max=} is {noisy_error=}, which is not enough to reach {target_error=}. Increase sigma_max.")
+        sigmas_tried = []
+        errors = []
+
+        while True:
+            sigma_new = (sigma_max + sigma_min) / 2
+            noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples)
+            sigmas_tried.append(sigma_new)
+            errors.append(noisy_error)
+            if abs(sigma_max - sigma_min) < sigma_tol:
+                return sigma_new, sigmas_tried, errors
+            if noisy_error < target_error:
+                sigma_min = sigma_new
+            else:
+                sigma_max = sigma_new      
 
     def get_generalization_gap(self, train_loader, test_loader):
         overall_train_01_error = 1 - self.get_overall_accuracy(train_loader)
