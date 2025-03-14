@@ -273,14 +273,19 @@ class MLP(nn.Module):
         print(f"{kl_bound=}")
         return kl_bound
 
-    def pac_bayes_error_bound(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
+    def pac_bayes_error_bound_inverse_kl(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
         empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
         kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
         return kl_scalars_inverse(q=empirical_error, B=kl_bound)
 
+    def pac_bayes_error_bound_pinsker(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
+        empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
+        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
+        return empirical_error + torch.sqrt(kl_bound / 2)
+
     def min_pac_bayes_error_bound(self: MLP, prior: MLP, sigmas: list[float], dataloader: DataLoader, num_mc_samples, delta: float):
         num_union_bounds = len(sigmas)
-        bounds = [self.pac_bayes_error_bound(prior, sigma, dataloader, num_mc_samples, delta, num_union_bounds) for sigma in sigmas]
+        bounds = [self.pac_bayes_error_bound_inverse_kl(prior, sigma, dataloader, num_mc_samples, delta, num_union_bounds) for sigma in sigmas]
         min_bound = min(bounds)
         best_sigma = sigmas[bounds.index(min_bound)]
         return min_bound, best_sigma

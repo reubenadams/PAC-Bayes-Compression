@@ -102,9 +102,10 @@ def get_pac_bound():
 
     max_sigma, noisy_error, sigmas_tried, errors, total_num_sigmas = base_model.get_max_sigma(dataset=train_loader.dataset, target_error_increase=0.1, num_mc_samples=num_mc_samples_max_sigma)
     noise_trials = [{"sigma": sigma, "noisy_error": error} for sigma, error in zip(sigmas_tried, errors)]
-    pac_bound = base_model.pac_bayes_error_bound(prior=init_model, sigma=max_sigma, dataloader=train_loader, num_mc_samples=num_mc_samples_pac_bound, delta=delta, num_union_bounds=total_num_sigmas)
+    pac_bound_inverse_kl = base_model.pac_bayes_error_bound_inverse_kl(prior=init_model, sigma=max_sigma, dataloader=train_loader, num_mc_samples=num_mc_samples_pac_bound, delta=delta, num_union_bounds=total_num_sigmas)
+    pac_bound_pinsker = base_model.pac_bayes_error_bound_pinsker(prior=init_model, sigma=max_sigma, dataloader=train_loader, num_mc_samples=num_mc_samples_pac_bound, delta=delta, num_union_bounds=total_num_sigmas)
     
-    print(f"{max_sigma=}, {noisy_error=}, {pac_bound=}")
+    print(f"{max_sigma=}, {noisy_error=}, {pac_bound_inverse_kl=}, {pac_bound_pinsker=}")
     for sigma, error in zip(sigmas_tried, errors):
         print(f"{sigma=}, {error=}")
     print(f"{total_num_sigmas=}")
@@ -116,8 +117,10 @@ def get_pac_bound():
         results_df["noisy_error"] = None
     if "noise_trials" not in results_df.columns:
         results_df["noise_trials"] = None
-    if "pac_bound" not in results_df.columns:
-        results_df["pac_bound"] = None
+    if "pac_bound_inverse_kl" not in results_df.columns:
+        results_df["pac_bound_inverse_kl"] = None
+    if "pac_bound_pinsker" not in results_df.columns:
+        results_df["pac_bound_pinsker"] = None
     
     row_indices = results_df.index[results_df["run_name"] == wandb.run.name].tolist()
     if not row_indices:
@@ -132,13 +135,14 @@ def get_pac_bound():
     results_df.at[row_index, "max_sigma"] = max_sigma
     results_df.at[row_index, "noisy_error"] = noisy_error
     results_df.at[row_index, "noise_trials"] = json.dumps(noise_trials)
-    results_df.at[row_index, "pac_bound"] = pac_bound
+    results_df.at[row_index, "pac_bound_inverse_kl"] = pac_bound_inverse_kl
+    results_df.at[row_index, "pac_bound_pinsker"] = pac_bound_pinsker
 
     results_df.to_csv(new_results_path, index=False)
 
     for sigma, noise in zip(sigmas_tried, errors):
         wandb.log({"sigma": sigma, "noise": noise})
-    wandb.log({"Max sigma": max_sigma, "Final Noisy Error": noisy_error, "PAC Bound": pac_bound})
+    wandb.log({"Max sigma": max_sigma, "Final Noisy Error": noisy_error, "PAC Bound inverse kl": pac_bound_inverse_kl, "PAC Bound pinsker": pac_bound_pinsker})
     wandb.finish()
 
 
