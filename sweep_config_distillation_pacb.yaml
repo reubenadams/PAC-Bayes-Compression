@@ -1,0 +1,23 @@
+program: distillation_pacb.py
+method: grid
+parameters:
+
+  input_dim:
+    values: [40]
+  output_dim:
+    values: [10]
+
+  hidden_layer_width:
+    values: [512, 1024, 2048]
+  num_hidden_layers:
+    values: [2, 3, 4]
+  optimizer_name:
+    values: ['adam', 'sgd', 'rmsprop']
+  batch_size:
+    values: [32, 64, 128]
+  lr:
+    values: [0.003, 0.001, 0.0003]
+  dropout_prob:
+    values: [0, 0.1, 0.2]
+  weight_decay:
+    values: [0, 0.00001, 0.0001]

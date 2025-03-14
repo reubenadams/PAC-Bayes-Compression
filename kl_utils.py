@@ -1,5 +1,5 @@
 import torch
-from scipy.optimize import bisect as sp_bisect
+from scipy.optimize import bisect
 
 
 def kl_component(q_i, p_i):
@@ -15,7 +15,7 @@ def kl_scalars(q, p):
     return kl_component(q, p) + kl_component(1 - q, 1 - p)
 
 
-def kl_scalars_inverse(q, B, x_tol):
+def kl_scalars_inverse(q, B, x_tol=2e-12):
     if B == 0:
         return q
     if q == 0:
@@ -28,5 +28,5 @@ def kl_scalars_inverse(q, B, x_tol):
     if f(p_max) < 0:
         print("No upper bound on p")
         return 1
-    root = sp_bisect(f=f, a=q, b=p_max, xtol=x_tol)
+    root = bisect(f=f, a=q, b=p_max, xtol=x_tol)
     return root

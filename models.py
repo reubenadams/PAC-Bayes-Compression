@@ -267,16 +267,18 @@ class MLP(nn.Module):
     def KL(self: MLP, prior: MLP, sigma: float) -> torch.Tensor:
         return self.square_l2_dist(prior) / (2 * sigma ** 2)
 
-    def pac_bayes_kl_bound(self: MLP, prior: MLP, sigma: float, n: int, delta: float):
+    def pac_bayes_kl_bound(self: MLP, prior: MLP, sigma: float, n: int, delta: float, num_union_bounds: int):
+        delta = delta / num_union_bounds
         return (self.KL(prior, sigma) + torch.log(2 * torch.sqrt(torch.tensor(n)) / delta)) / n
 
-    def pac_bayes_error_bound(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float):
+    def pac_bayes_error_bound(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
         empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
-        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta)
+        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
         return kl_scalars_inverse(q=empirical_error, B=kl_bound)
 
     def min_pac_bayes_error_bound(self: MLP, prior: MLP, sigmas: list[float], dataloader: DataLoader, num_mc_samples, delta: float):
-        bounds = [self.pac_bayes_error_bound(prior, sigma, dataloader, num_mc_samples, delta) for sigma in sigmas]
+        num_union_bounds = len(sigmas)
+        bounds = [self.pac_bayes_error_bound(prior, sigma, dataloader, num_mc_samples, delta, num_union_bounds) for sigma in sigmas]
         min_bound = min(bounds)
         best_sigma = sigmas[bounds.index(min_bound)]
         return min_bound, best_sigma
@@ -347,6 +349,7 @@ class MLP(nn.Module):
             sigma_tol:float=2**(-14),
             ) -> float:
         """Returns the maximum value of sigma within [sigma_min, sigma_max] such that the noisy accuracy is at most target_acc + acc_prec"""
+        total_num_sigmas = 1 / sigma_tol  # If sigma_tol = 2^(-n) then we have chosen from 2^n possible sigmas (0 not included)
         full_dataloader = DataLoader(dataset, batch_size=128, shuffle=False)
         deterministic_error = 1 - self.get_overall_accuracy(dataloader=full_dataloader)
         target_error = deterministic_error + target_error_increase
@@ -358,11 +361,11 @@ class MLP(nn.Module):
 
         while True:
             sigma_new = (sigma_max + sigma_min) / 2
-            noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples)
+            noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples).item()
             sigmas_tried.append(sigma_new)
             errors.append(noisy_error)
             if abs(sigma_max - sigma_min) < sigma_tol:
-                return sigma_new, sigmas_tried, errors
+                return sigma_new, noisy_error, sigmas_tried, errors, total_num_sigmas
             if noisy_error < target_error:
                 sigma_min = sigma_new
             else:
