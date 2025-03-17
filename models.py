@@ -369,6 +369,7 @@ class MLP(nn.Module):
         while True:
             sigma_new = (sigma_max + sigma_min) / 2
             noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples).item()
+            print(f"For sigma={sigma_new} get error={noisy_error}")
             sigmas_tried.append(sigma_new)
             errors.append(noisy_error)
             if abs(sigma_max - sigma_min) < sigma_tol:

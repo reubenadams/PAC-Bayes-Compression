@@ -29,8 +29,8 @@ if toy_run:
     new_results_path = "sweep_results_2187_big_comb_copy.csv"
 else:
     train_size, test_size = None, None
-    num_mc_samples_max_sigma = 10**3
-    num_mc_samples_pac_bound = 10**3
+    num_mc_samples_max_sigma = 10**5
+    num_mc_samples_pac_bound = 10**6
     new_results_path = "sweep_results_2187_big_comb.csv"
 
 
@@ -106,8 +106,6 @@ def get_pac_bound():
     pac_bound_pinsker = base_model.pac_bayes_error_bound_pinsker(prior=init_model, sigma=max_sigma, dataloader=train_loader, num_mc_samples=num_mc_samples_pac_bound, delta=delta, num_union_bounds=total_num_sigmas)
     
     print(f"{max_sigma=}, {noisy_error=}, {pac_bound_inverse_kl=}, {pac_bound_pinsker=}")
-    for sigma, error in zip(sigmas_tried, errors):
-        print(f"{sigma=}, {error=}")
     print(f"{total_num_sigmas=}")
 
     results_df = pd.read_csv(results_path)
