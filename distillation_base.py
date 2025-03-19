@@ -77,42 +77,41 @@ def train_base_models():
         device=device
     )
     model.save(base_experiment_config.model_dir[:-4] + "init", base_experiment_config.model_name)
-    assert False
 
-    torch.manual_seed(0)
-    train_loader, test_loader = get_dataloaders(
-        base_experiment_config.dataset_name,
-        base_experiment_config.batch_size,
-        train_size=train_size,
-        test_size=test_size,
-    )
+    # torch.manual_seed(0)
+    # train_loader, test_loader = get_dataloaders(
+    #     base_experiment_config.dataset_name,
+    #     base_experiment_config.batch_size,
+    #     train_size=train_size,
+    #     test_size=test_size,
+    # )
 
-    overall_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
-        train_config=base_train_config,
-        train_loader=train_loader,
-        test_loader=test_loader,
-        train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
-        test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-        overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-    )
+    # overall_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
+    #     train_config=base_train_config,
+    #     train_loader=train_loader,
+    #     test_loader=test_loader,
+    #     train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
+    #     test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
+    #     overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
+    # )
 
-    wandb.log({
-        "Final Overall " + base_train_config.train_loss_name: overall_train_loss,
-        "Reached Target": reached_target,
-        "Lost Patience": lost_patience,
-        "Ran out of epochs": not (reached_target or lost_patience),
-        "Epochs Taken": epochs_taken,
-    })
+    # wandb.log({
+    #     "Final Overall " + base_train_config.train_loss_name: overall_train_loss,
+    #     "Reached Target": reached_target,
+    #     "Lost Patience": lost_patience,
+    #     "Ran out of epochs": not (reached_target or lost_patience),
+    #     "Epochs Taken": epochs_taken,
+    # })
 
-    if reached_target:  # Only save if model reached target train loss
-        print(
-            f"Model reached target train loss {overall_train_loss} <= {base_train_config.target_overall_train_loss}"
-        )
-        model.save(base_experiment_config.model_dir, base_experiment_config.model_name)
-    else:
-        print(
-            f"Model did not reach target train loss {overall_train_loss} > {base_train_config.target_overall_train_loss}"
-        )
+    # if reached_target:  # Only save if model reached target train loss
+    #     print(
+    #         f"Model reached target train loss {overall_train_loss} <= {base_train_config.target_overall_train_loss}"
+    #     )
+    #     model.save(base_experiment_config.model_dir, base_experiment_config.model_name)
+    # else:
+    #     print(
+    #         f"Model did not reach target train loss {overall_train_loss} > {base_train_config.target_overall_train_loss}"
+    #     )
 
     if base_train_config.log_with_wandb:
         wandb.finish()
