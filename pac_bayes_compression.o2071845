@@ -1,0 +1,45 @@
+Fri 21 Mar 15:59:57 GMT 2025
+Loading python/3.11.4
+  Loading requirement: openssl/1.1.1u
+wandb: Starting wandb agent 🕵️
+2025-03-21 16:00:09,408 - wandb.wandb_agent - INFO - Running runs: []
+2025-03-21 16:00:09,706 - wandb.wandb_agent - INFO - Agent received command: run
+2025-03-21 16:00:09,706 - wandb.wandb_agent - INFO - Agent starting run with config:
+	batch_size: 32
+	dropout_prob: 0
+	hidden_layer_width: 2048
+	input_dim: 40
+	lr: 0.003
+	num_hidden_layers: 3
+	optimizer_name: sgd
+	output_dim: 10
+	weight_decay: 0
+2025-03-21 16:00:09,708 - wandb.wandb_agent - INFO - About to run command: /usr/bin/env python distillation_pacb.py --batch_size=32 --dropout_prob=0 --hidden_layer_width=2048 --input_dim=40 --lr=0.003 --num_hidden_layers=3 --optimizer_name=sgd --output_dim=10 --weight_decay=0
+2025-03-21 16:00:14,719 - wandb.wandb_agent - INFO - Running runs: ['mkt8sdv9']
+Computing PAC-Bayes bound
+Loading data from ./data/MNIST1D/40.
+For sigma=0.5 get error=0.9011200070381165
+For sigma=0.25 get error=0.8997799754142761
+For sigma=0.125 get error=0.8938400149345398
+For sigma=0.0625 get error=0.8419700264930725
+For sigma=0.03125 get error=0.5913800001144409
+For sigma=0.015625 get error=0.17564000189304352
+For sigma=0.0078125 get error=0.009949999861419201
+For sigma=0.01171875 get error=0.0720599964261055
+For sigma=0.013671875 get error=0.12257000058889389
+For sigma=0.0126953125 get error=0.09567999839782715
+For sigma=0.01318359375 get error=0.1089399978518486
+For sigma=0.012939453125 get error=0.10036999732255936
+For sigma=0.0128173828125 get error=0.09940999746322632
+For sigma=0.01287841796875 get error=0.10080999881029129
+For sigma=0.012847900390625 get error=0.09985999763011932
+For sigma=0.0128631591796875 get error=0.09871000051498413
+kl_bound=tensor(105.8988)
+No upper bound on p
+kl_bound=tensor(105.8988)
+max_sigma=0.0128631591796875, noisy_error=0.09871000051498413, pac_bound_inverse_kl=1, pac_bound_pinsker=tensor(7.3759)
+total_num_sigmas=16384.0
+2025-03-21 18:15:05,487 - wandb.wandb_agent - INFO - Cleaning up finished run: mkt8sdv9
+2025-03-21 18:15:06,199 - wandb.wandb_agent - INFO - Agent received command: exit
+2025-03-21 18:15:06,199 - wandb.wandb_agent - INFO - Received exit command. Killing runs and quitting.
+wandb: Terminating and syncing runs. Press ctrl-c to kill.
