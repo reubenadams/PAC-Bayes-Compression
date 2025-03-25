@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 from math import prod
+from torch.utils.data import DataLoader
 
 
 @dataclass
-class TrainConfig:
+class BaseTrainConfig:
     optimizer_name: str = "adam"
     lr: float = 0.01
     batch_size: int = 64
@@ -14,14 +15,19 @@ class TrainConfig:
     num_epochs: int = 100
     use_whole_dataset: bool = False
     use_early_stopping: bool = False
-    target_overall_train_loss: Optional[float] = 0.01
+    target_full_train_loss: Optional[float] = 0.01
     patience: Optional[int] = 50
 
-    log_with_wandb: bool = True
-    get_overall_train_loss: bool = False
-    get_test_loss: bool = False
-    get_train_accuracy: bool = False
-    get_test_accuracy: bool = False
+    get_full_train_loss: bool = False
+    get_full_test_loss: bool = False
+    get_full_train_accuracy: bool = False
+    get_full_test_accuracy: bool = False
+
+    get_final_train_loss: bool = False
+    get_final_test_loss: bool = False
+    get_final_train_accuracy: bool = False
+    get_final_test_accuracy: bool = False
+    
     train_loss_name: str = "Train Loss"
     test_loss_name: str = "Test Loss"
     train_accuracy_name: str = "Train Accuracy"
@@ -29,18 +35,33 @@ class TrainConfig:
 
     def __post_init__(self):
         if self.use_early_stopping:
-            if self.target_overall_train_loss is None:
+            if self.target_full_train_loss is None:
                 raise ValueError(
-                    "Must provide target_overall_train_loss when use_early_stopping is True"
+                    "Must provide target_full_train_loss when use_early_stopping is True"
                 )
             if self.patience is None:
                 raise ValueError(
                     "Must provide patience when use_early_stopping is True"
                 )
-            if self.get_overall_train_loss is False:
+            if self.get_full_train_loss is False:
                 raise ValueError(
-                    "Must set get_overall_train_loss to True when use_early_stopping is True"
+                    "Must set get_full_train_loss to True when use_early_stopping is True"
                 )
+
+
+@dataclass
+class BaseTrainResults:
+    full_train_accuracy: Optional[float]
+    full_test_accuracy: Optional[float]
+    full_train_loss: float
+    full_test_loss: Optional[float]
+    reached_target: bool
+    epochs_taken: int
+    lost_patience: bool
+    ran_out_of_epochs: bool
+
+    def __post_init__(self):
+        self.generalization_gap = self.full_train_accuracy - self.full_test_accuracy
 
 
 @dataclass
@@ -57,7 +78,6 @@ class DistTrainConfig:
     dist_activation: str = "relu"
     shift_logits: bool = False
 
-    log_with_wandb: bool = True
     objective: str = "kl"
     reduction: str = "mean"
     k: Optional[int] = 10
@@ -68,10 +88,16 @@ class DistTrainConfig:
     patience: Optional[int] = 100
     print_every: int = 1000
 
-    get_kl_on_train_data: bool = True
-    get_kl_on_test_data: bool = False
-    get_accuracy_on_test_data: bool = False
-    get_l2_on_test_data: bool = False
+    get_full_kl_on_train_data: bool = True
+    get_full_kl_on_test_data: bool = False
+    get_full_accuracy_on_test_data: bool = False
+    get_full_l2_on_test_data: bool = False
+
+    get_final_kl_on_train_data: bool = True
+    get_final_kl_on_test_data: bool = False
+    get_final_accuracy_on_train_data: bool = False
+    get_final_accuracy_on_test_data: bool = False
+    get_final_l2_on_test_data: bool = False
 
     def __post_init__(self):
         valid_objectives = {"kl", "l2"}
@@ -91,16 +117,41 @@ class DistTrainConfig:
                 raise ValueError(
                     "target_kl_on_train is only valid when objective is 'kl'"
                 )
-            if self.get_kl_on_train_data is False:
+            if self.get_full_kl_on_train_data is False:
                 raise ValueError(
                     "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
                 )
 
 
+@dataclass(frozen=True)
+class DistDataLoaders:
+    domain_train_loader: Optional[DataLoader]
+    domain_test_loader: Optional[DataLoader]
+    logit_train_loader: Optional[DataLoader]
+    logit_test_loader: Optional[DataLoader]
+
+
+@dataclass
+class DistTrialResults:
+    kl_on_train_data: Optional[float]
+    reached_target: bool
+    epochs_taken: int
+    lost_patience: bool
+    ran_out_of_epochs: bool
+
+
+@dataclass
+class DistFinalResults:
+    kl_on_train_data: Optional[float]
+    kl_on_test_data: Optional[float]
+    accuracy_on_train_data: Optional[float]
+    accuracy_on_test_data: Optional[float]
+    l2_on_test_data: Optional[float]
+
+
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
 @dataclass
 class ExperimentConfig:
-    project_name: str
     experiment: str  # "low_rank", "hypernet", "distillation"
     model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, base, dist
     model_dims: List[int] = None
@@ -161,9 +212,11 @@ class ExperimentConfig:
         self.new_data_shape_str = "x".join(map(str, self.new_data_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/{self.model_type}"
+        self.model_init_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/init"
+        self.model_trained_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/{self.model_type}"
         if self.model_name is None:
             self.model_name = (
                 f"{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
             )
-        self.model_path = f"{self.model_dir}/{self.model_name}"
+        self.model_init_path = f"{self.model_init_dir}/{self.model_name}"
+        self.model_trained_path = f"{self.model_trained_dir}/{self.model_name}"

@@ -38,7 +38,6 @@ wandb.run.save()
 model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
 
 base_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=model_dims,
@@ -51,7 +50,6 @@ base_experiment_config = ExperimentConfig(
     model_name=wandb.run.name,
 )
 dist_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Dist, Binary Search",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="dist",
     model_dims=model_dims,
@@ -111,7 +109,7 @@ def train_dist_models():
         )
         model_log["Generalization Gap"] = generalization_gap
 
-        complexity, dist_model = base_model.get_dist_complexity(
+        complexity, dist_model, dist_metrics = base_model.get_dist_complexity(
             dist_train_config,
             domain_train_loader=train_loader,
             num_attempts=num_dist_attempts,
@@ -120,13 +118,11 @@ def train_dist_models():
 
         dist_model.save(dist_experiment_config.model_dir, dist_experiment_config.model_name)
 
-        if dist_train_config.log_with_wandb:
-            wandb.log(model_log)
+        wandb.log(model_log)
 
         print()
 
-        if dist_train_config.log_with_wandb:
-            wandb.finish()
+        wandb.finish()
 
 
 if __name__ == "__main__":

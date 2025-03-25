@@ -5,7 +5,7 @@ import torch
 import wandb
 
 from models import LowRankMLP
-from config import TrainConfig, ExperimentConfig
+from config import BaseTrainConfig, ExperimentConfig
 from load_data import get_dataloaders, get_B
 
 
@@ -13,12 +13,12 @@ batch_size = 128
 lr = 0.01
 
 
-train_config = TrainConfig(
+train_config = BaseTrainConfig(
     lr=lr,
     batch_size=batch_size,
     num_epochs=100,
-    get_test_loss=True,
-    get_test_accuracy=True,
+    get_full_test_loss=True,
+    get_full_test_accuracy=True,
 )
 
 experiment_config = ExperimentConfig(
@@ -76,12 +76,12 @@ except FileNotFoundError:
 
 # Log margin loss of full rank model:
 for margin in torch.linspace(0, 25, 251):
-    margin_loss_logits = model.get_overall_margin_loss(
+    margin_loss_logits = model.get_full_margin_loss(
         test_loader, margin, take_softmax=False
     )
     wandb.log({"Margin": margin, "Margin loss logits": margin_loss_logits})
     if margin <= 1:
-        margin_loss_probs = model.get_overall_margin_loss(
+        margin_loss_probs = model.get_full_margin_loss(
             test_loader, margin, take_softmax=True
         )
         wandb.log({"Margin": margin, "Margin loss probs": margin_loss_probs})
@@ -97,7 +97,7 @@ for rank_comb in model.rank_combs:
         min_Ss = model.min_Ss[rank_comb]
         max_Ss = model.max_Ss[rank_comb]
         model.set_to_ranks(rank_comb)
-        margin_loss = model.get_overall_margin_loss(
+        margin_loss = model.get_full_margin_loss(
             test_loader, margin=torch.sqrt(torch.tensor(2.0)) * eps, take_softmax=True
         )
         wandb.log(

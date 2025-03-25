@@ -41,7 +41,6 @@ wandb.run.save()
 model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
 
 base_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=model_dims,
@@ -54,7 +53,6 @@ base_experiment_config = ExperimentConfig(
     model_name=wandb.run.name,
 )
 init_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="init",
     model_dims=model_dims,

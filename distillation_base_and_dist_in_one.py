@@ -4,7 +4,7 @@ import torch
 import wandb
 from itertools import product
 
-from config import TrainConfig, DistTrainConfig, ExperimentConfig
+from config import BaseTrainConfig, DistTrainConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -37,13 +37,13 @@ base_experiment_configs = {}
 dist_experiment_configs = {}
 
 for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
-    base_train_configs[(batch_size, lr)] = TrainConfig(
+    base_train_configs[(batch_size, lr)] = BaseTrainConfig(
         lr=lr,
         batch_size=batch_size,
         num_epochs=2000,
         use_early_stopping=True,
-        get_overall_train_loss=True,
-        get_test_accuracy=True,
+        get_full_train_loss=True,
+        get_full_test_accuracy=True,
         train_loss_name="Base Train Loss",
         test_loss_name="Base Test Loss",
         test_accuracy_name="Base Test Accuracy",
@@ -99,24 +99,24 @@ def train_base_models():
             train_size=train_size,
             test_size=test_size,
         )
-        overall_train_loss, target_loss_achieved = model.train_model(
+        full_train_loss, target_loss_achieved = model.train_model(
             train_config,
             train_loader=train_loader,
             test_loader=test_loader,
             train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
             test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-            overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
+            full_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
         )
         if train_config.log_with_wandb:
             wandb.finish()
         if target_loss_achieved:  # Only save if model reached target train loss
             print(
-                f"Model reached target train loss {overall_train_loss} <= {train_config.target_overall_train_loss}"
+                f"Model reached target train loss {full_train_loss} <= {train_config.target_full_train_loss}"
             )
             model.save(experiment_config.model_dir, experiment_config.model_name)
         else:
             print(
-                f"Model did not reach target train loss {overall_train_loss} > {train_config.target_overall_train_loss}"
+                f"Model did not reach target train loss {full_train_loss} > {train_config.target_full_train_loss}"
             )
 
 

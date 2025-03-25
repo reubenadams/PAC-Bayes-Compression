@@ -3,7 +3,7 @@ import os
 import torch
 import wandb
 
-from config import TrainConfig, ExperimentConfig
+from config import BaseTrainConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -21,12 +21,12 @@ if toy_run:
     train_size, test_size = 100, 100
     num_epochs = 200
     patience = 10
-    target_overall_train_loss = 0.1
+    target_full_train_loss = 0.1
 else:
     train_size, test_size = None, None
     num_epochs = 1000000
     patience = 1000
-    target_overall_train_loss = 0.01
+    target_full_train_loss = 0.01
 
 
 run = wandb.init()
@@ -35,7 +35,7 @@ wandb.run.save()
 
 model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
 
-base_train_config = TrainConfig(
+base_train_config = BaseTrainConfig(
     optimizer_name=wandb.config.optimizer_name,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,
@@ -43,18 +43,17 @@ base_train_config = TrainConfig(
     weight_decay=wandb.config.weight_decay,
     num_epochs=num_epochs,
     use_early_stopping=True,
-    target_overall_train_loss=target_overall_train_loss,
+    target_full_train_loss=target_full_train_loss,
     patience=patience,
-    get_overall_train_loss=True,
-    get_train_accuracy=True,
-    get_test_accuracy=True,
+    get_full_train_loss=True,
+    get_full_train_accuracy=True,
+    get_full_test_accuracy=True,
     train_loss_name="Base Train Loss",
     test_loss_name="Base Test Loss",
     train_accuracy_name="Base Train Accuracy",
     test_accuracy_name="Base Test Accuracy",
 )
 base_experiment_config = ExperimentConfig(
-    project_name=f"Distillation {dataset_name} Base",  # This isn't used when running a wandb sweep
     experiment="distillation",
     model_type="base",
     model_dims=model_dims,
@@ -86,17 +85,17 @@ def train_base_models():
     #     test_size=test_size,
     # )
 
-    # overall_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
+    # full_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
     #     train_config=base_train_config,
     #     train_loader=train_loader,
     #     test_loader=test_loader,
     #     train_loss_fn=torch.nn.CrossEntropyLoss(reduction="mean"),
     #     test_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-    #     overall_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
+    #     full_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
     # )
 
     # wandb.log({
-    #     "Final Overall " + base_train_config.train_loss_name: overall_train_loss,
+    #     "Final Full " + base_train_config.train_loss_name: full_train_loss,
     #     "Reached Target": reached_target,
     #     "Lost Patience": lost_patience,
     #     "Ran out of epochs": not (reached_target or lost_patience),
@@ -105,16 +104,15 @@ def train_base_models():
 
     # if reached_target:  # Only save if model reached target train loss
     #     print(
-    #         f"Model reached target train loss {overall_train_loss} <= {base_train_config.target_overall_train_loss}"
+    #         f"Model reached target train loss {full_train_loss} <= {base_train_config.target_full_train_loss}"
     #     )
     #     model.save(base_experiment_config.model_dir, base_experiment_config.model_name)
     # else:
     #     print(
-    #         f"Model did not reach target train loss {overall_train_loss} > {base_train_config.target_overall_train_loss}"
+    #         f"Model did not reach target train loss {full_train_loss} > {base_train_config.target_full_train_loss}"
     #     )
 
-    if base_train_config.log_with_wandb:
-        wandb.finish()
+    wandb.finish()
 
 if __name__ == "__main__":
 
