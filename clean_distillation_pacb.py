@@ -34,4 +34,5 @@ def delete_failed_runs(failed_run_names):
 
 
 failed_run_names = get_failed_run_names()
-delete_failed_runs(failed_run_names)
+print(failed_run_names)
+# delete_failed_runs(failed_run_names)

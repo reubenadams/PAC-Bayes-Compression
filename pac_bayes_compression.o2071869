@@ -1,7 +1,0 @@
-Fri 21 Mar 16:07:50 GMT 2025
-Loading python/3.11.4
-  Loading requirement: openssl/1.1.1u
-wandb: Starting wandb agent 🕵️
-wandb: ERROR Error while calling W&B API: Sweep teamreuben/2187-big/rm2313rt is not running (<Response [400]>)
-wandb: ERROR Find detailed error logs at: /tmpdir/job/2071869.undefined/debug-cli.ucabra5.log
-Error: Sweep teamreuben/2187-big/rm2313rt is not running
