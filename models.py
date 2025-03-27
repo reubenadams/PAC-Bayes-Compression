@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import math
 import wandb
 
-from config import BaseTrainConfig, BaseTrainResults, DistTrainConfig, DistTrialResults, DistFinalResults, DistDataLoaders
+from config import BaseTrainConfig, BaseResults, DistTrainConfig, DistTrialResults, DistFinalResults, DistDataLoaders
 from load_data import get_epsilon_mesh, get_logits_dataloader
 from kl_utils import kl_scalars_inverse
 
@@ -339,7 +339,7 @@ class MLP(nn.Module):
         if train_loss is None:
             train_loss = self.get_full_loss(loss_fn, train_loader) if base_train_config.get_final_train_loss else None
         test_loss = self.get_full_loss(loss_fn, test_loader) if base_train_config.get_final_test_loss else None
-        final_base_metrics = BaseTrainResults(
+        final_base_metrics = BaseResults(
             full_train_accuracy=train_acc.item(),
             full_test_accuracy=test_acc.item(),
             full_train_loss=train_loss.item(),
@@ -356,6 +356,7 @@ class MLP(nn.Module):
             dist_train_config: DistTrainConfig,
             logit_train_loader,
             logit_test_loader,
+            complexity: int
         ):
         # N.B. self is interpreted as the dist model for this method
         kl_on_train_data = self.get_full_kl_loss_with_logit_loader(logit_train_loader) if dist_train_config.get_final_kl_on_train_data else None
@@ -363,6 +364,7 @@ class MLP(nn.Module):
         accuracy_on_train_data = self.get_full_accuracy(logit_train_loader) if dist_train_config.get_full_accuracy_on_train_data else None
         accuracy_on_test_data = self.get_full_accuracy(logit_test_loader) if dist_train_config.get_full_accuracy_on_test_data else None
         final_dist_metrics = DistFinalResults(
+            complexity=complexity,
             kl_on_train_data=kl_on_train_data.item(),
             kl_on_test_data=kl_on_test_data.item(),
             accuracy_on_train_data=accuracy_on_train_data.item(),
@@ -484,7 +486,7 @@ class MLP(nn.Module):
         train_loss_fn,
         test_loss_fn,
         full_train_loss_fn=None,
-        ) -> BaseTrainResults:
+        ) -> BaseResults:
 
         self.train()
 
@@ -930,9 +932,9 @@ class MLP(nn.Module):
 
         complexity = hidden_dim_high
         dist_model = dist_model_high
-        final_dist_metrics = self.get_final_dist_metrics(dist_train_config=dist_config, logit_train_loader=domain_train_loader, logit_test_loader=None)
+        final_dist_metrics = self.get_final_dist_metrics(dist_train_config=dist_config, logit_train_loader=domain_train_loader, logit_test_loader=None, complexity=complexity)
 
-        return complexity, dist_model, final_dist_metrics
+        return dist_model, final_dist_metrics
 
     def get_dist_variance(
         self,

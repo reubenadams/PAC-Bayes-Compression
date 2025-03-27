@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional, List
-
+import wandb
 from math import prod
 from torch.utils.data import DataLoader
 
@@ -50,7 +50,7 @@ class BaseTrainConfig:
 
 
 @dataclass
-class BaseTrainResults:
+class BaseResults:
     full_train_accuracy: Optional[float]
     full_test_accuracy: Optional[float]
     full_train_loss: float
@@ -62,6 +62,21 @@ class BaseTrainResults:
 
     def __post_init__(self):
         self.generalization_gap = self.full_train_accuracy - self.full_test_accuracy
+    
+    def log(self, prefix=""):
+        metrics = {
+            f"{prefix}Train Accuracy": self.full_train_accuracy,
+            f"{prefix}Test Accuracy": self.full_test_accuracy,
+            f"{prefix}Train Loss": self.full_train_loss,
+            f"{prefix}Test Loss": self.full_test_loss,
+            f"{prefix}Generalization Gap": self.generalization_gap,
+            f"{prefix}Reached Target": self.reached_target,
+            f"{prefix}Epochs Taken": self.epochs_taken,
+            f"{prefix}Lost Patience": self.lost_patience,
+            f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
+        }
+        metrics = {k: v for k, v in metrics.items() if v is not None}
+        wandb.log(metrics)
 
 
 @dataclass
@@ -139,14 +154,59 @@ class DistTrialResults:
     lost_patience: bool
     ran_out_of_epochs: bool
 
+    def log(self, prefix=""):
+        metrics = {
+            f"{prefix}KL on Train Data": self.kl_on_train_data,
+            f"{prefix}Reached Target": self.reached_target,
+            f"{prefix}Epochs Taken": self.epochs_taken,
+            f"{prefix}Lost Patience": self.lost_patience,
+            f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
+        }
+        metrics = {k: v for k, v in metrics.items() if v is not None}
+        wandb.log(metrics)
+
 
 @dataclass
 class DistFinalResults:
+    complexity: int
     kl_on_train_data: Optional[float]
     kl_on_test_data: Optional[float]
     accuracy_on_train_data: Optional[float]
     accuracy_on_test_data: Optional[float]
     l2_on_test_data: Optional[float]
+
+    def log(self, prefix=""):
+        metrics = {
+            f"{prefix}Complexity": self.complexity,
+            f"{prefix}KL on Train Data": self.kl_on_train_data,
+            f"{prefix}KL on Test Data": self.kl_on_test_data,
+            f"{prefix}Accuracy on Train Data": self.accuracy_on_train_data,
+            f"{prefix}Accuracy on Test Data": self.accuracy_on_test_data,
+            f"{prefix}L2 on Test Data": self.l2_on_test_data
+        }
+        metrics = {k: v for k, v in metrics.items() if v is not None}
+        wandb.log(metrics)
+
+
+@dataclass
+class PACBResults:
+    max_sigma: float
+    noisy_error: float
+    noise_trials: List[dict]
+    total_num_sigmas: int
+    pac_bound_inverse_kl: float
+    pac_bound_pinsker: float
+
+    def log(self):
+        metrics = {
+            "max_sigma": self.max_sigma,
+            "noisy_error": self.noisy_error,
+            "noise_trials": self.noise_trials,
+            "total_num_sigmas": self.total_num_sigmas,
+            "pac_bound_inverse_kl": self.pac_bound_inverse_kl,
+            "pac_bound_pinsker": self.pac_bound_pinsker,
+        }
+        wandb.log(metrics)
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
@@ -212,11 +272,14 @@ class ExperimentConfig:
         self.new_data_shape_str = "x".join(map(str, self.new_data_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_init_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/init"
-        self.model_trained_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}/{self.model_type}"
+        self.model_root_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
+        self.model_init_dir = f"{self.model_root_dir}/init"
+        self.model_trained_dir = f"{self.model_root_dir}/{self.model_type}"
+        self.metrics_dir = f"{self.model_root_dir}/metrics"
         if self.model_name is None:
             self.model_name = (
                 f"{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
             )
         self.model_init_path = f"{self.model_init_dir}/{self.model_name}"
         self.model_trained_path = f"{self.model_trained_dir}/{self.model_name}"
+        self.model_metrics_path = f"{self.metrics_dir}/{self.model_name}.csv"

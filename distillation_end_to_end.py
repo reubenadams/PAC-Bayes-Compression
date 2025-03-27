@@ -3,8 +3,11 @@ import torch
 import wandb
 import argparse
 import copy
+import json
+import pandas as pd
+from dataclasses import asdict
 
-from config import BaseTrainConfig, DistTrainConfig, ExperimentConfig
+from config import BaseTrainConfig, DistTrainConfig, ExperimentConfig, BaseResults, DistFinalResults, PACBResults
 from models import MLP
 from load_data import get_dataloaders
 
@@ -77,6 +80,26 @@ def get_dist_run_params(toy_run):
             "patience": 100,
             "target_kl_on_train": 0.01,
             "num_dist_attempts": 5
+        }
+    return dist_run_params
+
+
+def get_pacb_run_params(toy_run):
+    if toy_run:
+        dist_run_params = {
+            "train_size": 100,
+            "test_size": 100,
+            "num_mc_samples_max_sigma": 10**2,
+            "num_mc_samples_pac_bound": 10**2,
+            "delta": 0.05
+        }
+    else:
+        dist_run_params = {
+            "train_size": None,
+            "test_size": None,
+            "num_mc_samples_max_sigma": 10**5,
+            "num_mc_samples_pac_bound": 10**6,
+            "delta": 0.05
         }
     return dist_run_params
 
@@ -173,10 +196,9 @@ def get_dist_experiment_config(hyperparams, model_dims, dataset_name, model_name
     return dist_experiment_config
 
 
-def initialize_wandb_and_configs(toy_run, dataset_name):
+def initialize_wandb_and_configs(toy_run, dataset_name, base_run_params, dist_run_params):
     """Initialize wandb and create configuration objects"""
     run = wandb.init()
-    run_params = get_base_run_params(toy_run)
     hyperparams = get_hyperparams()
     run.name = get_run_name(hyperparams)
     run.save()
@@ -184,19 +206,20 @@ def initialize_wandb_and_configs(toy_run, dataset_name):
     model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
     model_name = wandb.run.name
 
-    base_train_config = get_base_train_config(hyperparams, run_params)
+    base_train_config = get_base_train_config(hyperparams, base_run_params)
+    dist_train_config = get_dist_train_config(dist_run_params)
     base_experiment_config = get_base_experiment_config(hyperparams, model_dims, dataset_name, model_name)
+    dist_experiment_config = get_dist_experiment_config(hyperparams, model_dims, dataset_name, model_name)
 
-    return base_train_config, base_experiment_config
+    return base_train_config, dist_train_config, base_experiment_config, dist_experiment_config
 
 
 def train_base_model(
         base_experiment_config: ExperimentConfig,
         base_train_config: BaseTrainConfig,
+        base_run_params,
         device,
-        train_size,
-        test_size
-        ):
+    ) -> tuple[MLP, MLP, BaseResults]:
 
     torch.manual_seed(0)
     init_model = MLP(
@@ -212,12 +235,11 @@ def train_base_model(
     train_loader, test_loader = get_dataloaders(
         base_experiment_config.dataset_name,
         base_experiment_config.batch_size,
-        train_size=train_size,
-        test_size=test_size,
+        train_size=base_run_params["train_size"],
+        test_size=base_run_params["test_size"],
     )
 
-    # full_train_loss, reached_target, lost_patience, epochs_taken = model.train_model(
-    base_train_metrics = base_model.train_model(
+    base_metrics = base_model.train_model(
         train_config=base_train_config,
         train_loader=train_loader,
         test_loader=test_loader,
@@ -226,21 +248,13 @@ def train_base_model(
         full_train_loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
     )
 
-    if base_train_metrics.reached_target:  # Only save if model reached target train loss
+    if base_metrics.reached_target:  # Only save if model reached target train loss
         print("Model reached target train loss")
         base_model.save(base_experiment_config.model_trained_dir, base_experiment_config.model_name)
     else:
         print("Model failed to reach target train loss")
 
-    return init_model, base_model, base_train_metrics
-    # wandb.log({
-    #     "Final Full " + base_train_config.train_loss_name: final_metrics.full_train_loss,
-    #     "Reached Target": final_metrics.reached_target,
-    #     "Lost Patience": final_metrics.lost_patience,
-    #     "Ran out of epochs": not (final_metrics.reached_target or final_metrics.lost_patience),
-    #     "Epochs Taken": final_metrics.epochs_taken,
-    # })
-    # wandb.finish()
+    return init_model, base_model, base_metrics
 
 
 def train_dist_model(
@@ -250,62 +264,149 @@ def train_dist_model(
         dist_train_config: DistTrainConfig,
         dist_run_params,
         device,
-        train_size,
-        test_size
-        ):
+    ) -> tuple[MLP, DistFinalResults]:
 
     base_model.eval()
 
-    # TODO: Decide whether we need to repeat this for some reason?
+    # This repetition is necessary as it uses a different batch size and uses the whole dataset
     torch.manual_seed(0)
     train_loader, test_loader = get_dataloaders(
         dataset_name=base_experiment_config.dataset_name,
         batch_size=dist_train_config.batch_size,
-        train_size=train_size,
-        test_size=test_size,
+        train_size=dist_run_params["train_size"],
+        test_size=dist_run_params["test_size"],
         use_whole_dataset=dist_train_config.use_whole_dataset,
         device=device,
     )
 
-    complexity, dist_model = base_model.get_dist_complexity(
+    dist_model, dist_metrics = base_model.get_dist_complexity(
         dist_train_config,
         domain_train_loader=train_loader,
+        domain_test_loader=test_loader,
         num_attempts=dist_run_params["num_dist_attempts"],
     )
-    # model_log["Complexity"] = complexity
 
-    dist_model.save(dist_experiment_config.model_dir, dist_experiment_config.model_name)
+    dist_model.save(dist_experiment_config.model_trained_dir, dist_experiment_config.model_name)
 
-    # wandb.log(model_log)
-    # wandb.finish()
+    return dist_model, dist_metrics
 
 
-def record_everything():
-    pass
-    # hyperparams
-    # run_params
-    # dist_params
-    # base_train_metrics
-    # dist_train_metrics
-    # pac bounds
+def get_pac_bound(
+        init_model: MLP,
+        base_model: MLP,
+        base_experiment_config: ExperimentConfig,
+        pacb_run_params,
+) -> PACBResults:
+
+    init_model.eval()
+    base_model.eval()
+
+    torch.manual_seed(0)
+    train_loader, _ = get_dataloaders(
+        base_experiment_config.dataset_name,
+        base_experiment_config.batch_size,
+        train_size=pacb_run_params["train_size"],
+        test_size=pacb_run_params["test_size"],
+    )
+
+    max_sigma, noisy_error, sigmas_tried, errors, total_num_sigmas = base_model.get_max_sigma(
+        dataset=train_loader.dataset,
+        target_error_increase=pacb_run_params["target_error_increase"],
+        num_mc_samples=pacb_run_params["num_mc_samples_max_sigma"],
+        )
+    noise_trials = [{"sigma": sigma, "noisy_error": error} for sigma, error in zip(sigmas_tried, errors)]
+    pac_bound_inverse_kl = base_model.pac_bayes_error_bound_inverse_kl(
+        prior=init_model,
+        sigma=max_sigma,
+        dataloader=train_loader,
+        num_mc_samples=pacb_run_params["num_mc_samples_pac_bound"],
+        delta=pacb_run_params["delta"],
+        num_union_bounds=total_num_sigmas,
+        )
+    pac_bound_pinsker = base_model.pac_bayes_error_bound_pinsker(
+        prior=init_model,
+        sigma=max_sigma,
+        dataloader=train_loader,
+        num_mc_samples=pacb_run_params["num_mc_samples_pac_bound"],
+        delta=pacb_run_params["delta"],
+        num_union_bounds=total_num_sigmas
+        )
+    
+    print(f"{max_sigma=}, {noisy_error=}, {pac_bound_inverse_kl=}, {pac_bound_pinsker=}")
+    print(f"{total_num_sigmas=}")
+
+    pacb_metrics = PACBResults(
+        max_sigma=max_sigma,
+        noisy_error=noisy_error,
+        noise_trials=noise_trials,
+        total_num_sigmas=total_num_sigmas,
+        pac_bound_inverse_kl=pac_bound_inverse_kl,
+        pac_bound_pinsker=pac_bound_pinsker,
+    )
+
+    return pacb_metrics
+
+
+def log_and_save_metrics(
+        base_metrics: BaseResults,
+        dist_metrics: DistFinalResults, 
+        pacb_metrics: PACBResults, 
+        base_experiment_config: ExperimentConfig,
+    ):
+    base_metrics.log(prefix="Base ")
+    dist_metrics.log(prefix="Dist ")
+    pacb_metrics.log()
+    metrics = asdict(base_metrics) | asdict(dist_metrics) | asdict(pacb_metrics)
+    df = pd.DataFrame([metrics])
+    df.to_csv(base_experiment_config.results_path, index=False)
 
 
 def main():
+
     args = parse_args()
     setup_environment(args.seed)
-    run_params = get_base_run_params(args.toy_run)
     device = torch.device(args.device)
-    base_train_config, base_experiment_config = initialize_wandb_and_configs(run_params, args.dataset)
     os.makedirs("trained_models", exist_ok=True)
 
+    base_run_params = get_base_run_params(args.toy_run)
+    dist_run_params = get_dist_run_params(args.toy_run)
+    pacb_run_params = get_pacb_run_params(args.toy_run)
+    
+    base_train_config, dist_train_config, base_experiment_config, dist_experiment_config = initialize_wandb_and_configs(
+        toy_run=args.toy_run,
+        dataset_name=args.dataset,
+        base_run_params=base_run_params,
+        dist_run_params=dist_run_params,
+    )
+
     print("Training base model...")
-    train_base_model(
+    init_model, base_model, base_metrics = train_base_model(
         base_train_config=base_train_config,
         base_experiment_config=base_experiment_config,
+        base_run_params=base_run_params,
         device=device,
-        train_size=run_params["train_size"],
-        test_size=run_params["test_size"],
     )
+    base_metrics.log(prefix="Base ")
+
+    print("Distilling model...")
+    dist_model, dist_metrics = train_dist_model(
+            base_model=base_model,
+            base_experiment_config=base_experiment_config,
+            dist_experiment_config=dist_experiment_config,
+            dist_train_config=dist_train_config,
+            dist_run_params=dist_run_params,
+            device=device,
+            )
+    dist_metrics.log(prefix="Dist ")
+    
+    print("Calculating PAC-Bayes bound...")
+    pacb_metrics = get_pac_bound(
+            init_model=init_model,
+            base_model=base_model,
+            base_experiment_config=base_experiment_config,
+            pacb_run_params=pacb_run_params,
+    )
+    pacb_metrics.log(prefix="PACB ")
 
 
 if __name__ == "__main__":
