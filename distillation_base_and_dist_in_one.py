@@ -4,7 +4,7 @@ import torch
 import wandb
 from itertools import product
 
-from config import BaseTrainConfig, DistTrainConfig, ExperimentConfig
+from config import BaseConfig, DistConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -37,7 +37,7 @@ base_experiment_configs = {}
 dist_experiment_configs = {}
 
 for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
-    base_train_configs[(batch_size, lr)] = BaseTrainConfig(
+    base_train_configs[(batch_size, lr)] = BaseConfig(
         lr=lr,
         batch_size=batch_size,
         num_epochs=2000,
@@ -67,7 +67,7 @@ for dims, batch_size, lr in product(base_dims, base_batch_sizes, base_lrs):
         dataset_name="MNIST1D",
     )
 
-dist_train_config = DistTrainConfig(use_whole_dataset=True, use_early_stopping=True)
+dist_train_config = DistConfig(use_whole_dataset=True, use_early_stopping=True)
 
 
 def train_base_models():

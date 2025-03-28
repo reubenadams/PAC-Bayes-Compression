@@ -5,7 +5,7 @@ import torch
 import wandb
 
 from models import LowRankMLP
-from config import BaseTrainConfig, ExperimentConfig
+from config import BaseConfig, ExperimentConfig
 from load_data import get_dataloaders, get_B
 
 
@@ -13,7 +13,7 @@ batch_size = 128
 lr = 0.01
 
 
-train_config = BaseTrainConfig(
+train_config = BaseConfig(
     lr=lr,
     batch_size=batch_size,
     num_epochs=100,

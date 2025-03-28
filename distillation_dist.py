@@ -3,7 +3,7 @@ import os
 import torch
 import wandb
 
-from config import DistTrainConfig, ExperimentConfig
+from config import DistConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -61,7 +61,7 @@ dist_experiment_config = ExperimentConfig(
     model_name=wandb.run.name,
 )
 
-dist_train_config = DistTrainConfig(
+dist_train_config = DistConfig(
     max_epochs=max_epochs,
     use_whole_dataset=True,
     use_early_stopping=True,

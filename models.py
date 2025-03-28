@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import math
 import wandb
 
-from config import BaseTrainConfig, BaseResults, DistTrainConfig, DistTrialResults, DistFinalResults, DistDataLoaders
+from config import BaseConfig, BaseResults, DistConfig, DistTrialResults, DistFinalResults, DistDataConfig
 from load_data import get_epsilon_mesh, get_logits_dataloader
 from kl_utils import kl_scalars_inverse
 
@@ -322,7 +322,7 @@ class MLP(nn.Module):
 
     def get_final_base_metrics(
         self,
-        base_train_config: BaseTrainConfig,
+        base_train_config: BaseConfig,
         train_loader,
         test_loader,
         loss_fn,
@@ -353,7 +353,7 @@ class MLP(nn.Module):
 
     def get_final_dist_metrics(
             self,
-            dist_train_config: DistTrainConfig,
+            dist_train_config: DistConfig,
             logit_train_loader,
             logit_test_loader,
             complexity: int
@@ -480,7 +480,7 @@ class MLP(nn.Module):
 
     def train_model(
         self,
-        train_config: BaseTrainConfig,
+        train_config: BaseConfig,
         train_loader,
         test_loader,
         train_loss_fn,
@@ -642,10 +642,10 @@ class MLP(nn.Module):
     def dist_from(
         self,
         base_model: MLP,
-        dist_config: DistTrainConfig,
+        dist_config: DistConfig,
         data_train_loader,
         data_test_loader,
-        dist_data_loaders: DistDataLoaders,
+        dist_data_loaders: DistDataConfig,
         epoch_shift=0,
         ) -> DistTrialResults:
         # N.B. self is interpreted as the dist model for this method
@@ -782,9 +782,9 @@ class MLP(nn.Module):
 
     def dist_best_of_n(
             self,
-            dist_config: DistTrainConfig,
+            dist_config: DistConfig,
             dist_dims: list[int],
-            dist_data_loaders: DistDataLoaders,
+            dist_data_loaders: DistDataConfig,
             num_attempts: int,
             ) -> tuple[bool, Optional[MLP]]:
             # N.B. self is interpreted as the base model for this method
@@ -829,39 +829,40 @@ class MLP(nn.Module):
         ]
         return dist_dims
 
-    def get_dist_data_loaders(self, dist_config: DistTrainConfig, domain_train_loader, domain_test_loader):
+    def get_logit_dataloaders(self, domain_train_loader, domain_test_loader, batch_size, use_whole_dataset, device):
         # N.B. self is interpreted as the base model for this method
         logit_train_loader = get_logits_dataloader(
             base_model=self,
             data_loader=domain_train_loader,
-            batch_size=dist_config.batch_size,
-            use_whole_dataset=dist_config.use_whole_dataset,
-            device=self.device,
+            batch_size=batch_size,
+            use_whole_dataset=use_whole_dataset,
+            device=device
         )
         logit_test_loader = get_logits_dataloader(
             base_model=self,
             data_loader=domain_test_loader,
-            batch_size=dist_config.batch_size,
-            use_whole_dataset=dist_config.use_whole_dataset,
-            device=self.device,
+            batch_size=batch_size,
+            use_whole_dataset=use_whole_dataset,
+            device=device
         )
-        dist_data_loaders = DistDataLoaders(
-            domain_train_loader=domain_train_loader,
-            domain_test_loader=domain_test_loader,
-            logit_train_loader=logit_train_loader,
-            logit_test_loader=logit_test_loader,
-        )
-        return dist_data_loaders
+        return logit_train_loader, logit_test_loader
+        # dist_data_loaders = DistDataLoaders(
+        #     domain_train_loader=domain_train_loader,
+        #     domain_test_loader=domain_test_loader,
+        #     logit_train_loader=logit_train_loader,
+        #     logit_test_loader=logit_test_loader,
+        # )
+        # return dist_data_loaders
 
     def get_dist_complexity(
             self,
-            dist_config: DistTrainConfig,
+            dist_config: DistConfig,
             domain_train_loader,
             domain_test_loader,
             num_attempts=1,
             ) -> tuple[int, Optional[MLP], DistFinalResults]:
         # N.B. self is interpreted as the base model for this method
-        dist_data_loaders = self.get_dist_data_loaders(
+        dist_data_loaders = self.get_logit_dataloaders(
             dist_config=dist_config,
             domain_train_loader=domain_train_loader,
             domain_test_loader=domain_test_loader,

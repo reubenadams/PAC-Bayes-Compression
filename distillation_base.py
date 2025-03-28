@@ -3,7 +3,7 @@ import os
 import torch
 import wandb
 
-from config import BaseTrainConfig, ExperimentConfig
+from config import BaseConfig, ExperimentConfig
 from models import MLP
 from load_data import get_dataloaders
 
@@ -35,7 +35,7 @@ wandb.run.save()
 
 model_dims = [wandb.config.input_dim] + [wandb.config.hidden_layer_width] * wandb.config.num_hidden_layers + [wandb.config.output_dim]
 
-base_train_config = BaseTrainConfig(
+base_train_config = BaseConfig(
     optimizer_name=wandb.config.optimizer_name,
     lr=wandb.config.lr,
     batch_size=wandb.config.batch_size,

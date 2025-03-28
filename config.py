@@ -2,48 +2,162 @@ from dataclasses import dataclass
 from typing import Optional, List
 import wandb
 from math import prod
+import torch
 from torch.utils.data import DataLoader
+
+from load_data import get_dataloaders
+from models import MLP
 
 
 @dataclass
-class BaseTrainConfig:
-    optimizer_name: str = "adam"
-    lr: float = 0.01
-    batch_size: int = 64
-    dropout_prob: float = 0.0
-    weight_decay: float = 0.0
-    num_epochs: int = 100
-    use_whole_dataset: bool = False
-    use_early_stopping: bool = False
-    target_full_train_loss: Optional[float] = 0.01
-    patience: Optional[int] = 50
+class BaseHyperparamsConfig:
+    optimizer_name: str
+    hidden_layer_width: int
+    num_hidden_layers: int
+    lr: float
+    batch_size: int
+    dropout_prob: float
+    weight_decay: float
 
-    get_full_train_loss: bool = False
+    def run_name(self):
+        return f"op{self.optimizer_name}_hw{self.hidden_layer_width}_nl{self.num_hidden_layers}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}"
+
+    @classmethod
+    def from_wandb_config(cls, config):
+        return cls(
+            optimizer_name=config.optimizer_name,
+            hidden_layer_width=config.hidden_layer_width,
+            num_hidden_layers=config.num_hidden_layers,
+            lr=config.lr,
+            batch_size=config.batch_size,
+            dropout_prob=config.dropout_prob,
+            weight_decay=config.weight_decay
+        )
+
+
+@dataclass
+class BaseDataConfig:
+    dataset_name: str
+    new_input_size: Optional[tuple[int, int]] = None
+    train_size: int
+    test_size: int
+    train_loader: Optional[DataLoader]
+    test_loader: Optional[DataLoader]
+    device: str
+
+    def add_sample_sizes(self, quick_test):
+        if quick_test:
+            self.train_size = 100
+            self.test_size = 100
+        else:
+            self.train_size = None
+            self.test_size = None
+
+    # @classmethod
+    # def quick_test(cls):
+    #     return cls(
+    #         train_size=100,
+    #         test_size=100,
+    #     )
+    
+    # @classmethod
+    # def full_scale(cls):
+    #     return cls(
+    #         train_size=None,
+    #         test_size=None,
+    #     )
+    
+    # @classmethod
+    # def create(cls, quick_test: bool):
+    #     if quick_test:
+    #         return cls.quick_test()
+    #     else:
+    #         return cls.full_scale()
+
+    def add_dataloaders(self, batch_size, seed):
+        torch.manual_seed(seed)
+        self.train_loader, self.test_loader = get_dataloaders(
+            dataset_name=self.dataset_name,
+            batch_size=batch_size,
+            train_size=self.train_size,
+            test_size=self.test_size,
+            new_input_size=self.new_input_size,
+            device=self.device
+        )
+
+
+@dataclass
+class BaseStoppingConfig:
+    num_epochs: int
+    use_early_stopping: bool
+    target_full_train_loss: Optional[float]
+    patience: Optional[int]
+
+    @classmethod
+    def quick_test(cls):
+        return cls(
+            num_epochs=200,
+            use_early_stopping=True,
+            target_full_train_loss=0.1,
+            patience=10
+        )
+    
+    @classmethod
+    def full_scale(cls):
+        return cls(
+            num_epochs=1000000,
+            use_early_stopping=True,
+            target_full_train_loss=0.01,
+            patience=1000
+        )
+
+    @classmethod
+    def create(cls, quick_test: bool):
+        if quick_test:
+            return cls.quick_test()
+        else:
+            return cls.full_scale()
+
+
+@dataclass
+class BaseRecordsConfig:
+    get_full_train_loss: bool = True
     get_full_test_loss: bool = False
     get_full_train_accuracy: bool = False
     get_full_test_accuracy: bool = False
 
-    get_final_train_loss: bool = False
-    get_final_test_loss: bool = False
-    get_final_train_accuracy: bool = False
-    get_final_test_accuracy: bool = False
-    
-    train_loss_name: str = "Train Loss"
-    test_loss_name: str = "Test Loss"
-    train_accuracy_name: str = "Train Accuracy"
-    test_accuracy_name: str = "Test Accuracy"
+    get_final_train_loss: bool = True
+    get_final_test_loss: bool = True
+    get_final_train_accuracy: bool = True
+    get_final_test_accuracy: bool = True
+
+    train_loss_name: str = "Base Train Loss"
+    test_loss_name: str = "Base Test Loss"
+    train_accuracy_name: str = "Base Train Accuracy"
+    test_accuracy_name: str = "Base Test Accuracy"
+
+
+@dataclass
+class BaseConfig:
+    hyperparams: BaseHyperparamsConfig
+    data: BaseDataConfig
+    size_and_stopping: BaseStoppingConfig
+    records: BaseRecordsConfig
+
+    def run_name(self):
+        return self.hyperparams.run_name()
 
     def __post_init__(self):
-        if self.use_early_stopping:
-            if self.target_full_train_loss is None:
+        if self.size_and_stopping.use_early_stopping:
+            if self.size_and_stopping.target_full_train_loss is None:
                 raise ValueError(
                     "Must provide target_full_train_loss when use_early_stopping is True"
                 )
-            if self.patience is None:
+            if self.size_and_stopping.patience is None:
                 raise ValueError(
                     "Must provide patience when use_early_stopping is True"
                 )
-            if self.get_full_train_loss is False:
+            if self.records.get_full_train_loss is False:
                 raise ValueError(
                     "Must set get_full_train_loss to True when use_early_stopping is True"
                 )
@@ -80,39 +194,153 @@ class BaseResults:
 
 
 @dataclass
-class DistTrainConfig:
+class DistHyperparamsConfig:
     lr: float = 0.003  # Was 0.01 but for some models this was too high
     batch_size: int = 128
-    max_epochs: int = 100000
-    use_whole_dataset: bool = False
+    dist_activation: str = "relu"
 
     dim_skip: int = 10
     min_hidden_dim: int = 1
     max_hidden_dim: int = 2000
     guess_hidden_dim: int = 128
-    dist_activation: str = "relu"
-    shift_logits: bool = False
 
+
+@dataclass(frozen=True)
+class DistDataConfig:
+    dataset_name: str
+    new_input_size: Optional[tuple[int, int]] = None
+    train_size: Optional[int]
+    test_size: Optional[int]
+    use_whole_dataset: Optional[bool]
+    domain_train_loader: Optional[DataLoader]
+    domain_test_loader: Optional[DataLoader]
+    logit_train_loader: Optional[DataLoader]
+    logit_test_loader: Optional[DataLoader]
+    device: Optional[str]
+
+    def add_sample_sizes(self, quick_test):
+        if quick_test:
+            self.train_size = 100
+            self.test_size = 100
+        else:
+            self.train_size = None
+            self.test_size = None
+
+    # @classmethod
+    # def quick_test(cls):
+    #     return cls(
+    #         train_size=100,
+    #         test_size=100,
+    #     )
+    
+    # @classmethod
+    # def full_scale(cls):
+    #     return cls(
+    #         train_size=None,
+    #         test_size=None,
+    #     )
+    
+    # @classmethod
+    # def create(cls, quick_test: bool):
+    #     if quick_test:
+    #         return cls.quick_test()
+    #     else:
+    #         return cls.full_scale()
+
+    def add_dataloaders(self, batch_size, seed, base_model: MLP):
+        torch.manual_seed(seed)
+        self.domain_train_loader, self.domain_test_loader = get_dataloaders(
+            dataset_name=self.dataset_name,
+            batch_size=batch_size,
+            train_size=self.train_size,
+            test_size=self.test_size,
+            new_input_size=self.new_input_size,
+            use_whole_dataset=self.use_whole_dataset,
+            device=self.device
+        )
+        self.logit_train_loader, self.logit_test_loader = base_model.get_logit_dataloaders(
+            domain_train_loader=self.domain_train_loader,
+            domain_test_loader=self.domain_test_loader,
+            batch_size=batch_size,
+            use_whole_dataset=self.use_whole_dataset,
+        )
+
+
+@dataclass
+class DistSizeAndStoppingConfig:
+    # train_size: int
+    # test_size: int
+    # use_whole_dataset: bool
+    max_epochs: int
+    use_early_stopping: bool
+    target_kl_on_train: Optional[float]
+    patience: Optional[int]
+    num_dist_attempts: int
+    print_every: int = 1000
+
+    @classmethod
+    def quick_test(cls):
+        return cls(
+            # train_size=100,
+            # test_size=100,
+            max_epochs=10000,
+            use_early_stopping=True,
+            target_kl_on_train=0.1,
+            patience=10,
+            num_dist_attempts=1,
+        )
+    
+    @classmethod
+    def full_scale(cls):
+        return cls(
+            # train_size=None,
+            # test_size=None,
+            max_epochs=100000,
+            use_early_stopping=True,
+            target_kl_on_train=0.01,
+            patience=100,
+            num_dist_attempts=5
+        )
+
+    @classmethod
+    def create(cls, quick_test: bool):
+        if quick_test:
+            return cls.quick_test()
+        else:
+            return cls.full_scale()
+
+
+@dataclass
+class DistObjectiveConfig:
     objective: str = "kl"
     reduction: str = "mean"
     k: Optional[int] = 10
     alpha: Optional[float] = 10**2
     use_scheduler: bool = False
-    use_early_stopping: bool = False
-    target_kl_on_train: Optional[float] = 0.01
-    patience: Optional[int] = 100
-    print_every: int = 1000
+    shift_logits: bool = False
 
+
+@dataclass
+class DistRecordsConfig:
     get_full_kl_on_train_data: bool = True
     get_full_kl_on_test_data: bool = False
     get_full_accuracy_on_test_data: bool = False
     get_full_l2_on_test_data: bool = False
 
     get_final_kl_on_train_data: bool = True
-    get_final_kl_on_test_data: bool = False
-    get_final_accuracy_on_train_data: bool = False
-    get_final_accuracy_on_test_data: bool = False
+    get_final_kl_on_test_data: bool = True
+    get_final_accuracy_on_train_data: bool = True
+    get_final_accuracy_on_test_data: bool = True
     get_final_l2_on_test_data: bool = False
+
+
+@dataclass
+class DistConfig:
+    hyperparams: DistHyperparamsConfig
+    size_and_stopping: DistSizeAndStoppingConfig
+    objective: DistObjectiveConfig
+    records: DistRecordsConfig
+    data: DistDataConfig
 
     def __post_init__(self):
         valid_objectives = {"kl", "l2"}
@@ -122,28 +350,80 @@ class DistTrainConfig:
             )
 
         valid_reductions = {"mean", "sum"}
-        if self.reduction not in valid_reductions:
+        if self.objective.reduction not in valid_reductions:
             raise ValueError(
-                f"Invalid reduction: {self.reduction}. Must be one of {valid_reductions}"
+                f"Invalid reduction: {self.objective.reduction}. Must be one of {valid_reductions}"
             )
 
-        if self.target_kl_on_train is not None:
+        if self.size_and_stopping.target_kl_on_train is not None:
             if self.objective != "kl":
                 raise ValueError(
                     "target_kl_on_train is only valid when objective is 'kl'"
                 )
-            if self.get_full_kl_on_train_data is False:
+            if self.records.get_full_kl_on_train_data is False:
                 raise ValueError(
                     "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
                 )
 
 
-@dataclass(frozen=True)
-class DistDataLoaders:
-    domain_train_loader: Optional[DataLoader]
-    domain_test_loader: Optional[DataLoader]
-    logit_train_loader: Optional[DataLoader]
-    logit_test_loader: Optional[DataLoader]
+
+# @dataclass
+# class DistConfig:
+    # lr: float = 0.003  # Was 0.01 but for some models this was too high
+    # batch_size: int = 128
+    # dist_activation: str = "relu"
+    # max_epochs: int = 100000
+    # use_whole_dataset: bool = False
+
+    # dim_skip: int = 10
+    # min_hidden_dim: int = 1
+    # max_hidden_dim: int = 2000
+    # guess_hidden_dim: int = 128
+    # shift_logits: bool = False
+
+    # objective: str = "kl"
+    # reduction: str = "mean"
+    # k: Optional[int] = 10
+    # alpha: Optional[float] = 10**2
+    # use_scheduler: bool = False
+    # use_early_stopping: bool = False
+    # target_kl_on_train: Optional[float] = 0.01
+    # patience: Optional[int] = 100
+    # print_every: int = 1000
+
+    # get_full_kl_on_train_data: bool = True
+    # get_full_kl_on_test_data: bool = False
+    # get_full_accuracy_on_test_data: bool = False
+    # get_full_l2_on_test_data: bool = False
+
+    # get_final_kl_on_train_data: bool = True
+    # get_final_kl_on_test_data: bool = False
+    # get_final_accuracy_on_train_data: bool = False
+    # get_final_accuracy_on_test_data: bool = False
+    # get_final_l2_on_test_data: bool = False
+
+    # def __post_init__(self):
+    #     valid_objectives = {"kl", "l2"}
+    #     if self.objective not in valid_objectives:
+    #         raise ValueError(
+    #             f"Invalid objective: {self.objective}. Must be one of {valid_objectives}"
+    #         )
+
+    #     valid_reductions = {"mean", "sum"}
+    #     if self.reduction not in valid_reductions:
+    #         raise ValueError(
+    #             f"Invalid reduction: {self.reduction}. Must be one of {valid_reductions}"
+    #         )
+
+    #     if self.target_kl_on_train is not None:
+    #         if self.objective != "kl":
+    #             raise ValueError(
+    #                 "target_kl_on_train is only valid when objective is 'kl'"
+    #             )
+    #         if self.get_full_kl_on_train_data is False:
+    #             raise ValueError(
+    #                 "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
+    #             )
 
 
 @dataclass
@@ -186,6 +466,35 @@ class DistFinalResults:
         }
         metrics = {k: v for k, v in metrics.items() if v is not None}
         wandb.log(metrics)
+
+
+@dataclass
+class PACBConfig:
+    num_mc_samples_max_sigma: int
+    num_mc_samples_pac_bound: int
+    delta: float = 0.05
+    target_error_increase: float = 0.1
+
+    @classmethod
+    def quick_test(cls):
+        return cls(
+            num_mc_samples_max_sigma=10**2,
+            num_mc_samples_pac_bound=10**2,
+        )
+
+    @classmethod
+    def full_scale(cls):
+        return cls(
+            num_mc_samples_max_sigma=10**5,
+            num_mc_samples_pac_bound=10**6,
+        )
+    
+    @classmethod
+    def create(cls, quick_test: bool):
+        if quick_test:
+            return cls.quick_test()
+        else:
+            return cls.full_scale()
 
 
 @dataclass

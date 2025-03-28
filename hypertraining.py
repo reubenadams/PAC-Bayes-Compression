@@ -5,7 +5,7 @@ import torch
 import wandb
 
 from models import BaseMLP, get_reconstructed_accuracy
-from config import BaseTrainConfig, ExperimentConfig
+from config import BaseConfig, ExperimentConfig
 from load_data import get_dataloaders
 
 
@@ -16,7 +16,7 @@ to_train = {
 }
 
 
-base_train_config = BaseTrainConfig(
+base_train_config = BaseConfig(
     get_full_test_loss=True,
     get_full_test_accuracy=True,
     train_loss_name="Base Train Loss",
@@ -24,12 +24,12 @@ base_train_config = BaseTrainConfig(
     test_accuracy_name="Base Test Accuracy",
 )
 
-hyper_scaled_train_config = BaseTrainConfig(
+hyper_scaled_train_config = BaseConfig(
     num_epochs=1,
     train_loss_name="Hyper Scaled Train Loss",
 )
 
-hyper_binary_train_config = BaseTrainConfig(
+hyper_binary_train_config = BaseConfig(
     lr=0.0001,
     num_epochs=1,
     train_loss_name="Hyper Binary Train Loss",
