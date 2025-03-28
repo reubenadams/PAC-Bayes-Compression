@@ -54,27 +54,6 @@ class BaseDataConfig:
             self.train_size = None
             self.test_size = None
 
-    # @classmethod
-    # def quick_test(cls):
-    #     return cls(
-    #         train_size=100,
-    #         test_size=100,
-    #     )
-    
-    # @classmethod
-    # def full_scale(cls):
-    #     return cls(
-    #         train_size=None,
-    #         test_size=None,
-    #     )
-    
-    # @classmethod
-    # def create(cls, quick_test: bool):
-    #     if quick_test:
-    #         return cls.quick_test()
-    #     else:
-    #         return cls.full_scale()
-
     def __post_init__(self):
         if self.new_input_shape is None:
             if self.dataset_name == "MNIST":
@@ -188,10 +167,6 @@ class BaseConfig:
 
         self.model_name = self.hyperparams.run_name
         self.metrics_path = f"{self.metrics_dir}/{self.hyperparams.run_name}.csv"
-        # self.model_init_path = f"{self.model_init_dir}/{self.model_name}"
-        # self.model_base_path = f"{self.model_base_dir}/{self.model_name}"
-        # self.model_dist_path = f"{self.model_dist_dir}/{self.model_name}"
-        # self.model_metrics_path = f"{self.metrics_dir}/{self.model_name}.csv"
 
 
 @dataclass
@@ -209,7 +184,7 @@ class BaseResults:
         self.generalization_gap = self.full_train_accuracy - self.full_test_accuracy
     
     def log(self, prefix=""):
-        metrics = {
+        wandb_metrics = {
             f"{prefix}Train Accuracy": self.full_train_accuracy,
             f"{prefix}Test Accuracy": self.full_test_accuracy,
             f"{prefix}Train Loss": self.full_train_loss,
@@ -220,8 +195,8 @@ class BaseResults:
             # f"{prefix}Lost Patience": self.lost_patience,
             # f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
         }
-        metrics = {k: v for k, v in metrics.items() if v is not None}
-        wandb.log(metrics)
+        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
@@ -255,27 +230,6 @@ class DistDataConfig:
         else:
             self.train_size = None
             self.test_size = None
-
-    # @classmethod
-    # def quick_test(cls):
-    #     return cls(
-    #         train_size=100,
-    #         test_size=100,
-    #     )
-    
-    # @classmethod
-    # def full_scale(cls):
-    #     return cls(
-    #         train_size=None,
-    #         test_size=None,
-    #     )
-    
-    # @classmethod
-    # def create(cls, quick_test: bool):
-    #     if quick_test:
-    #         return cls.quick_test()
-    #     else:
-    #         return cls.full_scale()
 
     def add_dataloaders(self, batch_size, new_input_shape, base_model):
         self.domain_train_loader, self.domain_test_loader = get_dataloaders(
@@ -342,6 +296,9 @@ class DistObjectiveConfig:
     use_scheduler: bool = False
     shift_logits: bool = False
 
+    def __post_init__(self):
+        self.full_objective_name = f"{self.objective_name.upper()} {self.reduction}"
+
 
 @dataclass
 class DistRecordsConfig:
@@ -349,13 +306,19 @@ class DistRecordsConfig:
     get_full_kl_on_test_data: bool = False
     get_full_accuracy_on_train_data: bool = False
     get_full_accuracy_on_test_data: bool = False
-    get_full_l2_on_test_data: bool = False
+    # get_full_l2_on_test_data: bool = False
 
     get_final_kl_on_train_data: bool = True
     get_final_kl_on_test_data: bool = True
     get_final_accuracy_on_train_data: bool = True
     get_final_accuracy_on_test_data: bool = True
-    get_final_l2_on_test_data: bool = False
+    # get_final_l2_on_test_data: bool = False
+
+    train_kl_name: str = "Dist Train Mean KL"
+    test_kl_name: str = "Dist Test Mean KL"
+    train_accuracy_name: str = "Dist Train Accuracy"
+    test_accuracy_name: str = "Dist Test Accuracy"
+
 
 
 @dataclass
@@ -390,106 +353,46 @@ class DistConfig:
                 )
 
 
-
-# @dataclass
-# class DistConfig:
-    # lr: float = 0.003  # Was 0.01 but for some models this was too high
-    # batch_size: int = 128
-    # dist_activation: str = "relu"
-    # max_epochs: int = 100000
-    # use_whole_dataset: bool = False
-
-    # dim_skip: int = 10
-    # min_hidden_dim: int = 1
-    # max_hidden_dim: int = 2000
-    # guess_hidden_dim: int = 128
-    # shift_logits: bool = False
-
-    # objective: str = "kl"
-    # reduction: str = "mean"
-    # k: Optional[int] = 10
-    # alpha: Optional[float] = 10**2
-    # use_scheduler: bool = False
-    # use_early_stopping: bool = False
-    # target_kl_on_train: Optional[float] = 0.01
-    # patience: Optional[int] = 100
-    # print_every: int = 1000
-
-    # get_full_kl_on_train_data: bool = True
-    # get_full_kl_on_test_data: bool = False
-    # get_full_accuracy_on_test_data: bool = False
-    # get_full_l2_on_test_data: bool = False
-
-    # get_final_kl_on_train_data: bool = True
-    # get_final_kl_on_test_data: bool = False
-    # get_final_accuracy_on_train_data: bool = False
-    # get_final_accuracy_on_test_data: bool = False
-    # get_final_l2_on_test_data: bool = False
-
-    # def __post_init__(self):
-    #     valid_objectives = {"kl", "l2"}
-    #     if self.objective not in valid_objectives:
-    #         raise ValueError(
-    #             f"Invalid objective: {self.objective}. Must be one of {valid_objectives}"
-    #         )
-
-    #     valid_reductions = {"mean", "sum"}
-    #     if self.reduction not in valid_reductions:
-    #         raise ValueError(
-    #             f"Invalid reduction: {self.reduction}. Must be one of {valid_reductions}"
-    #         )
-
-    #     if self.target_kl_on_train is not None:
-    #         if self.objective != "kl":
-    #             raise ValueError(
-    #                 "target_kl_on_train is only valid when objective is 'kl'"
-    #             )
-    #         if self.get_full_kl_on_train_data is False:
-    #             raise ValueError(
-    #                 "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
-    #             )
-
-
 @dataclass
-class DistTrialResults:
+class DistAttemptResults:
     reached_target: bool
     epochs_taken: int
     lost_patience: bool
     ran_out_of_epochs: bool
-    kl_on_train_data: Optional[float] = None
+    mean_kl_on_train_data: Optional[float] = None
 
     def log(self, prefix=""):
-        metrics = {
-            f"{prefix}KL on Train Data": self.kl_on_train_data,
+        wandb_metrics = {
+            f"{prefix}Mean KL on Train Data": self.mean_kl_on_train_data,
             # f"{prefix}Reached Target": self.reached_target,
             # f"{prefix}Epochs Taken": self.epochs_taken,
             # f"{prefix}Lost Patience": self.lost_patience,
             # f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
         }
-        metrics = {k: v for k, v in metrics.items() if v is not None}
-        wandb.log(metrics)
+        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
 class DistFinalResults:
     complexity: int
-    kl_on_train_data: Optional[float] = None
-    kl_on_test_data: Optional[float] = None
+    mean_kl_on_train_data: Optional[float] = None
+    mean_kl_on_test_data: Optional[float] = None
     accuracy_on_train_data: Optional[float] = None
     accuracy_on_test_data: Optional[float] = None
     l2_on_test_data: Optional[float] = None
 
     def log(self, prefix=""):
-        metrics = {
+        wandb_metrics = {
             f"{prefix}Complexity": self.complexity,
-            f"{prefix}KL on Train Data": self.kl_on_train_data,
-            f"{prefix}KL on Test Data": self.kl_on_test_data,
+            f"{prefix}Mean KL on Train Data": self.mean_kl_on_train_data,
+            f"{prefix}Mean KL on Test Data": self.mean_kl_on_test_data,
             f"{prefix}Accuracy on Train Data": self.accuracy_on_train_data,
             f"{prefix}Accuracy on Test Data": self.accuracy_on_test_data,
             f"{prefix}L2 on Test Data": self.l2_on_test_data
         }
-        metrics = {k: v for k, v in metrics.items() if v is not None}
-        wandb.log(metrics)
+        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
@@ -523,7 +426,7 @@ class PACBConfig:
 
 @dataclass
 class PACBResults:
-    max_sigma: float
+    sigma: float
     noisy_error: float
     noise_trials: list[dict]
     total_num_sigmas: int
@@ -531,16 +434,16 @@ class PACBResults:
     pac_bound_pinsker: float
 
     def log(self):
-        metrics = {
-            "max_sigma": self.max_sigma,
-            "noisy_error": self.noisy_error,
+        wandb_metrics = {
+            "Base Sigma": self.sigma,
+            "Base Noisy Error": self.noisy_error,
             # "noise_trials": self.noise_trials,
             # "total_num_sigmas": self.total_num_sigmas,
-            "pac_bound_inverse_kl": self.pac_bound_inverse_kl,
-            "pac_bound_pinsker": self.pac_bound_pinsker,
+            "PAC Bound Inverse kl": self.pac_bound_inverse_kl,
+            "PAC Bound Pinsker": self.pac_bound_pinsker,
         }
-        metrics = {k: v for k, v in metrics.items() if v is not None}
-        wandb.log(metrics)
+        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
+        wandb.log(wandb_metrics)
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
