@@ -322,7 +322,7 @@ class MLP(nn.Module):
 
     def get_final_base_metrics(
         self,
-        base_train_config: BaseConfig,
+        base_config: BaseConfig,
         train_loader,
         test_loader,
         loss_fn,
@@ -334,16 +334,16 @@ class MLP(nn.Module):
         ):
         # N.B. self is interpreted as the base model for this method
         self.eval()
-        train_acc = self.get_full_accuracy(train_loader) if base_train_config.get_final_train_accuracy else None
-        test_acc = self.get_full_accuracy(test_loader) if base_train_config.get_final_test_accuracy else None
+        train_acc = self.get_full_accuracy(train_loader) if base_config.records.get_final_train_accuracy else None
+        test_acc = self.get_full_accuracy(test_loader) if base_config.records.get_final_test_accuracy else None
         if train_loss is None:
-            train_loss = self.get_full_loss(loss_fn, train_loader) if base_train_config.get_final_train_loss else None
-        test_loss = self.get_full_loss(loss_fn, test_loader) if base_train_config.get_final_test_loss else None
+            train_loss = self.get_full_loss(loss_fn, train_loader) if base_config.records.get_final_train_loss else None
+        test_loss = self.get_full_loss(loss_fn, test_loader) if base_config.records.get_final_test_loss else None
         final_base_metrics = BaseResults(
-            full_train_accuracy=train_acc.item(),
-            full_test_accuracy=test_acc.item(),
-            full_train_loss=train_loss.item(),
-            full_test_loss=test_loss.item(),
+            full_train_accuracy=train_acc.item() if train_acc is not None else None,
+            full_test_accuracy=test_acc.item() if test_acc is not None else None,
+            full_train_loss=train_loss.item() if train_loss is not None else None,
+            full_test_loss=test_loss.item() if test_loss is not None else None,
             reached_target=reached_target,
             epochs_taken=epochs_taken,
             lost_patience=lost_patience,
@@ -353,22 +353,22 @@ class MLP(nn.Module):
 
     def get_final_dist_metrics(
             self,
-            dist_train_config: DistConfig,
-            logit_train_loader,
-            logit_test_loader,
+            dist_config: DistConfig,
+            # logit_train_loader,
+            # logit_test_loader,
             complexity: int
         ):
         # N.B. self is interpreted as the dist model for this method
-        kl_on_train_data = self.get_full_kl_loss_with_logit_loader(logit_train_loader) if dist_train_config.get_final_kl_on_train_data else None
-        kl_on_test_data = self.get_full_kl_loss_with_logit_loader(logit_test_loader) if dist_train_config.get_final_kl_on_test_data else None
-        accuracy_on_train_data = self.get_full_accuracy(logit_train_loader) if dist_train_config.get_full_accuracy_on_train_data else None
-        accuracy_on_test_data = self.get_full_accuracy(logit_test_loader) if dist_train_config.get_full_accuracy_on_test_data else None
+        kl_on_train_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_train_loader) if dist_config.records.get_final_kl_on_train_data else None
+        kl_on_test_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_test_loader) if dist_config.records.get_final_kl_on_test_data else None
+        accuracy_on_train_data = self.get_full_accuracy(dist_config.data.logit_train_loader) if dist_config.records.get_full_accuracy_on_train_data else None
+        accuracy_on_test_data = self.get_full_accuracy(dist_config.data.logit_test_loader) if dist_config.records.get_full_accuracy_on_test_data else None
         final_dist_metrics = DistFinalResults(
             complexity=complexity,
-            kl_on_train_data=kl_on_train_data.item(),
-            kl_on_test_data=kl_on_test_data.item(),
-            accuracy_on_train_data=accuracy_on_train_data.item(),
-            accuracy_on_test_data=accuracy_on_test_data.item(),
+            kl_on_train_data=kl_on_train_data.item() if kl_on_train_data is not None else None,
+            kl_on_test_data=kl_on_test_data.item() if kl_on_test_data is not None else None,
+            accuracy_on_train_data=accuracy_on_train_data.item() if accuracy_on_train_data is not None else None,
+            accuracy_on_test_data=accuracy_on_test_data.item() if accuracy_on_test_data is not None else None,
         )
         return final_dist_metrics
 
@@ -480,9 +480,9 @@ class MLP(nn.Module):
 
     def train_model(
         self,
-        train_config: BaseConfig,
-        train_loader,
-        test_loader,
+        base_config: BaseConfig,
+        # train_loader,
+        # test_loader,
         train_loss_fn,
         test_loss_fn,
         full_train_loss_fn=None,
@@ -490,35 +490,35 @@ class MLP(nn.Module):
 
         self.train()
 
-        if train_config.optimizer_name == "sgd":
-            optimizer = torch.optim.SGD(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
-        elif train_config.optimizer_name == "adam":
-            optimizer = torch.optim.Adam(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
-        elif train_config.optimizer_name == "rmsprop":
-            optimizer = torch.optim.RMSprop(self.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
+        if base_config.hyperparams.optimizer_name == "sgd":
+            optimizer = torch.optim.SGD(self.parameters(), lr=base_config.hyperparams.lr, weight_decay=base_config.hyperparams.weight_decay)
+        elif base_config.hyperparams.optimizer_name == "adam":
+            optimizer = torch.optim.Adam(self.parameters(), lr=base_config.hyperparams.lr, weight_decay=base_config.hyperparams.weight_decay)
+        elif base_config.hyperparams.optimizer_name == "rmsprop":
+            optimizer = torch.optim.RMSprop(self.parameters(), lr=base_config.hyperparams.lr, weight_decay=base_config.hyperparams.weight_decay)
         else:
-            raise ValueError(f"Invalid optimizer name {train_config.optimizer_name}. Should be 'sgd', 'adam' or 'rmsprop'.")
+            raise ValueError(f"Invalid optimizer name {base_config.hyperparams.optimizer_name}. Should be 'sgd', 'adam' or 'rmsprop'.")
 
-        if train_config.target_full_train_loss:
+        if base_config.stopping.target_full_train_loss:
             best_loss = float("inf")
             epochs_since_improvement = 0
 
-        for epoch in range(1, train_config.num_epochs + 1):
+        for epoch in range(1, base_config.stopping.num_epochs + 1):
 
             # Log every epoch for the first 100, every 10th until 1000, every 100th until 10000 etc.
             log_freq = 10 ** max(0, math.floor(math.log(epoch, 10)) - 1)
 
             if epoch % log_freq == 0:
-                print(f"Epoch [{epoch}/{train_config.num_epochs}]")
+                print(f"Epoch [{epoch}/{base_config.stopping.num_epochs}]")
 
-            for x, labels in train_loader:
+            for x, labels in base_config.data.train_loader:
                 assert self.training
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
-                if train_config.train_loss_name:
-                    wandb.log({train_config.train_loss_name: loss.item()})
+                if base_config.records.train_loss_name:
+                    wandb.log({base_config.records.train_loss_name: loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -528,11 +528,11 @@ class MLP(nn.Module):
 
             ########## Evaluate model and return to training mode ##########
             self.eval()
-            if train_config.target_full_train_loss:
+            if base_config.stopping.target_full_train_loss:
                 full_train_loss = self.get_full_loss(
-                    full_train_loss_fn, train_loader
+                    full_train_loss_fn, base_config.data.train_loader
                 )
-                epoch_log["Full " + train_config.train_loss_name] = (
+                epoch_log["Full " + base_config.records.train_loss_name] = (
                     full_train_loss.item()
                 )
                 if full_train_loss < best_loss:
@@ -541,18 +541,18 @@ class MLP(nn.Module):
                 else:
                     epochs_since_improvement += 1
 
-            if (epoch % log_freq == 0) or (epoch == train_config.num_epochs):
-                if train_config.get_full_test_loss:
-                    test_loss = self.get_full_loss(test_loss_fn, test_loader)
-                    epoch_log[train_config.test_loss_name] = test_loss.item()
+            if (epoch % log_freq == 0) or (epoch == base_config.stopping.num_epochs):
+                if base_config.records.get_full_test_loss:
+                    test_loss = self.get_full_loss(test_loss_fn, base_config.data.test_loader)
+                    epoch_log[base_config.records.test_loss_name] = test_loss.item()
 
-                if train_config.get_full_train_accuracy:
-                    train_accuracy = self.get_full_accuracy(train_loader)
-                    epoch_log[train_config.train_accuracy_name] = train_accuracy
+                if base_config.records.get_full_train_accuracy:
+                    train_accuracy = self.get_full_accuracy(base_config.data.train_loader)
+                    epoch_log[base_config.records.train_accuracy_name] = train_accuracy
 
-                if train_config.get_full_test_accuracy:
-                    test_accuracy = self.get_full_accuracy(test_loader)
-                    epoch_log[train_config.test_accuracy_name] = test_accuracy
+                if base_config.records.get_full_test_accuracy:
+                    test_accuracy = self.get_full_accuracy(base_config.data.test_loader)
+                    epoch_log[base_config.records.test_accuracy_name] = test_accuracy
             self.train()
             ########## Evaluate model and return to training mode ##########
 
@@ -560,15 +560,15 @@ class MLP(nn.Module):
             wandb.log(epoch_log)
 
             # Test if reached target loss
-            if train_config.target_full_train_loss:
+            if base_config.stopping.target_full_train_loss:
                 # Reached target loss
-                if full_train_loss <= train_config.target_full_train_loss:
+                if full_train_loss <= base_config.stopping.target_full_train_loss:
                     reached_target = True
                     lost_patience = False
                     ran_out_of_epochs = False
                     break
                 # Ran out of patience
-                if epochs_since_improvement >= train_config.patience:
+                if epochs_since_improvement >= base_config.stopping.patience:
                     reached_target = False
                     lost_patience = True
                     ran_out_of_epochs = False
@@ -577,7 +577,7 @@ class MLP(nn.Module):
         # Either no target set or ran out of epochs
         else:
             # Ran out of epochs
-            if train_config.target_full_train_loss:
+            if base_config.stopping.target_full_train_loss:
                 reached_target = False
                 lost_patience = False
                 ran_out_of_epochs = True
@@ -589,9 +589,9 @@ class MLP(nn.Module):
                 ran_out_of_epochs = None
 
         return self.get_final_base_metrics(
-            base_train_config=train_config,
-            train_loader=train_loader,
-            test_loader=test_loader,
+            base_config=base_config,
+            train_loader=base_config.data.train_loader,
+            test_loader=base_config.data.test_loader,
             loss_fn=full_train_loss_fn,
             reached_target=reached_target,
             epochs_taken=epoch,
@@ -600,7 +600,7 @@ class MLP(nn.Module):
             train_loss=full_train_loss,
             )
 
-    def get_dist_loss_fn(self, objective, reduction, k=10, alpha=10**2):
+    def get_dist_loss_fn(self, objective, reduction, k: Optional[int], alpha: Optional[float]):
 
         if objective == "kl":
             dist_loss_fn_unreduced = torch.nn.KLDivLoss(
@@ -643,9 +643,9 @@ class MLP(nn.Module):
         self,
         base_model: MLP,
         dist_config: DistConfig,
-        data_train_loader,
-        data_test_loader,
-        dist_data_loaders: DistDataConfig,
+        # data_train_loader,
+        # data_test_loader,
+        # dist_data_loaders: DistDataConfig,
         epoch_shift=0,
         ) -> DistTrialResults:
         # N.B. self is interpreted as the dist model for this method
@@ -653,31 +653,31 @@ class MLP(nn.Module):
         # Set up loss function, optimizer and scheduler
         assert not base_model.training, "Base model should be in eval mode."
         train_loss_fn = self.get_dist_loss_fn(
-            dist_config.objective,
-            dist_config.reduction,
-            dist_config.k,
-            dist_config.alpha,
+            dist_config.objective.objective_name,
+            dist_config.objective.reduction,
+            dist_config.objective.k,
+            dist_config.objective.alpha,
         )
-        train_loss_name = f"Dist Train ({dist_config.objective} {dist_config.reduction})"
-        optimizer = torch.optim.Adam(self.parameters(), lr=dist_config.lr)
+        train_loss_name = f"Dist Train ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
+        optimizer = torch.optim.Adam(self.parameters(), lr=dist_config.hyperparams.lr)
         scheduler = (
             torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
-            if dist_config.use_scheduler
+            if dist_config.objective.use_scheduler
             else None
         )
 
         # Initialize variables for early stopping
-        if dist_config.target_kl_on_train:
+        if dist_config.stopping.target_kl_on_train:
             best_kl = float("inf")
             epochs_since_improvement = 0
 
         # Distill model
-        for epoch in range(1, dist_config.max_epochs + 1):
+        for epoch in range(1, dist_config.stopping.max_epochs + 1):
 
-            if epoch % dist_config.print_every == 1:
-                print(f"Epoch [{epoch}/{dist_config.max_epochs}]")
+            if epoch % dist_config.stopping.print_every == 1:
+                print(f"Epoch [{epoch}/{dist_config.stopping.max_epochs}]")
 
-            for x, targets in dist_data_loaders.logit_train_loader:
+            for x, targets in dist_config.data.logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = F.log_softmax(self(x), dim=-1)
@@ -692,22 +692,22 @@ class MLP(nn.Module):
             # alpha = min(alpha, 10**5)
 
             epoch_log = {"Epoch": epoch + epoch_shift}
-            if dist_config.objective == "l2":
-                epoch_log["Alpha"] = dist_config.alpha
+            if dist_config.objective.objective_name == "l2":
+                epoch_log["Alpha"] = dist_config.objective.alpha
             if scheduler:
                 epoch_log["lr"] = scheduler.get_last_lr()[0]
 
             # Evaluate model on full datasets
             # kl on train data
-            if dist_config.get_full_kl_on_train_data:
-                if dist_config.use_whole_dataset:
+            if dist_config.records.get_full_kl_on_train_data:
+                if dist_config.data.use_whole_dataset:
                     full_kl_on_train_data = loss
                 else:
                     full_kl_on_train_data = (
-                        self.get_full_kl_loss_with_logit_loader(dist_data_loaders.logit_train_loader)
+                        self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_train_loader)
                     )
                 epoch_log[
-                    f"KL Loss on Train Data ({dist_config.objective} {dist_config.reduction})"
+                    f"KL Loss on Train Data ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = full_kl_on_train_data
                 if full_kl_on_train_data < best_kl:
                     best_kl = full_kl_on_train_data
@@ -716,38 +716,38 @@ class MLP(nn.Module):
                     epochs_since_improvement += 1
 
             # kl on test data
-            if dist_config.get_full_kl_on_test_data:
+            if dist_config.records.get_full_kl_on_test_data:
                 full_kl_on_test_data = self.get_full_kl_loss_with_logit_loader(
-                    dist_data_loaders.logit_test_loader
+                    dist_config.data.logit_test_loader
                 )
                 epoch_log[
-                    f"KL Loss on Test Data ({dist_config.objective} {dist_config.reduction})"
+                    f"KL Loss on Test Data ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = full_kl_on_test_data
 
             # Accuracy on train data
-            if dist_config.get_full_accuracy_on_train_data:
-                train_accuracy = self.get_full_accuracy(data_train_loader)
+            if dist_config.records.get_full_accuracy_on_train_data:
+                train_accuracy = self.get_full_accuracy(dist_config.data.domain_train_loader)
                 epoch_log[
-                    f"Dist Train Accuracy ({dist_config.objective} {dist_config.reduction})"
+                    f"Dist Train Accuracy ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = train_accuracy
 
             # Accuracy on test data
-            if dist_config.get_full_accuracy_on_test_data:
-                test_accuracy = self.get_full_accuracy(data_test_loader)
+            if dist_config.records.get_full_accuracy_on_test_data:
+                test_accuracy = self.get_full_accuracy(dist_config.data.domain_test_loader)
                 epoch_log[
-                    f"Dist Test Accuracy ({dist_config.objective} {dist_config.reduction})"
+                    f"Dist Test Accuracy ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = test_accuracy
 
             # l2 deviation on test data
-            if dist_config.get_full_l2_on_test_data:
+            if dist_config.records.get_full_l2_on_test_data:
                 max_l2_dev, mean_l2_dev = self.get_max_and_mean_l2_deviation(
-                    base_model, dist_data_loaders.domain_test_loader
+                    base_model, dist_config.data.domain_test_loader
                 )
                 epoch_log[
-                    f"Max l2 Deviation ({dist_config.objective} {dist_config.reduction})"
+                    f"Max l2 Deviation ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = max_l2_dev
                 epoch_log[
-                    f"Mean l2 Deviation ({dist_config.objective} {dist_config.reduction})"
+                    f"Mean l2 Deviation ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
                 ] = mean_l2_dev
 
             # scheduler.step(max_l2_dev)
@@ -755,13 +755,13 @@ class MLP(nn.Module):
             wandb.log(epoch_log)
 
             # TODO: If successful, you should log one last time
-            if dist_config.target_kl_on_train:
-                if full_kl_on_train_data <= dist_config.target_kl_on_train:
+            if dist_config.stopping.target_kl_on_train:
+                if full_kl_on_train_data <= dist_config.stopping.target_kl_on_train:
                     reached_target = True
                     lost_patience = False
                     ran_out_of_epochs = False
                     break
-                if epochs_since_improvement >= dist_config.patience:
+                if epochs_since_improvement >= dist_config.stopping.patience:
                     reached_target = False
                     lost_patience = True
                     ran_out_of_epochs = False
@@ -784,26 +784,26 @@ class MLP(nn.Module):
             self,
             dist_config: DistConfig,
             dist_dims: list[int],
-            dist_data_loaders: DistDataConfig,
-            num_attempts: int,
+            # dist_data_loaders: DistDataConfig,
+            # num_attempts: int,
             ) -> tuple[bool, Optional[MLP]]:
             # N.B. self is interpreted as the base model for this method
         dist_model = MLP(
             dimensions=dist_dims,
-            activation=dist_config.dist_activation,
+            activation=dist_config.hyperparams.activation,
             device=self.device,
-            shift_logits=dist_config.shift_logits,
+            shift_logits=dist_config.objective.shift_logits,
         )
 
-        for attempt in range(num_attempts):
+        for attempt in range(dist_config.stopping.num_attempts):
 
             dist_trial_results = dist_model.dist_from(
                 base_model=self,
                 dist_config=dist_config,
-                data_train_loader=None,
-                data_test_loader=None,
-                dist_data_loaders=dist_data_loaders,
-                epoch_shift=attempt * dist_config.max_epochs,
+                # data_train_loader=None,
+                # data_test_loader=None,
+                # dist_data_loaders=dist_data_loaders,
+                epoch_shift=attempt * dist_config.stopping.max_epochs,
                 )
 
             if dist_trial_results.reached_target:
@@ -829,17 +829,17 @@ class MLP(nn.Module):
         ]
         return dist_dims
 
-    def get_logit_dataloaders(self, domain_train_loader, domain_test_loader, batch_size, use_whole_dataset, device):
+    def get_logits_dataloaders(self, domain_train_loader, domain_test_loader, batch_size, use_whole_dataset, device):
         # N.B. self is interpreted as the base model for this method
         logit_train_loader = get_logits_dataloader(
-            base_model=self,
+            model=self,
             data_loader=domain_train_loader,
             batch_size=batch_size,
             use_whole_dataset=use_whole_dataset,
             device=device
         )
         logit_test_loader = get_logits_dataloader(
-            base_model=self,
+            model=self,
             data_loader=domain_test_loader,
             batch_size=batch_size,
             use_whole_dataset=use_whole_dataset,
@@ -857,26 +857,26 @@ class MLP(nn.Module):
     def get_dist_complexity(
             self,
             dist_config: DistConfig,
-            domain_train_loader,
-            domain_test_loader,
-            num_attempts=1,
+            # domain_train_loader,
+            # domain_test_loader,
+            # num_attempts=1,
             ) -> tuple[int, Optional[MLP], DistFinalResults]:
         # N.B. self is interpreted as the base model for this method
-        dist_data_loaders = self.get_logit_dataloaders(
-            dist_config=dist_config,
-            domain_train_loader=domain_train_loader,
-            domain_test_loader=domain_test_loader,
-        )
+        # dist_data_loaders = self.get_logit_dataloaders(
+        #     dist_config=dist_config,
+        #     domain_train_loader=domain_train_loader,
+        #     domain_test_loader=domain_test_loader,
+        # )
 
-        hidden_dim_guess = dist_config.guess_hidden_dim
+        hidden_dim_guess = dist_config.hyperparams.initial_guess_hidden_dim
 
         print(f"Hidden dim guess: {hidden_dim_guess}")
         dist_dims = [self.dimensions[0], hidden_dim_guess, self.dimensions[-1]]
         dist_successful, dist_model = self.dist_best_of_n(
             dist_config=dist_config,
             dist_dims=dist_dims,
-            dist_data_loaders=dist_data_loaders,
-            num_attempts=num_attempts
+            # dist_data_loaders=dist_data_loaders,
+            # num_attempts=num_attempts
         )
 
         # If the first guess worked, halve until it doesn't
@@ -889,8 +889,8 @@ class MLP(nn.Module):
                 dist_successful, dist_model = self.dist_best_of_n(
                     dist_config=dist_config,
                     dist_dims=dist_dims,
-                    dist_data_loaders=dist_data_loaders,
-                    num_attempts=num_attempts
+                    # dist_data_loaders=dist_data_loaders,
+                    # num_attempts=num_attempts
                 )
             hidden_dim_low, hidden_dim_high = hidden_dim_guess, hidden_dim_guess * 2
             dist_model_low = dist_model
@@ -905,8 +905,8 @@ class MLP(nn.Module):
                 dist_successful, dist_model = self.dist_best_of_n(
                     dist_config=dist_config,
                     dist_dims=dist_dims,
-                    dist_data_loaders=dist_data_loaders,
-                    num_attempts=num_attempts
+                    # dist_data_loaders=dist_data_loaders,
+                    # num_attempts=num_attempts
                 )
             hidden_dim_low, hidden_dim_high = hidden_dim_guess // 2, hidden_dim_guess * 2
             dist_model_high = dist_model
@@ -920,8 +920,8 @@ class MLP(nn.Module):
             dist_successful, dist_model = self.dist_best_of_n(
                 dist_config=dist_config,
                 dist_dims=dist_dims,
-                dist_data_loaders=dist_data_loaders,
-                num_attempts=num_attempts
+                # dist_data_loaders=dist_data_loaders,
+                # num_attempts=num_attempts
             )
 
             if dist_successful:
@@ -933,7 +933,12 @@ class MLP(nn.Module):
 
         complexity = hidden_dim_high
         dist_model = dist_model_high
-        final_dist_metrics = self.get_final_dist_metrics(dist_train_config=dist_config, logit_train_loader=domain_train_loader, logit_test_loader=None, complexity=complexity)
+        final_dist_metrics = self.get_final_dist_metrics(
+            dist_config=dist_config,
+            # logit_train_loader=domain_train_loader,
+            # logit_test_loader=None,
+            complexity=complexity,
+        )
 
         return dist_model, final_dist_metrics
 
@@ -961,9 +966,9 @@ class MLP(nn.Module):
                 dist_model.dist_from(
                     base_model=self,
                     dist_config=dist_config,
-                    domain_train_loader=domain_train_loader,
-                    domain_test_loader=None,
-                    data_test_loader=None,
+                    # domain_train_loader=domain_train_loader,
+                    # domain_test_loader=None,
+                    # data_test_loader=None,
                     epoch_shift=rep * dist_config.max_epochs,
                 )
             )

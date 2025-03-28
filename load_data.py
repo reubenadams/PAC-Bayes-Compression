@@ -8,36 +8,36 @@ import torch.nn.functional as F
 from mnist1d.data import get_dataset_args, get_dataset
 
 
-def get_datasets(dataset_name, new_input_size=None, train_size=None, test_size=None):
+def get_datasets(dataset_name, new_input_shape=None, train_size=None, test_size=None):
 
     valid_datasets = ["MNIST", "CIFAR10", "MNIST1D"]
     data_root = f"./data/{dataset_name}"
 
     if dataset_name == "MNIST":
-        if new_input_size is None:
-            new_input_size = (28, 28)
-            if new_input_size[0] > 28 or new_input_size[1] > 28:
+        if new_input_shape is None:
+            new_input_shape = (28, 28)
+            if new_input_shape[0] > 28 or new_input_shape[1] > 28:
                 raise ValueError(
-                    f"New MNIST size {new_input_size} should not be larger than original size 28x28."
+                    f"New MNIST size {new_input_shape} should not be larger than original size 28x28."
                 )
-        data_dir = os.path.join(data_root, f"{new_input_size[0]}x{new_input_size[1]}")
+        data_dir = os.path.join(data_root, f"{new_input_shape[0]}x{new_input_shape[1]}")
 
     elif dataset_name == "CIFAR10":
-        if new_input_size is None:
-            new_input_size = (32, 32)
-            if new_input_size[0] > 32 or new_input_size[1] > 32:
+        if new_input_shape is None:
+            new_input_shape = (32, 32)
+            if new_input_shape[0] > 32 or new_input_shape[1] > 32:
                 raise ValueError(
-                    f"New CIFAR10 size {new_input_size} should not be larger than original size 32x32."
+                    f"New CIFAR10 size {new_input_shape} should not be larger than original size 32x32."
                 )
-        data_dir = os.path.join(data_root, f"{new_input_size[0]}x{new_input_size[1]}")
+        data_dir = os.path.join(data_root, f"{new_input_shape[0]}x{new_input_shape[1]}")
 
     elif dataset_name == "MNIST1D":
-        if new_input_size is None:
-            new_input_size = (40,)
+        if new_input_shape is None:
+            new_input_shape = (40,)
         else:
-            if new_input_size != (40,):
+            if new_input_shape != (40,):
                 raise ValueError(f"MNIST1D does not support resizing.")
-        data_dir = os.path.join(data_root, f"{new_input_size[0]}")
+        data_dir = os.path.join(data_root, f"{new_input_shape[0]}")
 
     else:
         raise ValueError(
@@ -53,7 +53,7 @@ def get_datasets(dataset_name, new_input_size=None, train_size=None, test_size=N
 
         transform = transforms.Compose(
             [
-                transforms.Resize(new_input_size),
+                transforms.Resize(new_input_shape),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,), (0.5,)),
             ]
@@ -128,12 +128,12 @@ def get_dataloaders(
     batch_size,
     train_size=None,
     test_size=None,
-    new_input_size=None,
+    new_input_shape=None,
     use_whole_dataset=False,
     device="cpu",
 ):
 
-    train, test = get_datasets(dataset_name, new_input_size, train_size, test_size)
+    train, test = get_datasets(dataset_name, new_input_shape, train_size, test_size)
 
     train.data = train.data.to(device)
     train.targets = train.targets.to(device)

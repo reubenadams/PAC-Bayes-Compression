@@ -69,7 +69,7 @@ except FileNotFoundError:
         test_loader=test_loader,
         train_loss_fn=base_train_loss_fn,
         test_loss_fn=base_test_loss_fn,
-        train_config=train_config,
+        base_config=train_config,
     )
     model.save(experiment_config.model_dir, experiment_config.model_name)
 

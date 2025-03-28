@@ -106,7 +106,7 @@ except FileNotFoundError:
             test_loader=test_loader,
             train_loss_fn=base_train_loss_fn,
             test_loss_fn=base_test_loss_fn,
-            train_config=base_train_config,
+            base_config=base_train_config,
         )
         base_model.save(base_experiment_config.model_dir, base_experiment_config.model_name)
 
@@ -144,7 +144,7 @@ except FileNotFoundError:
             test_loader=param_dataloader_scaled,
             train_loss_fn=hyper_train_loss_fn,
             test_loss_fn=hyper_test_loss_fn,
-            train_config=hyper_scaled_train_config,
+            base_config=hyper_scaled_train_config,
             callback=callback,
         )
         hyper_model_scaled.save(
@@ -185,7 +185,7 @@ except FileNotFoundError:
             test_loader=param_dataloader_binary,
             train_loss_fn=hyper_train_loss_fn,
             test_loss_fn=hyper_test_loss_fn,
-            train_config=hyper_binary_train_config,
+            base_config=hyper_binary_train_config,
             callback=callback,
         )
         hyper_model_binary.save(
