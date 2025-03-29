@@ -56,7 +56,6 @@ def get_dist_config(
     )
     data_config.add_sample_sizes(quick_test)
     data_config.add_dataloaders(
-        batch_size=hyperparams.batch_size,
         new_input_shape=base_config.data.new_input_shape,
         base_model=base_model,
     )
@@ -188,16 +187,20 @@ def get_pac_bound(
 
 
 def log_and_save_metrics(
+        run_id: str,
+        base_config: config.BaseConfig,
+        dist_config: config.DistConfig,
+        pacb_config: config.PACBConfig,
         base_metrics: config.BaseResults,
         dist_metrics: config.DistFinalResults, 
         pacb_metrics: config.PACBResults,
-        base_config: config.BaseConfig,
     ):
     base_metrics.log(prefix="Base ")
     dist_metrics.log(prefix="Dist ")
     pacb_metrics.log()
-    metrics = asdict(base_metrics) | asdict(dist_metrics) | asdict(pacb_metrics)
-    df = pd.DataFrame([metrics])
+    all_csv_values = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict() | base_metrics.to_dict() | dist_config.to_dict() | dist_metrics.to_dict() | pacb_config.to_dict() | pacb_metrics.to_dict()
+    # metrics = asdict(base_config.hyperparams) | asdict(base_metrics) | asdict(dist_metrics) | asdict(pacb_metrics)
+    df = pd.DataFrame([all_csv_values])
     df.to_csv(base_config.metrics_path, index=False)
 
 
@@ -209,7 +212,6 @@ def main():
     seed = 0
 
     setup_environment(seed)
-    os.makedirs("models", exist_ok=True)
     run = wandb.init()
 
     base_config = get_base_config(
@@ -230,6 +232,7 @@ def main():
         base_model.save(base_config.model_base_dir, base_config.model_name)
     else:
         print("Model failed to reach target train loss")
+        run.finish()
         return
 
     dist_config = get_dist_config(
@@ -258,11 +261,15 @@ def main():
             pacb_config=pacb_config,
     )
     log_and_save_metrics(
+        run_id=run.id,
+        base_config=base_config,
+        dist_config=dist_config,
+        pacb_config=pacb_config,
         base_metrics=base_metrics,
         dist_metrics=dist_metrics,
         pacb_metrics=pacb_metrics,
-        base_config=base_config,
     )
+    run.finish()
 
 
 if __name__ == "__main__":

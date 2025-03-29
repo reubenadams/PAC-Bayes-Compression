@@ -35,6 +35,18 @@ class BaseHyperparamsConfig:
             weight_decay=config.weight_decay
         )
 
+    def to_dict(self):
+        return {
+            "Base Activation": self.activation,
+            "Base Optimizer": self.optimizer_name,
+            "Base Hidden Layer Width": self.hidden_layer_width,
+            "Base Num Hidden Layers": self.num_hidden_layers,
+            "Base Learning Rate": self.lr,
+            "Base Batch Size": self.batch_size,
+            "Base Dropout Prob": self.dropout_prob,
+            "Base Weight Decay": self.weight_decay,
+        }
+
 
 @dataclass
 class BaseDataConfig:
@@ -73,10 +85,18 @@ class BaseDataConfig:
             device=self.device
         )
 
+    def to_dict(self):
+        return {
+            "Base Dataset": self.dataset_name,
+            "Base New Input Shape": self._new_input_shape,
+            "Base Train Size": self.train_size,
+            "Base Test Size": self.test_size,
+        }
+
 
 @dataclass
 class BaseStoppingConfig:
-    num_epochs: int
+    max_epochs: int
     use_early_stopping: bool
     target_full_train_loss: float
     patience: int
@@ -84,7 +104,7 @@ class BaseStoppingConfig:
     @classmethod
     def quick_test(cls):
         return cls(
-            num_epochs=100,
+            max_epochs=100,
             use_early_stopping=True,
             target_full_train_loss=1.5,
             patience=1
@@ -93,7 +113,7 @@ class BaseStoppingConfig:
     @classmethod
     def full_scale(cls):
         return cls(
-            num_epochs=1000000,
+            max_epochs=1000000,
             use_early_stopping=True,
             target_full_train_loss=0.01,
             patience=1000
@@ -105,6 +125,14 @@ class BaseStoppingConfig:
             return cls.quick_test()
         else:
             return cls.full_scale()
+
+    def to_dict(self):
+        return {
+            "Base Max Epochs": self.max_epochs,
+            "Base Use Early Stopping": self.use_early_stopping,
+            "Base Target Full Train Loss": self.target_full_train_loss,
+            "Base Patience": self.patience,
+        }
 
 
 @dataclass
@@ -167,28 +195,31 @@ class BaseConfig:
 
         self.model_name = self.hyperparams.run_name
         self.metrics_path = f"{self.metrics_dir}/{self.hyperparams.run_name}.csv"
+    
+    def to_dict(self):
+        return self.data.to_dict() | self.hyperparams.to_dict() | self.stopping.to_dict()
 
 
 @dataclass
 class BaseResults:
-    full_train_loss: float
+    final_train_loss: float
     reached_target: bool
     epochs_taken: int
     lost_patience: bool
     ran_out_of_epochs: bool
-    full_train_accuracy: Optional[float] = None
-    full_test_accuracy: Optional[float] = None
-    full_test_loss: Optional[float] = None
+    final_train_accuracy: Optional[float] = None
+    final_test_accuracy: Optional[float] = None
+    final_test_loss: Optional[float] = None
 
     def __post_init__(self):
-        self.generalization_gap = self.full_train_accuracy - self.full_test_accuracy
+        self.generalization_gap = self.final_train_accuracy - self.final_test_accuracy
     
     def log(self, prefix=""):
         wandb_metrics = {
-            f"{prefix}Train Accuracy": self.full_train_accuracy,
-            f"{prefix}Test Accuracy": self.full_test_accuracy,
-            f"{prefix}Train Loss": self.full_train_loss,
-            f"{prefix}Test Loss": self.full_test_loss,
+            f"{prefix}Train Accuracy": self.final_train_accuracy,
+            f"{prefix}Test Accuracy": self.final_test_accuracy,
+            f"{prefix}Train Loss": self.final_train_loss,
+            f"{prefix}Test Loss": self.final_test_loss,
             f"{prefix}Generalization Gap": self.generalization_gap,
             # f"{prefix}Reached Target": self.reached_target,
             # f"{prefix}Epochs Taken": self.epochs_taken,
@@ -197,18 +228,45 @@ class BaseResults:
         }
         wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
         wandb.log(wandb_metrics)
+    
+    def to_dict(self):
+        return {
+            "Base Final Train Loss": self.final_train_loss,
+            "Base Final Test Loss": self.final_test_loss,
+            "Base Final Train Accuracy": self.final_train_accuracy,
+            "Base Final Test Accuracy": self.final_test_accuracy,
+            "Base Reached Target": self.reached_target,
+            "Base Epochs Taken": self.epochs_taken,
+            "Base Lost Patience": self.lost_patience,
+            "Base Ran Out Of Epochs": self.ran_out_of_epochs,
+        }
 
 
 @dataclass
 class DistHyperparamsConfig:
-    lr: float = 0.003  # Was 0.01 but for some models this was too high
-    batch_size: int = 128
     activation: str = "relu"
+    lr: float = 0.003  # Was 0.01 but for some models this was too high
 
-    dim_skip: int = 10
-    min_hidden_dim: int = 1
-    max_hidden_dim: int = 2000
+    # dim_skip: int = 10  # TODO: This isn't actually used, so it shouldn't be here.
+    # min_hidden_dim: int = 1
+    max_hidden_dim: int = 2048
     initial_guess_hidden_dim: int = 128
+
+    def __post_init__(self):
+        if self.initial_guess_hidden_dim <= 1:
+            raise ValueError(f"Initial guess hidden dim {self.initial_guess_hidden_dim} must be greater than 1")
+        if self.initial_guess_hidden_dim > self.max_hidden_dim:
+            raise ValueError(f"Initial guess hidden dim {self.initial_guess_hidden_dim} must be less than or equal to max hidden dim {self.max_hidden_dim}")
+
+    def to_dict(self):
+        return {
+            "Dist Activation": self.activation,
+            "Dist Learning Rate": self.lr,
+            # "Dist Dim Skip": self.dim_skip,
+            # "Dist Min Hidden Dim": self.min_hidden_dim,
+            "Dist Max Hidden Dim": self.max_hidden_dim,
+            "Dist Initial Guess Hidden Dim": self.initial_guess_hidden_dim,
+        }
 
 
 @dataclass
@@ -216,12 +274,17 @@ class DistDataConfig:
     dataset_name: str
     train_size: Optional[int] = None
     test_size: Optional[int] = None
+    batch_size: int = None
     use_whole_dataset: Optional[bool] = None
     domain_train_loader: Optional[DataLoader] = None
     domain_test_loader: Optional[DataLoader] = None
     logit_train_loader: Optional[DataLoader] = None
     logit_test_loader: Optional[DataLoader] = None
     device: Optional[str] = None
+
+    def __post_init__(self):
+        if self.use_whole_dataset and self.batch_size is not None:
+            raise ValueError(f"use_whole_dataset is {self.use_whole_dataset} but batch_size is not None: {self.batch_size} ")
 
     def add_sample_sizes(self, quick_test):
         if quick_test:
@@ -231,10 +294,10 @@ class DistDataConfig:
             self.train_size = None
             self.test_size = None
 
-    def add_dataloaders(self, batch_size, new_input_shape, base_model):
+    def add_dataloaders(self, new_input_shape, base_model):
         self.domain_train_loader, self.domain_test_loader = get_dataloaders(
             dataset_name=self.dataset_name,
-            batch_size=batch_size,
+            batch_size=self.batch_size,
             train_size=self.train_size,
             test_size=self.test_size,
             new_input_shape=new_input_shape,
@@ -244,10 +307,19 @@ class DistDataConfig:
         self.logit_train_loader, self.logit_test_loader = base_model.get_logits_dataloaders(
             domain_train_loader=self.domain_train_loader,
             domain_test_loader=self.domain_test_loader,
-            batch_size=batch_size,
+            batch_size=self.batch_size,
             use_whole_dataset=self.use_whole_dataset,
             device=self.device,
         )
+
+    def to_dict(self):
+        return {
+            "Dist Dataset": self.dataset_name,
+            "Dist Train Size": self.train_size,
+            "Dist Test Size": self.test_size,
+            "Dist Batch Size": self.batch_size,
+            "Dist Use Whole Dataset": self.use_whole_dataset,
+        }
 
 
 @dataclass
@@ -265,7 +337,7 @@ class DistStoppingConfig:
             max_epochs=10000,
             use_early_stopping=True,
             target_kl_on_train=0.1,
-            patience=10,
+            patience=2,
             num_attempts=1,
         )
     
@@ -286,18 +358,36 @@ class DistStoppingConfig:
         else:
             return cls.full_scale()
 
+    def to_dict(self):
+        return {
+            "Dist Max Epochs": self.max_epochs,
+            "Dist Use Early Stopping": self.use_early_stopping,
+            "Dist Target KL on Train": self.target_kl_on_train,
+            "Dist Patience": self.patience,
+            "Dist Num Attempts": self.num_attempts,
+        }
+
 
 @dataclass
 class DistObjectiveConfig:
     objective_name: str = "kl"
     reduction: str = "mean"
-    k: Optional[int] = 10
-    alpha: Optional[float] = 10**2
+    k: Optional[int] = None  # 10
+    alpha: Optional[float] = None  # 10**2
     use_scheduler: bool = False
     shift_logits: bool = False
 
     def __post_init__(self):
         self.full_objective_name = f"{self.objective_name.upper()} {self.reduction}"
+
+    def to_dict(self):
+        return {
+            "Dist Objective": self.full_objective_name,
+            "Dist k": self.k,
+            "Dist alpha": self.alpha,
+            "Dist Use Scheduler": self.use_scheduler,
+            "Dist Shift Logits": self.shift_logits,
+        }
 
 
 @dataclass
@@ -352,6 +442,9 @@ class DistConfig:
                     "Must set get_kl_on_train_data to True when target_kl_on_train is not None"
                 )
 
+    def to_dict(self):
+        return self.data.to_dict() | self.hyperparams.to_dict() | self.stopping.to_dict() | self.objective.to_dict()
+
 
 @dataclass
 class DistAttemptResults:
@@ -393,6 +486,16 @@ class DistFinalResults:
         }
         wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
         wandb.log(wandb_metrics)
+    
+    def to_dict(self):
+        return {
+            "Dist Complexity": self.complexity,
+            "Dist Mean KL on Train Data": self.mean_kl_on_train_data,
+            "Dist Mean KL on Test Data": self.mean_kl_on_test_data,
+            "Dist Accuracy on Train Data": self.accuracy_on_train_data,
+            "Dist Accuracy on Test Data": self.accuracy_on_test_data,
+            "Dist L2 on Test Data": self.l2_on_test_data
+        }
 
 
 @dataclass
@@ -423,6 +526,14 @@ class PACBConfig:
         else:
             return cls.full_scale()
 
+    def to_dict(self):
+        return {
+            "PACB Num MC Samples for Max Sigma": self.num_mc_samples_max_sigma,
+            "PACB Num MC Samples for PACB Bound": self.num_mc_samples_pac_bound,
+            "PACB Delta": self.delta,
+            "PACB Target Error Increase": self.target_error_increase,
+        }
+
 
 @dataclass
 class PACBResults:
@@ -435,15 +546,25 @@ class PACBResults:
 
     def log(self):
         wandb_metrics = {
-            "Base Sigma": self.sigma,
-            "Base Noisy Error": self.noisy_error,
+            "PACB Sigma": self.sigma,
+            "PACB Noisy Error": self.noisy_error,
             # "noise_trials": self.noise_trials,
             # "total_num_sigmas": self.total_num_sigmas,
-            "PAC Bound Inverse kl": self.pac_bound_inverse_kl,
-            "PAC Bound Pinsker": self.pac_bound_pinsker,
+            "PACB Bound Inverse kl": self.pac_bound_inverse_kl,
+            "PACB Bound Pinsker": self.pac_bound_pinsker,
         }
         wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
         wandb.log(wandb_metrics)
+    
+    def to_dict(self):
+        return {
+            "PACB Sigma": self.sigma,
+            "PACB Noisy Error": self.noisy_error,
+            "PACB Noise Trials": self.noise_trials,
+            "PACB Total Num Sigmas": self.total_num_sigmas,
+            "PACB Bound Inverse kl": self.pac_bound_inverse_kl,
+            "PACB Bound Pinsker": self.pac_bound_pinsker,
+        }
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?

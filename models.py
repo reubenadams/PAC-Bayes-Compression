@@ -339,10 +339,10 @@ class MLP(nn.Module):
             train_loss = self.get_full_loss(loss_fn, train_loader) if base_config.records.get_final_train_loss else None
         test_loss = self.get_full_loss(loss_fn, test_loader) if base_config.records.get_final_test_loss else None
         final_base_metrics = BaseResults(
-            full_train_accuracy=train_acc.item() if train_acc is not None else None,
-            full_test_accuracy=test_acc.item() if test_acc is not None else None,
-            full_train_loss=train_loss.item() if train_loss is not None else None,
-            full_test_loss=test_loss.item() if test_loss is not None else None,
+            final_train_accuracy=train_acc.item() if train_acc is not None else None,
+            final_test_accuracy=test_acc.item() if test_acc is not None else None,
+            final_train_loss=train_loss.item() if train_loss is not None else None,
+            final_test_loss=test_loss.item() if test_loss is not None else None,
             reached_target=reached_target,
             epochs_taken=epochs_taken,
             lost_patience=lost_patience,
@@ -498,13 +498,13 @@ class MLP(nn.Module):
             best_loss = float("inf")
             epochs_since_improvement = 0
 
-        for epoch in range(1, base_config.stopping.num_epochs + 1):
+        for epoch in range(1, base_config.stopping.max_epochs + 1):
 
             # Log every epoch for the first 100, every 10th until 1000, every 100th until 10000 etc.
             log_freq = 10 ** max(0, math.floor(math.log(epoch, 10)) - 1)
 
             if epoch % log_freq == 0:
-                print(f"Epoch [{epoch}/{base_config.stopping.num_epochs}]")
+                print(f"Epoch [{epoch}/{base_config.stopping.max_epochs}]")
 
             for x, labels in base_config.data.train_loader:
                 assert self.training
@@ -535,7 +535,7 @@ class MLP(nn.Module):
                 else:
                     epochs_since_improvement += 1
 
-            if (epoch % log_freq == 0) or (epoch == base_config.stopping.num_epochs):
+            if (epoch % log_freq == 0) or (epoch == base_config.stopping.max_epochs):
                 if base_config.records.get_full_test_loss:
                     test_loss = self.get_full_loss(test_loss_fn, base_config.data.test_loader)
                     epoch_log[base_config.records.test_loss_name] = test_loss.item()
@@ -794,21 +794,21 @@ class MLP(nn.Module):
 
         return False, None
 
-    def get_dist_dims(self, dim_skip):
+    # def get_dist_dims(self, dim_skip):
 
-        input_dim, hidden_dims, output_dim = (
-            self.dimensions[0],
-            self.dimensions[1:-1],
-            self.dimensions[-1],
-        )
+    #     input_dim, hidden_dims, output_dim = (
+    #         self.dimensions[0],
+    #         self.dimensions[1:-1],
+    #         self.dimensions[-1],
+    #     )
 
-        dist_hidden_dims = product(
-            *[list(range(1, dim + 1, dim_skip)) for dim in hidden_dims]
-        )
-        dist_dims = [
-            [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
-        ]
-        return dist_dims
+    #     dist_hidden_dims = product(
+    #         *[list(range(1, dim + 1, dim_skip)) for dim in hidden_dims]
+    #     )
+    #     dist_dims = [
+    #         [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
+    #     ]
+    #     return dist_dims
 
     def get_logits_dataloaders(self, domain_train_loader, domain_test_loader, batch_size, use_whole_dataset, device):
         # N.B. self is interpreted as the base model for this method
@@ -846,6 +846,15 @@ class MLP(nn.Module):
         # If the first guess worked, halve until it doesn't
         if dist_successful:
             while dist_successful:
+                # If the last one was 1 and was successful, we can stop here
+                if hidden_dim_guess == 1:
+                    complexity = 1
+                    dist_model = dist_model_high
+                    final_dist_metrics = self.get_final_dist_metrics(
+                        dist_config=dist_config,
+                        complexity=complexity,
+                    )
+                    return dist_model, final_dist_metrics
                 dist_model_high = dist_model
                 hidden_dim_guess //= 2
                 print(f"Hidden dim guess: {hidden_dim_guess}")
@@ -860,6 +869,10 @@ class MLP(nn.Module):
         # If the first guess didn't work, double until it does
         else:
             while not dist_successful:
+                if hidden_dim_guess > dist_config.hyperparams.max_hidden_dim:
+                    raise ValueError(
+                        f"Complexity (current guess: {hidden_dim_guess}) is larger than max hidden dim {dist_config.hyperparams.max_hidden_dim}."
+                    )
                 dist_model_low = dist_model
                 hidden_dim_guess *= 2
                 print(f"Hidden dim guess: {hidden_dim_guess}")
