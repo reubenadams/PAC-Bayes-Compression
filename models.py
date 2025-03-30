@@ -238,7 +238,6 @@ class MLP(nn.Module):
                 if isinstance(layer, nn.Linear):
                     batch_size = x.size(0)
                     expanded_weight = torch.tile(layer.weight, (batch_size, 1, 1))  # (b, d_out, d_in)
-                    print(f"{expanded_weight.shape=}")
                     noisy_expanded_weight = expanded_weight + torch.randn(expanded_weight.shape) * sigma  # (b, d_out, d_in)
 
                     expanded_x = x.unsqueeze(-1)  # (b, d_in, 1)
@@ -507,7 +506,6 @@ class MLP(nn.Module):
                 print(f"Epoch [{epoch}/{base_config.stopping.max_epochs}]")
 
             for x, labels in base_config.data.train_loader:
-                print("Batch")
                 assert self.training
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)

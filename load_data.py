@@ -140,17 +140,36 @@ def get_dataloaders(
     train, test = get_datasets(
         dataset_name=dataset_name,
         new_input_shape=new_input_shape,
-        test_size=train_size,
-        train_size=test_size,
+        train_size=train_size,
+        test_size=test_size,
     )
 
-    train.data = train.data.to(device)
-    train.targets = train.targets.to(device)
-    test.data = test.data.to(device)
-    test.targets = test.targets.to(device)
+    assert (
+        isinstance(train, Dataset) and isinstance(test, Dataset)) or (
+        isinstance(train, Subset) and isinstance(test, Subset)
+    ), "train and test should be both Dataset or both Subset instances."
+
+    if isinstance(train, Subset):
+        train.dataset.data = train.dataset.data.to(device)
+        train.dataset.targets = train.dataset.targets.to(device)
+        train.dataset.data = train.dataset.data.to(device)
+        train.dataset.targets = train.dataset.targets.to(device)
+    else:
+        train.data = train.data.to(device)
+        train.targets = train.targets.to(device)
+        test.data = test.data.to(device)
+        test.targets = test.targets.to(device)
+
 
     if use_whole_dataset:
-        return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets)
+        if isinstance(train, Subset):
+            train_data = train.dataset.data[train.indices]
+            train_targets = train.dataset.targets[train.indices]
+            test_data = test.dataset.data[test.indices]
+            test_targets = test.dataset.targets[test.indices]
+            return FakeDataLoader(train_data, train_targets), FakeDataLoader(test_data, test_targets)
+        else:
+            return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets)
 
     train_loader = DataLoader(train, batch_size, shuffle=True)
     test_loader = DataLoader(test, batch_size, shuffle=False)
@@ -159,7 +178,7 @@ def get_dataloaders(
 
 
 class FakeDataLoader:
-    
+    """Fake DataLoader that returns the whole dataset in one batch."""
     def __init__(self, data, targets):
         self.data = data
         self.targets = targets

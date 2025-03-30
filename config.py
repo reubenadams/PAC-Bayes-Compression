@@ -83,6 +83,7 @@ class BaseDataConfig:
             train_size=self.train_size,
             test_size=self.test_size,
             new_input_shape=self.new_input_shape,
+            use_whole_dataset=False,
             device=self.device
         )
 
