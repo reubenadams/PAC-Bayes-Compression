@@ -507,6 +507,7 @@ class MLP(nn.Module):
                 print(f"Epoch [{epoch}/{base_config.stopping.max_epochs}]")
 
             for x, labels in base_config.data.train_loader:
+                print("Batch")
                 assert self.training
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 import wandb
 from math import prod
+import torch
 from torch.utils.data import DataLoader
 
 from load_data import get_dataloaders
@@ -104,7 +105,7 @@ class BaseStoppingConfig:
     @classmethod
     def quick_test(cls):
         return cls(
-            max_epochs=100,
+            max_epochs=1,  # TODO: Return to 100
             use_early_stopping=True,
             target_full_train_loss=1.5,
             patience=1
@@ -179,21 +180,23 @@ class BaseConfig:
                     "Must set get_full_train_loss to True when use_early_stopping is True"
                 )
 
-        self.new_input_shape_str = "x".join(map(str, self.data._new_input_shape))
-        self.model_dims = [self.data._new_input_shape[0]] + [self.hyperparams.hidden_layer_width] * self.hyperparams.num_hidden_layers + [10]
-        self.model_dims_str = "x".join(map(str, self.model_dims))
-        self.model_root_dir = f"models/{self.data.dataset_name}/{self.new_input_shape_str}"
+        self.model_dims = [prod(self.data._new_input_shape)] + [self.hyperparams.hidden_layer_width] * self.hyperparams.num_hidden_layers + [10]
+        self.model_name = self.hyperparams.run_name
 
+        self.new_input_shape_str = "x".join(map(str, self.data._new_input_shape))
+        self.model_dims_str = "x".join(map(str, self.model_dims))
+
+        self.model_root_dir = f"models/{self.data.dataset_name}/{self.new_input_shape_str}"
         self.model_init_dir = f"{self.model_root_dir}/init"
         self.model_base_dir = f"{self.model_root_dir}/base"
         self.model_dist_dir = f"{self.model_root_dir}/dist"
         self.metrics_dir = f"{self.model_root_dir}/metrics"
+
         os.makedirs(self.model_init_dir, exist_ok=True)
         os.makedirs(self.model_base_dir, exist_ok=True)
         os.makedirs(self.model_dist_dir, exist_ok=True)
         os.makedirs(self.metrics_dir, exist_ok=True)
 
-        self.model_name = self.hyperparams.run_name
         self.metrics_path = f"{self.metrics_dir}/{self.hyperparams.run_name}.csv"
     
     def to_dict(self):
@@ -214,32 +217,22 @@ class BaseResults:
     def __post_init__(self):
         self.generalization_gap = self.final_train_accuracy - self.final_test_accuracy
     
-    def log(self, prefix=""):
-        wandb_metrics = {
-            f"{prefix}Train Accuracy": self.final_train_accuracy,
-            f"{prefix}Test Accuracy": self.final_test_accuracy,
-            f"{prefix}Train Loss": self.final_train_loss,
-            f"{prefix}Test Loss": self.final_test_loss,
-            f"{prefix}Generalization Gap": self.generalization_gap,
-            # f"{prefix}Reached Target": self.reached_target,
-            # f"{prefix}Epochs Taken": self.epochs_taken,
-            # f"{prefix}Lost Patience": self.lost_patience,
-            # f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
-        }
-        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
-        wandb.log(wandb_metrics)
-    
     def to_dict(self):
         return {
             "Base Final Train Loss": self.final_train_loss,
             "Base Final Test Loss": self.final_test_loss,
             "Base Final Train Accuracy": self.final_train_accuracy,
             "Base Final Test Accuracy": self.final_test_accuracy,
+            "Base Generalization Gap": self.generalization_gap,
             "Base Reached Target": self.reached_target,
             "Base Epochs Taken": self.epochs_taken,
             "Base Lost Patience": self.lost_patience,
             "Base Ran Out Of Epochs": self.ran_out_of_epochs,
         }
+    
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (int, float, torch.Tensor))}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
@@ -454,14 +447,8 @@ class DistAttemptResults:
     ran_out_of_epochs: bool
     mean_kl_on_train_data: Optional[float] = None
 
-    def log(self, prefix=""):
-        wandb_metrics = {
-            f"{prefix}Mean KL on Train Data": self.mean_kl_on_train_data,
-            # f"{prefix}Reached Target": self.reached_target,
-            # f"{prefix}Epochs Taken": self.epochs_taken,
-            # f"{prefix}Lost Patience": self.lost_patience,
-            # f"{prefix}Ran Out Of Epochs": self.ran_out_of_epochs
-        }
+    def log(self):
+        wandb_metrics = {"Dist Mean KL on Train Data": self.mean_kl_on_train_data}
         wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
         wandb.log(wandb_metrics)
 
@@ -474,18 +461,6 @@ class DistFinalResults:
     accuracy_on_train_data: Optional[float] = None
     accuracy_on_test_data: Optional[float] = None
     l2_on_test_data: Optional[float] = None
-
-    def log(self, prefix=""):
-        wandb_metrics = {
-            f"{prefix}Complexity": self.complexity,
-            f"{prefix}Mean KL on Train Data": self.mean_kl_on_train_data,
-            f"{prefix}Mean KL on Test Data": self.mean_kl_on_test_data,
-            f"{prefix}Accuracy on Train Data": self.accuracy_on_train_data,
-            f"{prefix}Accuracy on Test Data": self.accuracy_on_test_data,
-            f"{prefix}L2 on Test Data": self.l2_on_test_data
-        }
-        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
-        wandb.log(wandb_metrics)
     
     def to_dict(self):
         return {
@@ -496,6 +471,10 @@ class DistFinalResults:
             "Dist Accuracy on Test Data": self.accuracy_on_test_data,
             "Dist L2 on Test Data": self.l2_on_test_data
         }
+
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (int, float, torch.Tensor))}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
@@ -543,18 +522,6 @@ class PACBResults:
     total_num_sigmas: int
     pac_bound_inverse_kl: float
     pac_bound_pinsker: float
-
-    def log(self):
-        wandb_metrics = {
-            "PACB Sigma": self.sigma,
-            "PACB Noisy Error": self.noisy_error,
-            # "noise_trials": self.noise_trials,
-            # "total_num_sigmas": self.total_num_sigmas,
-            "PACB Bound Inverse kl": self.pac_bound_inverse_kl,
-            "PACB Bound Pinsker": self.pac_bound_pinsker,
-        }
-        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
-        wandb.log(wandb_metrics)
     
     def to_dict(self):
         return {
@@ -565,6 +532,10 @@ class PACBResults:
             "PACB Bound Inverse kl": self.pac_bound_inverse_kl,
             "PACB Bound Pinsker": self.pac_bound_pinsker,
         }
+
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (float, torch.Tensor))}
+        wandb.log(wandb_metrics)
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?

@@ -20,11 +20,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def setup_environment(seed):
-    torch.manual_seed(seed)
-    os.environ["WANDB_SILENT"] = "true"
-
-
 def get_base_config(quick_test: bool, dataset_name: str, device: str):
     hyperparams = config.BaseHyperparamsConfig.from_wandb_config(wandb.config)
     data_config = config.BaseDataConfig(dataset_name=dataset_name, device=device)
@@ -75,37 +70,6 @@ def get_pacb_config(quick_test: bool):
     return config.PACBConfig.create(quick_test)
 
 
-def get_base_experiment_config(hyperparams, model_dims, dataset_name, model_name):
-    base_experiment_config = config.ExperimentConfig(
-        experiment="distillation",
-        model_type="base",
-        model_dims=model_dims,
-        optimizer_name=hyperparams["optimizer"],
-        lr=hyperparams["learning_rate"],
-        batch_size=hyperparams["batch_size"],
-        dropout_prob=hyperparams["dropout_prob"],
-        weight_decay=hyperparams["weight_decay"],
-        dataset_name=dataset_name,
-        model_name=model_name,
-    )
-    return base_experiment_config
-
-
-def get_dist_experiment_config(hyperparams, model_dims, dataset_name, model_name):
-    dist_experiment_config = config.ExperimentConfig(
-        experiment="distillation",
-        model_type="dist",
-        model_dims=model_dims,
-        lr=hyperparams["learning_rate"],
-        batch_size=hyperparams["batch_size"],
-        dropout_prob=hyperparams["dropout_prob"],
-        weight_decay=hyperparams["weight_decay"],
-        dataset_name=dataset_name,
-        model_name=model_name,
-    )
-    return dist_experiment_config
-
-
 def train_base_model(
         base_config: config.BaseConfig,
     ) -> tuple[MLP, MLP, config.BaseResults]:
@@ -117,6 +81,10 @@ def train_base_model(
         device=base_config.data.device,
     )
     base_model = copy.deepcopy(init_model)
+    print("init_model: ")
+    print(init_model)
+    print("base_model: ")
+    print(base_model)
 
     base_metrics = base_model.train_model(
         base_config=base_config,
@@ -195,7 +163,7 @@ def log_and_save_metrics(
         dist_metrics: config.DistFinalResults, 
         pacb_metrics: config.PACBResults,
     ):
-    base_metrics.log(prefix="Base ")
+    base_metrics.log()
     dist_metrics.log(prefix="Dist ")
     pacb_metrics.log()
     all_csv_values = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict() | base_metrics.to_dict() | dist_config.to_dict() | dist_metrics.to_dict() | pacb_config.to_dict() | pacb_metrics.to_dict()
@@ -208,10 +176,11 @@ def main():
 
     quick_test = True
     device = "cpu"
-    dataset_name = "MNIST1D"
+    dataset_name = "MNIST"
     seed = 0
 
-    setup_environment(seed)
+    torch.manual_seed(seed)
+    os.environ["WANDB_SILENT"] = "true"
     run = wandb.init()
 
     base_config = get_base_config(
