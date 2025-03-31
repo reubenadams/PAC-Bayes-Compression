@@ -1,23 +1,11 @@
 import os
 import torch
 import wandb
-import argparse
 import copy
 import pandas as pd
-from dataclasses import asdict
 
 import config
 from models import MLP
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train and distill neural network models")
-    parser.add_argument("--toy_run", action="store_true", help="Run with smaller dataset for testing")
-    parser.add_argument("--device", type=str, default="cpu", help="Specify device (cuda/cpu)")
-    parser.add_argument("--dataset", type=str, default="MNIST1D", help="Dataset name")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--pickle", action="store_true", default=True, help="Pickle results locally (default: True)")
-    return parser.parse_args()
 
 
 def get_base_config(quick_test: bool, dataset_name: str, device: str):
@@ -157,18 +145,28 @@ def get_pac_bound(
 def log_and_save_metrics(
         run_id: str,
         base_config: config.BaseConfig,
-        dist_config: config.DistConfig,
-        pacb_config: config.PACBConfig,
-        base_metrics: config.BaseResults,
-        dist_metrics: config.DistFinalResults, 
-        pacb_metrics: config.PACBResults,
+        dist_config: config.DistConfig = None,
+        pacb_config: config.PACBConfig = None,
+        base_metrics: config.BaseResults = None,
+        dist_metrics: config.DistFinalResults = None, 
+        pacb_metrics: config.PACBResults = None,
     ):
+    all_configs = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict()
+    if dist_config is not None:
+        all_configs |= dist_config.to_dict()
+    if pacb_config is not None:
+        all_configs |= pacb_config.to_dict()
+
     base_metrics.log()
-    dist_metrics.log(prefix="Dist ")
-    pacb_metrics.log()
-    all_csv_values = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict() | base_metrics.to_dict() | dist_config.to_dict() | dist_metrics.to_dict() | pacb_config.to_dict() | pacb_metrics.to_dict()
-    # metrics = asdict(base_config.hyperparams) | asdict(base_metrics) | asdict(dist_metrics) | asdict(pacb_metrics)
-    df = pd.DataFrame([all_csv_values])
+    all_metrics = base_metrics.to_dict()
+    if dist_metrics is not None:
+        dist_metrics.log()
+        all_metrics |= dist_metrics.to_dict()
+    if pacb_metrics is not None:
+        pacb_metrics.log()
+        all_metrics |= pacb_metrics.to_dict()
+
+    df = pd.DataFrame([all_configs | all_metrics])
     df.to_csv(base_config.metrics_path, index=False)
 
 
@@ -176,7 +174,7 @@ def main():
 
     quick_test = True
     device = "cpu"
-    dataset_name = "MNIST"
+    dataset_name = "MNIST1D"
     seed = 0
 
     torch.manual_seed(seed)
@@ -201,6 +199,11 @@ def main():
         base_model.save(base_config.model_base_dir, base_config.model_name)
     else:
         print("Model failed to reach target train loss")
+        log_and_save_metrics(
+            run_id=run.id,
+            base_config=base_config,
+            base_metrics=base_metrics,
+        )
         run.finish()
         return
 

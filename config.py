@@ -232,7 +232,7 @@ class BaseResults:
         }
     
     def log(self):
-        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (int, float, torch.Tensor))}
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
 
@@ -450,7 +450,7 @@ class DistAttemptResults:
 
     def log(self):
         wandb_metrics = {"Dist Mean KL on Train Data": self.mean_kl_on_train_data}
-        wandb_metrics = {k: v for k, v in wandb_metrics.items() if v is not None}
+        wandb_metrics = {k: v for k, v in wandb_metrics.items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
 
@@ -474,7 +474,7 @@ class DistFinalResults:
         }
 
     def log(self):
-        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (int, float, torch.Tensor))}
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
 
@@ -535,7 +535,7 @@ class PACBResults:
         }
 
     def log(self):
-        wandb_metrics = {k: v for k, v in self.to_dict().items() if isinstance(v, (float, torch.Tensor))}
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
 

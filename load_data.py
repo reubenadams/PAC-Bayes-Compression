@@ -1,5 +1,5 @@
 import os
-from typing import Union
+from typing import Optional
 
 import torch
 from torchvision import datasets, transforms
@@ -18,10 +18,17 @@ dataset_shapes = {
 
 def get_datasets(
         dataset_name: str,
-        new_input_shape: Union[tuple[int], str] = "full",
-        train_size: Union[int, str] = "full",
-        test_size: Union[int, str] = "full",
+        new_input_shape: Optional[tuple[int]] = None,
+        train_size: Optional[int] = None,
+        test_size: Optional[int] = None,
     ):
+
+    if new_input_shape is None:
+        new_input_shape = "full"
+    if train_size is None:
+        train_size = "full"
+    if test_size is None:   
+        test_size = "full"
 
     valid_datasets = ["MNIST", "CIFAR10", "MNIST1D"]
     if dataset_name not in valid_datasets:
