@@ -19,10 +19,10 @@ from kl_utils import kl_scalars_inverse
 
 class LowRankLinear(nn.Linear):
     def __init__(self, in_features, out_features):
-        super().__init__(
-            in_features, out_features, bias=False
-        )  # The papers don't use bias, I don't know why
-        self._weight_spectral_norm = None
+        super().__init__(in_features, out_features)  # Neyshabur et al. 2017 (spectrally-normalized margin bounds) don't allow a bias term, but we do.
+
+        self._weight_norm = None  # This is the ||Wi||_2 in our notation.
+        self._bias_norm = None
 
         self._U = None
         self._S = None
@@ -32,8 +32,10 @@ class LowRankLinear(nn.Linear):
         self._S_truncs = None
         self._Vt_truncs = None
 
-        self._low_rank_Ws = None
-        self._perturbation_spectral_norms = None
+        self._low_rank_weights = None  # This is the Wi + Ui in our notation.
+        self._perturbations = None  # This is the Ui in our notation.
+        self._low_rank_weight_norms = None  # This is the ||Wi + Ui||_2 in our notation.
+        self._perturbation_norms = None  # This is the ||Ui||_2 in our notation.
 
         self._USV_num_params = None
         self._UV_min = None
@@ -41,32 +43,43 @@ class LowRankLinear(nn.Linear):
         self._S_min = None
         self._S_max = None
 
-    @property
-    def weight_spectral_norm(self):
-        if self._weight_spectral_norm is None:
-            self._weight_spectral_norm = torch.linalg.norm(self.weight.detach(), ord=2)
-        return self._weight_spectral_norm
+    def forward(self, x: torch.Tensor, rank: int) -> torch.Tensor:
+        if rank < 1 or rank > min(self.weight.shape):
+            raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
+        return F.linear(x, self.low_rank_Ws[rank], self.bias)
 
     @property
-    def U(self):
+    def weight_norm(self) -> torch.Tensor:
+        if self._weight_norm is None:
+            self._weight_norm = torch.linalg.norm(self.weight.detach(), ord=2)
+        return self._weight_norm
+
+    @property
+    def bias_norm(self) -> torch.Tensor:
+        if self._bias_norm is None:
+            self._bias_norm = torch.linalg.norm(self.bias.detach(), ord=2)
+        return self._bias_norm
+
+    @property
+    def U(self) -> torch.Tensor:
         if self._U is None:
             self.compute_svd()
         return self._U
 
     @property
-    def S(self):
+    def S(self) -> torch.Tensor:
         if self._S is None:
             self.compute_svd()
         return self._S
 
     @property
-    def Vt(self):
+    def Vt(self) -> torch.Tensor:
         if self._Vt is None:
             self.compute_svd()
         return self._Vt
 
     @property
-    def U_truncs(self):
+    def U_truncs(self) -> dict[int, torch.Tensor]:
         if self._U_truncs is None:
             self._U_truncs = {
                 rank: self.U[:, :rank] for rank in range(1, min(self.weight.shape) + 1)
@@ -74,7 +87,7 @@ class LowRankLinear(nn.Linear):
         return self._U_truncs
 
     @property
-    def S_truncs(self):
+    def S_truncs(self) -> dict[int, torch.Tensor]:
         if self._S_truncs is None:
             self._S_truncs = {
                 rank: self.S[:rank] for rank in range(1, min(self.weight.shape) + 1)
@@ -82,7 +95,7 @@ class LowRankLinear(nn.Linear):
         return self._S_truncs
 
     @property
-    def Vt_truncs(self):
+    def Vt_truncs(self) -> dict[int, torch.Tensor]:
         if self._Vt_truncs is None:
             self._Vt_truncs = {
                 rank: self.Vt[:rank, :] for rank in range(1, min(self.weight.shape) + 1)
@@ -90,33 +103,48 @@ class LowRankLinear(nn.Linear):
         return self._Vt_truncs
 
     @property
-    def low_rank_Ws(self):
-        if self._low_rank_Ws is None:
-            self._low_rank_Ws = {
+    def low_rank_Ws(self) -> dict[int, torch.Tensor]:
+        if self._low_rank_weights is None:
+            self._low_rank_weights = {
                 rank: self.U_truncs[rank]
                 @ torch.diag(self.S_truncs[rank])
                 @ self.Vt_truncs[rank]
                 for rank in range(1, min(self.weight.shape))
             }
-            self._low_rank_Ws[min(self.weight.shape)] = (
+            self._low_rank_weights[min(self.weight.shape)] = (
                 self.weight.clone().detach()
             )  # Last one stores the original weights
-        return self._low_rank_Ws
+        return self._low_rank_weights
 
     @property
-    def perturbation_spectral_norms(self):
-        if self._perturbation_spectral_norms is None:
-            self._perturbation_spectral_norms = {
-                rank: torch.linalg.norm(
-                    self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)],
-                    ord=2,
-                )
+    def perturbations(self) -> dict[int, torch.Tensor]:
+        if self._perturbations is None:
+            self._perturbations = {
+                rank: self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)]
                 for rank in range(1, min(self.weight.shape) + 1)
             }
-        return self._perturbation_spectral_norms
+        return self._perturbations
 
     @property
-    def USV_num_params(self):
+    def low_rank_Ws_norms(self) -> dict[int, torch.Tensor]:
+        if self._low_rank_norms is None:
+            self._low_rank_norms = {
+                rank: torch.linalg.norm(self.low_rank_Ws[rank], ord=2)
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._low_rank_norms
+
+    @property
+    def perturbation_norms(self) -> dict[int, torch.Tensor]:
+        if self._perturbation_norms is None:
+            self._perturbation_spectral_norms = {
+                rank: torch.linalg.norm(self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)], ord=2)
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._perturbation_norms
+
+    @property
+    def USV_num_params(self) -> dict[int, int]:
         if self._USV_num_params is None:
             self._USV_num_params = {
                 rank: self.U_truncs[rank].numel()
@@ -165,24 +193,31 @@ class LowRankLinear(nn.Linear):
     def compute_svd(self):
         self._U, self._S, self._Vt = torch.linalg.svd(self.weight.clone().detach())
 
-    def set_to_rank(self, rank):
-        if rank < 1 or rank > min(self.weight.shape):
-            raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
-        self.weight.data = self.low_rank_Ws[rank]
+    # # TODO: Add @torch.no_grad() decorator?
+    # def set_to_rank(self, rank):
+    #     if rank < 1 or rank > min(self.weight.shape):
+    #         raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
+    #     self.weight.data = self.low_rank_Ws[rank]
 
-    def valid_ranks(self, num_layers):
-        """Returns the ranks for which the perturbation matches the requirements of Lemma 2 in the paper"""
-        return [
-            rank
-            for rank in range(1, min(self.weight.shape) + 1)
-            if num_layers * self.perturbation_spectral_norms[rank]
-            <= self.weight_spectral_norm
-        ]
+    # def valid_ranks(self, num_layers):
+    #     """Returns the ranks for which the perturbation matches the requirements of Lemma 2 in the paper"""
+    #     return [
+    #         rank
+    #         for rank in range(1, min(self.weight.shape) + 1)
+    #         if num_layers * self.perturbation_spectral_norms[rank]
+    #         <= self.weight_spectral_norm
+    #     ]
 
 
 class MLP(nn.Module):
     def __init__(
-        self, dimensions, activation, dropout_prob=0.0, low_rank=False, device="cpu", shift_logits=False
+        self,
+        dimensions,
+        activation,
+        dropout_prob=0.0,
+        low_rank=False,
+        device="cpu",
+        shift_logits=False
     ):
         super(MLP, self).__init__()
         self.dimensions = dimensions
@@ -981,12 +1016,24 @@ class MLP(nn.Module):
 class LowRankMLP(MLP):
     def __init__(self, dimensions, activation, device="cpu"):
         super().__init__(
-            dimensions, activation, low_rank=True, device=device
-        )  # Note this will have no bias in the layers
+            dimensions=dimensions,
+            activation=activation,
+            low_rank=True,
+            device=device,
+        )
+        self.d = len(dimensions) - 1
+        # self._weights = None
+        # self._biases = None
+
+        self._weight_norms = None
+        self._bias_norms = None
+        self._low_rank_weight_norms = None
+        self._perturbation_norms = None
+
         self.rank_combs = list(
             product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers])
         )
-        self._product_weight_spectral_norms = None
+        # self._product_weight_spectral_norms = None
         self._valid_rank_combs = None
         self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
         self._num_params = None
@@ -996,13 +1043,59 @@ class LowRankMLP(MLP):
         self._max_Ss = None
         self._KL_divergences = None
 
-    @property
-    def product_weight_spectral_norms(self):
-        if self._product_weight_spectral_norms is None:
-            self._product_weight_spectral_norms = torch.tensor(
-                [layer.weight_spectral_norm for layer in self.layers]
-            ).prod()
-        return self._product_weight_spectral_norms
+    def forward(self, x: torch.Tensor, ranks: list[int]):
+        if len(ranks) != self.d:
+            raise ValueError(f"Expected {self.d} ranks, got {ranks=}.")
+        i = 0
+        for layer in self.network:
+            if isinstance(layer, nn.Linear):
+                x = layer(x, rank=ranks[i])
+                i += 1
+            else:
+                x = layer(x)
+        return x
+
+    def weight_norms(self, layer_num):
+        if self._weight_norms is None:
+            self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.layers)}
+        return self._weight_norms[layer_num]
+
+    def bias_norms(self, layer_num):
+        if self._bias_norms is None:
+            self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.layers)}
+        return self._bias_norms[layer_num]
+
+    def low_rank_weight_norms(self, layer_num, rank):    
+        if self._weight_norms is None:
+            self._weight_norms = dict()
+            for l_num in range(1, self.d + 1):
+                for r in range(1, min(self.layers[l_num].weight.shape) + 1):
+                    self._weight_norms[(l_num, r)] = self.layers[l_num].low_rank_Ws_spectral_norms[r]
+        return self._weight_norms[(layer_num, rank)]
+
+    def perturbation_norms(self, layer_num, rank):
+        if self._perturbation_norms is None:
+            self._perturbation_norms = dict()
+            for l_num in range(1, self.d + 1):
+                for r in range(1, min(self.layers[l_num].weight.shape) + 1):
+                    self._perturbation_norms[(l_num, r)] = self.layers[l_num]._perturbation_norms[r]
+        return self._perturbation_norms[(layer_num, rank)]
+
+    def alpha(self, C, i, ranks):
+        if i == 1:
+            return self.weight_norms[0] * C + self.bias_norms[0]
+        else:
+            return self.weight_norms[i - 1] * self.alpha(C, i - 1) + self.bias_norms[i - 1]
+
+    def beta(self, C, i, ranks):
+        assert self.weight_perturbation_norms() is not None, "Weight perturbation norms not set."
+        if i == 1:
+            return self.weight_norms[0] * C
+        else:
+            return self.weight_norms[i - 1] * self.beta(C, i - 1) + self.bias_norms[i - 1]
+
+
+
 
     @property
     def valid_rank_combs(self):
