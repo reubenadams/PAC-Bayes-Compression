@@ -3,4 +3,5 @@ torch
 wandb
 torchvision
 pandas
+scikit-learn
 git+https://github.com/greydanus/mnist1d.git

@@ -110,7 +110,7 @@ def get_pac_bound(
         num_mc_samples=pacb_config.num_mc_samples_max_sigma,
         )
     noise_trials = [{"sigma": sigma, "noisy_error": error} for sigma, error in zip(sigmas_tried, errors)]
-    pac_bound_inverse_kl = base_model.pac_bayes_error_bound_inverse_kl(
+    pac_bound_inverse_kl = base_model.pacb_error_bound_inverse_kl(
         prior=init_model,
         sigma=max_sigma,
         dataloader=base_config.data.train_loader,
@@ -118,7 +118,7 @@ def get_pac_bound(
         delta=pacb_config.delta,
         num_union_bounds=total_num_sigmas,
         )
-    pac_bound_pinsker = base_model.pac_bayes_error_bound_pinsker(
+    pac_bound_pinsker = base_model.pacb_error_bound_pinsker(
         prior=init_model,
         sigma=max_sigma,
         dataloader=base_config.data.train_loader,

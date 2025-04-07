@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 import math
 import wandb
+from sklearn.cluster import KMeans
 
 from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults
 from load_data import get_epsilon_mesh, get_logits_dataloader
@@ -239,7 +240,13 @@ class MLP(nn.Module):
                 if self.dropout_prob > 0:
                     self.network_modules.append(nn.Dropout(p=self.dropout_prob))
         self.network = nn.Sequential(*self.network_modules).to(self.device)
+        self.layers = [layer for layer in self.network_modules if isinstance(layer, nn.Linear)]
         self.num_parameters = sum([p.numel() for p in self.parameters()])
+        self.num_weights = sum([layer.weight.numel() for layer in self.layers])
+        self.num_biases = sum([layer.bias.numel() for layer in self.layers])
+
+        self._weight_norms = None
+        self._bias_norms = None
 
     def forward(self, x):
         logits = self.network(x)
@@ -286,9 +293,15 @@ class MLP(nn.Module):
                     x = layer(x)  # Takes care of dropout and activation functions
             return x
 
-    @property
-    def layers(self):
-        return [layer for layer in self.network if isinstance(layer, nn.Linear)]
+    def same_architecture(self, other: MLP) -> bool:
+        if len(self.dimensions) != len(other.dimensions):
+            return False
+        for dim_self, dim_other in zip(self.dimensions, other.dimensions):
+            if dim_self != dim_other:
+                return False
+        if type(self.activation) != type(other.activation):
+            return False
+        return True
 
     def square_l2_dist(self: MLP, other: MLP) -> torch.Tensor:
         with torch.no_grad():
@@ -301,28 +314,29 @@ class MLP(nn.Module):
     def KL(self: MLP, prior: MLP, sigma: float) -> torch.Tensor:
         return self.square_l2_dist(prior) / (2 * sigma ** 2)
 
-    def pac_bayes_kl_bound(self: MLP, prior: MLP, sigma: float, n: int, delta: float, num_union_bounds: int):
+    # TODO: Use the PAC-Bayes functions from kl_utils.py instead of reimplementing them here
+    def pacb_kl_bound(self: MLP, prior: MLP, sigma: float, n: int, delta: float, num_union_bounds: int):
         # N.B. self is interpreted as the posterior model for this method
         delta = delta / num_union_bounds
         kl_bound = (self.KL(prior, sigma) + torch.log(2 * torch.sqrt(torch.tensor(n)) / delta)) / n
         return kl_bound
 
-    def pac_bayes_error_bound_inverse_kl(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
+    def pacb_error_bound_inverse_kl(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
         # N.B. self is interpreted as the posterior model for this method
         empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
-        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
+        kl_bound = self.pacb_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
         return kl_scalars_inverse(q=empirical_error, B=kl_bound)
 
-    def pac_bayes_error_bound_pinsker(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
+    def pacb_error_bound_pinsker(self: MLP, prior: MLP, sigma: float, dataloader: DataLoader, num_mc_samples, delta: float, num_union_bounds: int):
         # N.B. self is interpreted as the posterior model for this method
         empirical_error = self.monte_carlo_01_error(dataset=dataloader.dataset, num_mc_samples=num_mc_samples, sigma=sigma)
-        kl_bound = self.pac_bayes_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
+        kl_bound = self.pacb_kl_bound(prior=prior, sigma=sigma, n=len(dataloader.dataset), delta=delta, num_union_bounds=num_union_bounds)
         return empirical_error + torch.sqrt(kl_bound / 2)
 
-    def min_pac_bayes_error_bound(self: MLP, prior: MLP, sigmas: list[float], dataloader: DataLoader, num_mc_samples, delta: float):
+    def min_pacb_error_bound(self: MLP, prior: MLP, sigmas: list[float], dataloader: DataLoader, num_mc_samples, delta: float):
         # N.B. self is interpreted as the posterior model for this method
         num_union_bounds = len(sigmas)
-        bounds = [self.pac_bayes_error_bound_inverse_kl(prior, sigma, dataloader, num_mc_samples, delta, num_union_bounds) for sigma in sigmas]
+        bounds = [self.pacb_error_bound_inverse_kl(prior, sigma, dataloader, num_mc_samples, delta, num_union_bounds) for sigma in sigmas]
         min_bound = min(bounds)
         best_sigma = sigmas[bounds.index(min_bound)]
         return min_bound, best_sigma
@@ -983,10 +997,9 @@ class MLP(nn.Module):
         model_path = f"{model_dir}/{model_name}"
         torch.save(self.state_dict(), model_path)
 
-    def load(self, path):
-        self.load_state_dict(
-            torch.load(path, map_location=self.device, weights_only=True)
-        )
+    def load(self, model_dir, model_name):
+        model_path = f"{model_dir}/{model_name}"
+        self.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
 
     def max_deviation(self, base_model, epsilon, data_shape):
         mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(
@@ -997,6 +1010,41 @@ class MLP(nn.Module):
         base_output = base_model(mesh)
         l2_norms = torch.linalg.vector_norm(self_output - base_output, ord=2, dim=-1)
         return l2_norms.max(), actual_epsilon, actual_cell_width
+
+    def get_spectral_bound(self: MLP, other: MLP, C) -> torch.Tensor:
+        if not self.same_architecture(other):
+            raise ValueError("Models have different architectures.")
+        weight_distances = self.get_weight_distances(other)
+        return self.beta(other=other, i=self.dimensions - 1, C=C, weight_distances=weight_distances)
+
+    def alpha(self: MLP, other: MLP, i: int, C):
+        if i < 0:
+            raise ValueError(f"i must be positive but received {i=}")
+        elif i == 0:
+            return C
+        else:
+            return other.weight_norms(layer_num=i) * self.alpha(other=other, i=i - 1, C=C) + self.bias_norms(layer_num=i)
+
+    def beta(self: MLP, other: MLP, i: int, C, weight_distances):
+        if i < 0:
+            raise ValueError(f"i must be positive but received {i=}")
+        elif i == 0:
+            return 0
+        else:
+            return self.weight_norms(layer_num=i) * self.beta(other=other, i=i - 1, C=C) + weight_distances[i] * self.alpha(other=other, i=i - 1, C=C)
+
+    def weight_norms(self, layer_num):
+        if self._weight_norms is None:
+            self._weight_norms = {i + 1: torch.linalg.norm(layer.weight.detach(), ord=2) for i, layer in enumerate(self.layers)}
+        return self._weight_norms[layer_num]
+
+    def bias_norms(self, layer_num):
+        if self._bias_norms is None:
+            self._bias_norms = {i + 1: torch.linalg.norm(layer.bias.detach(), ord=2) for i, layer in enumerate(self.layers)}
+        return self._bias_norms[layer_num]
+
+    def get_weight_distances(self: MLP, other: MLP):
+        return {i + 1: torch.linalg.norm(layer_self.weight.detach() - layer_other.weight.detach(), ord=2) for i, (layer_self, layer_other) in enumerate(zip(self.layers, other.layers))}
 
     @staticmethod
     def get_act(act: str):
@@ -1011,6 +1059,50 @@ class MLP(nn.Module):
         else:
             raise ValueError("Invalid activation function")
 
+    def get_concatenated_weights(self):
+        """Returns the concatenated weights of the model as a single (num_weights, 1) tensor"""
+        weights = [layer.weight.detach().clone().view(-1, 1) for layer in self.layers]
+        return torch.cat(weights, dim=0)
+
+    @torch.no_grad()
+    def set_from_concatenated_weights(self, weights):
+        """Sets the weights of the model from a concatenated (num_weights, 1) tensor"""
+        if len(weights) != self.num_weights:
+            raise ValueError(f"MLP has {self.num_weights} weights, but got {len(weights)} weights.")
+        i = 0
+        for layer in self.layers:
+            num_weights = layer.weight.numel()
+            layer.weight.copy_(weights[i:i+num_weights].view(layer.weight.shape))
+            i += num_weights
+
+    def get_quantized_model(self, codeword_length: int) -> MLP:
+        """Quantizes the weights of the model using k-means clustering"""
+        num_codewords = 2 ** codeword_length
+        concatenated_weights = self.get_concatenated_weights()
+        kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
+        print("Cluster centres:")
+        print(kmeans.cluster_centers_)
+        print(type(kmeans.cluster_centers_))
+        print(kmeans.cluster_centers_.dtype)
+        quantized_weights = kmeans.cluster_centers_[kmeans.labels_]
+        quantized_model = deepcopy(self)
+        quantized_model.set_from_concatenated_weights(torch.tensor(quantized_weights, device=self.device))
+        quantized_model.eval()
+        return quantized_model
+
+    def quantized_size_in_bits(self, codeword_length: int) -> int:
+        weights_size = self.num_weights * codeword_length
+        biases_size = self.num_biases * 32
+        codebook_size = 2 ** codeword_length * 32
+        return weights_size + biases_size + codebook_size
+
+    def KL_of_quantized_model(self, codeword_length: int) -> torch.Tensor:
+        """We use a uniform prior over the possible codeword_lengths 1,...,32, which
+        implicitly gives a uniform prior over the 32 possible quantized model bit
+        lengths. The final log(32) term is -log(prior(quantized_length)), making this
+        a union bound applying to the 32 possible quantized models simultaneously."""
+        return self.quantized_size_in_bits(codeword_length) * torch.log(torch.tensor(2)) + torch.log(torch.tensor(32))
+
 
 # TODO: Implement the KL divergence
 class LowRankMLP(MLP):
@@ -1022,8 +1114,6 @@ class LowRankMLP(MLP):
             device=device,
         )
         self.d = len(dimensions) - 1
-        # self._weights = None
-        # self._biases = None
 
         self._weight_norms = None
         self._bias_norms = None
@@ -1034,8 +1124,8 @@ class LowRankMLP(MLP):
             product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers])
         )
         # self._product_weight_spectral_norms = None
-        self._valid_rank_combs = None
-        self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
+        # self._valid_rank_combs = None
+        # self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
         self._num_params = None
         self._min_UVs = None
         self._max_UVs = None
@@ -1081,49 +1171,23 @@ class LowRankMLP(MLP):
                     self._perturbation_norms[(l_num, r)] = self.layers[l_num]._perturbation_norms[r]
         return self._perturbation_norms[(layer_num, rank)]
 
-    def alpha(self, C, i, ranks):
-        if i == 1:
-            return self.weight_norms[0] * C + self.bias_norms[0]
-        else:
-            return self.weight_norms[i - 1] * self.alpha(C, i - 1) + self.bias_norms[i - 1]
+    # def alpha(self, C, i: int):
+    #     if i == 0:
+    #         return C
+    #     else:
+    #         return self.weight_norms(layer_num=i) * self.alpha(C, i - 1) + self.bias_norms(layer_num=i)
 
-    def beta(self, C, i, ranks):
-        assert self.weight_perturbation_norms() is not None, "Weight perturbation norms not set."
-        if i == 1:
-            return self.weight_norms[0] * C
-        else:
-            return self.weight_norms[i - 1] * self.beta(C, i - 1) + self.bias_norms[i - 1]
+    # def beta(self, C, i: int, ranks: list[int]):
+    #     if i == 1:
+    #         return self.perturbation_norms(layer_num=i, rank=ranks[0]) * C
+    #     else:
+    #         return self.low_rank_weight_norms(layer_num=i, rank=ranks[i - 1]) * self.beta(C, i - 1, ranks=ranks) + self.perturbation_norms(layer_num=i, rank=ranks[i - 1]) * self.alpha(C, i - 1)
 
+    def max_l2_deviation(self, C, ranks: list[int]):
+        return self.beta(C, i=self.d, ranks=ranks)
 
-
-
-    @property
-    def valid_rank_combs(self):
-        if self._valid_rank_combs is None:
-            self._valid_rank_combs = {}
-            for rank_comb in self.rank_combs:
-                self._valid_rank_combs[rank_comb] = all(
-                    [
-                        layer.perturbation_spectral_norms[rank]
-                        <= layer.weight_spectral_norm / len(self.layers)
-                        for rank, layer in zip(rank_comb, self.layers)
-                    ]
-                )
-        return self._valid_rank_combs
-
-    @property
-    def epsilons(self):
-        if self._epsilons is None:
-            self._epsilons = {}
-            for rank_comb in self.rank_combs:
-                norm_ratios = [
-                    layer.perturbation_spectral_norms[rank] / layer.weight_spectral_norm
-                    for rank, layer in zip(rank_comb, self.layers)
-                ]
-                self._epsilons[rank_comb] = (
-                    torch.e * self.product_weight_spectral_norms * sum(norm_ratios)
-                )
-        return self._epsilons
+    def KL_divergences(self):
+        pass
 
     @property
     def num_params(self):
@@ -1176,9 +1240,36 @@ class LowRankMLP(MLP):
                 )
         return self._max_Ss
 
-    def set_to_ranks(self, ranks):
-        for layer, rank in zip(self.layers, ranks):
-            layer.set_to_rank(rank)
+    # @property
+    # def valid_rank_combs(self):
+    #     """Returns a dictionary with rank combinations as keys and booleans as values,
+    #     indicating whether the rank combination is valid produces a perturbation U within
+    #     the tolerance of Lemma 2 from Neyshabur et al. 2017 (spectrally-normalized margin bounds)."""
+    #     if self._valid_rank_combs is None:
+    #         self._valid_rank_combs = {}
+    #         for rank_comb in self.rank_combs:
+    #             self._valid_rank_combs[rank_comb] = all(
+    #                 [
+    #                     layer.perturbation_spectral_norms[rank]
+    #                     <= layer.weight_spectral_norm / len(self.layers)
+    #                     for rank, layer in zip(rank_comb, self.layers)
+    #                 ]
+    #             )
+    #     return self._valid_rank_combs
+
+    # @property
+    # def epsilons(self):
+    #     if self._epsilons is None:
+    #         self._epsilons = {}
+    #         for rank_comb in self.rank_combs:
+    #             norm_ratios = [
+    #                 layer.perturbation_spectral_norms[rank] / layer.weight_spectral_norm
+    #                 for rank, layer in zip(rank_comb, self.layers)
+    #             ]
+    #             self._epsilons[rank_comb] = (
+    #                 torch.e * self.product_weight_spectral_norms * sum(norm_ratios)
+    #             )
+    #     return self._epsilons
 
 
 class BaseMLP(MLP):
