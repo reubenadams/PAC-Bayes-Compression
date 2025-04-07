@@ -13,9 +13,9 @@ import math
 import wandb
 from sklearn.cluster import KMeans
 
-from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults
+from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, QuantResults
 from load_data import get_epsilon_mesh, get_logits_dataloader
-from kl_utils import kl_scalars_inverse
+from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
 
 class LowRankLinear(nn.Linear):
@@ -1076,33 +1076,73 @@ class MLP(nn.Module):
             i += num_weights
 
     def get_quantized_model(self, codeword_length: int) -> MLP:
-        """Quantizes the weights of the model using k-means clustering"""
-        num_codewords = 2 ** codeword_length
-        concatenated_weights = self.get_concatenated_weights()
-        kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
-        print("Cluster centres:")
-        print(kmeans.cluster_centers_)
-        print(type(kmeans.cluster_centers_))
-        print(kmeans.cluster_centers_.dtype)
-        quantized_weights = kmeans.cluster_centers_[kmeans.labels_]
-        quantized_model = deepcopy(self)
-        quantized_model.set_from_concatenated_weights(torch.tensor(quantized_weights, device=self.device))
+        """Returns a new, quantized model by applying k-means clustering to the weights"""
+        if codeword_length not in range(1, 33):
+            raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
+        if codeword_length == 32:
+            quantized_model = deepcopy(self)
+        else:
+            num_codewords = 2 ** codeword_length
+            concatenated_weights = self.get_concatenated_weights()
+            kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
+            quantized_weights = kmeans.cluster_centers_[kmeans.labels_]
+            quantized_model = deepcopy(self)
+            quantized_model.set_from_concatenated_weights(torch.tensor(quantized_weights, device=self.device))
         quantized_model.eval()
         return quantized_model
 
     def quantized_size_in_bits(self, codeword_length: int) -> int:
+        """"Returns the number of bits required to specify the quantized model, including the codebook"""
         weights_size = self.num_weights * codeword_length
         biases_size = self.num_biases * 32
         codebook_size = 2 ** codeword_length * 32
         return weights_size + biases_size + codebook_size
 
-    def KL_of_quantized_model(self, codeword_length: int) -> torch.Tensor:
+    def get_KL_of_quantized_model(self, codeword_length: int) -> torch.Tensor:
         """We use a uniform prior over the possible codeword_lengths 1,...,32, which
         implicitly gives a uniform prior over the 32 possible quantized model bit
         lengths. The final log(32) term is -log(prior(quantized_length)), making this
-        a union bound applying to the 32 possible quantized models simultaneously."""
+        a union bound applying to the 32 possible quantized models simultaneously.
+        Note there's no sigma as the posterior is a point mass on the final classifier."""
         return self.quantized_size_in_bits(codeword_length) * torch.log(torch.tensor(2)) + torch.log(torch.tensor(32))
 
+    def get_quantized_pacb_results(
+            self: MLP,
+            delta: float,
+            train_loader: DataLoader,
+            test_loader: DataLoader,
+            codeword_length: int
+        ) -> QuantResults:
+        """Returns the pac bound on the margin loss of the quantized model, which is
+        then the bound on the error rate of the original model. The prior spreads its
+        mass across different codeword lengths, so is valid for all codeword lengths
+        simultaneously."""
+        quant_model = self.get_quantized_model(codeword_length=codeword_length)
+        spectral_bound = self.get_spectral_bound(other=quant_model)
+        margin = torch.sqrt(torch.tensor(2)) * spectral_bound
+
+        quant_train_accuracy = quant_model.get_full_accuracy(dataloader=train_loader)
+        quant_test_accuracy = quant_model.get_full_accuracy(dataloader=test_loader)
+        train_margin_loss = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+
+        quant_KL = quant_model.get_KL_of_quantized_model(codeword_length=codeword_length)
+        quant_kl_bound = pacb_kl_bound(KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_inverse_kl = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_pinsker = pacb_error_bound_pinsker(empirical_error=train_margin_loss, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+
+        quant_results = QuantResults(
+            codeword_length=codeword_length,
+            spectral_bound=spectral_bound,
+            margin=margin,
+            train_accuracy=quant_train_accuracy,
+            test_accuracy=quant_test_accuracy,
+            train_margin_loss=train_margin_loss,
+            KL=quant_KL,
+            kl_bound=quant_kl_bound,
+            error_bound_inverse_kl=quant_error_bound_inverse_kl,
+            error_bound_pinsker=quant_error_bound_pinsker,
+        )
+        return quant_results
 
 # TODO: Implement the KL divergence
 class LowRankMLP(MLP):

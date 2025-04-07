@@ -539,6 +539,37 @@ class PACBResults:
         wandb.log(wandb_metrics)
 
 
+@dataclass
+class QuantResults:
+    codeword_length: int
+    spectral_bound: float
+    margin: float
+    train_accuracy: float
+    test_accuracy: float
+    train_margin_loss: float
+    KL: float
+    kl_bound: float
+    error_bound_inverse_kl: float
+    error_bound_pinsker: float
+
+    def to_dict(self):
+        return {
+            "Quant Codeword Length": self.codeword_length,
+            "Quant Spectral Bound": self.spectral_bound,
+            "Quant Margin": self.margin,
+            "Quant Train Accuracy": self.train_accuracy,
+            "Quant Test Accuracy": self.test_accuracy,
+            "Quant Train Margin Loss": self.train_margin_loss,
+            "Quant KL": self.KL,
+            "Quant kl Bound": self.kl_bound,
+            "Error Bound Inverse kl (Using Quant)": self.error_bound_inverse_kl,
+            "Error Bound Pinsker (Using Quant)": self.error_bound_inverse_kl,
+        }
+
+    def log(self):
+        wandb.log(self.to_dict().items())
+
+
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
 @dataclass
 class ExperimentConfig:

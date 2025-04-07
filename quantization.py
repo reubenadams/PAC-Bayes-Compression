@@ -1,5 +1,4 @@
 from distillation_end_to_end import *
-from kl_utils import pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
 
 def main():
@@ -35,16 +34,13 @@ def main():
     base_model.load(base_config.model_base_dir, base_config.model_name)
 
     for codeword_length in range(1, 33):
-        quant_model = base_model.get_quantized_model(codeword_length=codeword_length)
-        quant_train_accuracy = quant_model.get_full_accuracy(base_config.data.train_loader)
-        quant_test_accuracy = quant_model.get_full_accuracy(base_config.data.test_loader)
-        quant_KL = base_model.KL_of_quantized_model(codeword_length=codeword_length)
-        quant_pacb_error_bound_inverse_kl = pacb_error_bound_inverse_kl(delta=pacb_config.delta, KL=quant_KL, n=base_config.data.train_size)
-        quant_pacb_error_bound_pinsker = pacb_error_bound_pinsker(empirical_error=quant_train_accuracy, KL=quant_KL, n=base_config.data.train_size, delta=pacb_config.delta)
-        perturbation = 
-
-
-
+        quant_results = base_model.get_quantized_pacb_results(
+            delta=pacb_config.delta,
+            train_loader=base_config.data.train_loader,
+            test_loader=base_config.data.test_loader,
+            codeword_length=codeword_length,
+        )
+        quant_results.log()
 
     run.finish()
 
