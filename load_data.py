@@ -131,7 +131,7 @@ def get_datasets(
         torch.save(train, os.path.join(data_dir, "train.pt"))
         torch.save(test, os.path.join(data_dir, "test.pt"))
 
-    return train, test
+    return train, test, data_dir
 
 
 def get_dataloaders(
@@ -144,7 +144,7 @@ def get_dataloaders(
     device="cpu",
 ):
 
-    train, test = get_datasets(
+    train, test, data_dir = get_datasets(
         dataset_name=dataset_name,
         new_input_shape=new_input_shape,
         train_size=train_size,
@@ -174,14 +174,14 @@ def get_dataloaders(
             train_targets = train.dataset.targets[train.indices]
             test_data = test.dataset.data[test.indices]
             test_targets = test.dataset.targets[test.indices]
-            return FakeDataLoader(train_data, train_targets), FakeDataLoader(test_data, test_targets)
+            return FakeDataLoader(train_data, train_targets), FakeDataLoader(test_data, test_targets), data_dir
         else:
-            return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets)
+            return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets), data_dir
 
     train_loader = DataLoader(train, batch_size, shuffle=True)
     test_loader = DataLoader(test, batch_size, shuffle=False)
 
-    return train_loader, test_loader
+    return train_loader, test_loader, data_dir
 
 
 class FakeDataLoader:
@@ -195,12 +195,13 @@ class FakeDataLoader:
         return iter([(self.data, self.targets)])
 
 
-def get_B(data_loader):
-    max_fro_norm = torch.tensor(0.0)
-    for data, _ in data_loader:
-        fro_norms = torch.linalg.matrix_norm(data, ord="fro")
-        max_fro_norm = max(max_fro_norm, fro_norms.max())
-    return max_fro_norm
+def get_max_l2_norm_data(dataloader: DataLoader):
+    max_l2_norm = torch.tensor(0.0)
+    for x, _ in dataloader:
+        x = x.view(x.size(0), -1)
+        l2_norms = torch.linalg.norm(x, ord=2, dim=1)
+        max_l2_norm = max(max_l2_norm, l2_norms.max())
+    return max_l2_norm
 
 
 class CustomDataset(Dataset):

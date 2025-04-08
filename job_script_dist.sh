@@ -43,4 +43,4 @@ export WANDB_API_KEY=$(head -n 1 $HOME/PAC-Bayes-Compression/wandb_api_key.txt) 
 
 # Count is the number of runs to do. Syntax is `wandb agent username/project/sweep_id`, where sweep_id is what was returned by wandb.sweep
 wandb agent teamreuben/2187-big/e8qaxkrj --count 22
-# python distillation_base.py
+# python distillation_dist.py

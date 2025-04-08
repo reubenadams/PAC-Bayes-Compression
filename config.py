@@ -1,12 +1,13 @@
 import os
-from dataclasses import dataclass
-from typing import Optional, List
+import json
+from dataclasses import dataclass, asdict, field
+from typing import Optional, List, Dict, Tuple
 import wandb
 from math import prod
 import torch
 from torch.utils.data import DataLoader
 
-from load_data import get_dataloaders
+from load_data import get_dataloaders, get_max_l2_norm_data
 
 
 @dataclass
@@ -53,11 +54,14 @@ class BaseHyperparamsConfig:
 class BaseDataConfig:
     dataset_name: str
     device: str
-    new_input_shape: Optional[tuple[int, int]] = None
+    new_input_shape: Optional[Tuple[int, int]] = None
     train_size: Optional[int] = None
     test_size: Optional[int] = None
     train_loader: Optional[DataLoader] = None
     test_loader: Optional[DataLoader] = None
+    data_dir: Optional[str] = None
+    C_train_domain = None
+    C_train_data = None
 
     def add_sample_sizes(self, quick_test):
         if quick_test:
@@ -75,9 +79,11 @@ class BaseDataConfig:
                 self._new_input_shape = (32, 32)
             elif self.dataset_name == "MNIST1D":
                 self._new_input_shape = (40,)
+        else:
+            self._new_input_shape = self.new_input_shape
 
     def add_dataloaders(self, batch_size):
-        self.train_loader, self.test_loader = get_dataloaders(
+        self.train_loader, self.test_loader, self.data_dir = get_dataloaders(
             dataset_name=self.dataset_name,
             batch_size=batch_size,
             train_size=self.train_size,
@@ -86,6 +92,21 @@ class BaseDataConfig:
             use_whole_dataset=False,
             device=self.device
         )
+
+    @property
+    def C_train_domain(self):
+        """Returns the maximum l2 norm of a point in [0, input_range]^input_dim."""
+        if self._C_train_domain is None:
+            input_dim = prod(self._new_input_shape)
+            input_range = 1
+            self._C_train_domain = torch.sqrt(input_dim * input_range ** 2)
+        return self._C_train_domain
+
+    @property
+    def C_train_data(self):
+        if self._C_train_data is None:
+            self._C_train_data = get_max_l2_norm_data(self.train_loader)
+        return self._C_train_data
 
     def to_dict(self):
         return {
@@ -191,14 +212,17 @@ class BaseConfig:
         self.model_init_dir = f"{self.model_root_dir}/init"
         self.model_base_dir = f"{self.model_root_dir}/base"
         self.model_dist_dir = f"{self.model_root_dir}/dist"
-        self.metrics_dir = f"{self.model_root_dir}/metrics"
+        self.dist_metrics_dir = f"{self.model_root_dir}/dist_metrics"
+        self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"
 
         os.makedirs(self.model_init_dir, exist_ok=True)
         os.makedirs(self.model_base_dir, exist_ok=True)
         os.makedirs(self.model_dist_dir, exist_ok=True)
-        os.makedirs(self.metrics_dir, exist_ok=True)
+        os.makedirs(self.dist_metrics_dir, exist_ok=True)
+        os.makedirs(self.quant_metrics_dir, exist_ok=True)
 
-        self.metrics_path = f"{self.metrics_dir}/{self.hyperparams.run_name}.csv"
+        self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
+        self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.json"
     
     def to_dict(self):
         return self.data.to_dict() | self.hyperparams.to_dict() | self.stopping.to_dict()
@@ -272,6 +296,7 @@ class DistDataConfig:
     use_whole_dataset: Optional[bool] = None
     domain_train_loader: Optional[DataLoader] = None
     domain_test_loader: Optional[DataLoader] = None
+    data_dir: Optional[str] = None
     logit_train_loader: Optional[DataLoader] = None
     logit_test_loader: Optional[DataLoader] = None
     device: Optional[str] = None
@@ -289,7 +314,7 @@ class DistDataConfig:
             self.test_size = None
 
     def add_dataloaders(self, new_input_shape, base_model):
-        self.domain_train_loader, self.domain_test_loader = get_dataloaders(
+        self.domain_train_loader, self.domain_test_loader, self.data_dir = get_dataloaders(
             dataset_name=self.dataset_name,
             batch_size=self.batch_size,
             train_size=self.train_size,
@@ -541,33 +566,105 @@ class PACBResults:
 
 @dataclass
 class QuantResults:
+    ranks: Tuple[int, ...]
     codeword_length: int
-    spectral_bound: float
-    margin: float
+    C_domain: float
+    C_data: float
+    spectral_bound_domain: float
+    spectral_bound_data: float
+    margin_domain: float
+    margin_data: float
     train_accuracy: float
     test_accuracy: float
-    train_margin_loss: float
+    train_margin_loss_domain: float
+    train_margin_loss_data: float
     KL: float
     kl_bound: float
-    error_bound_inverse_kl: float
-    error_bound_pinsker: float
+    error_bound_inverse_kl_domain: float
+    error_bound_inverse_kl_data: float
+    error_bound_pinsker_domain: float
+    error_bound_pinsker_data: float
 
-    def to_dict(self):
+    def to_wandb_dict(self):
+        """Returns a dictionary with formatted keys for wandb logging"""
         return {
+            "Quant C Domain": self.C_domain,  # Fixed
+            "Quant C Data": self.C_data,  # Fixed
+
+            "Quant Ranks": self.ranks,
             "Quant Codeword Length": self.codeword_length,
-            "Quant Spectral Bound": self.spectral_bound,
-            "Quant Margin": self.margin,
+
+            "Quant Spectral Bound Domain": self.spectral_bound_domain,
+            "Quant Spectral Bound Data": self.spectral_bound_data,
+            "Quant Margin Domain": self.margin_domain,
+            "Quant Margin Data": self.margin_data,
             "Quant Train Accuracy": self.train_accuracy,
             "Quant Test Accuracy": self.test_accuracy,
-            "Quant Train Margin Loss": self.train_margin_loss,
+            "Quant Train Margin Loss Domain": self.train_margin_loss_domain,
+            "Quant Train Margin Loss Data": self.train_margin_loss_data,
             "Quant KL": self.KL,
             "Quant kl Bound": self.kl_bound,
-            "Error Bound Inverse kl (Using Quant)": self.error_bound_inverse_kl,
-            "Error Bound Pinsker (Using Quant)": self.error_bound_inverse_kl,
+            "Quant Error Bound Inverse kl Domain": self.error_bound_inverse_kl_domain,
+            "Quant Error Bound Inverse kl Data": self.error_bound_inverse_kl_data,
+            "Quant Error Bound Pinsker Domain": self.error_bound_pinsker_domain,
+            "Quant Error Bound Pinsker Data": self.error_bound_pinsker_data,
         }
 
     def log(self):
-        wandb.log(self.to_dict().items())
+        """Log the metrics to wandb"""
+        wandb.log(self.to_wandb_dict().items())
+
+
+@dataclass
+class FinalQuantResults:
+    # Hierarchical structure: first by ranks, then by codeword_length
+    results: Dict[Tuple[int, ...], Dict[int, QuantResults]] = field(default_factory=dict)
+    
+    def add_result(self, result: QuantResults):
+        # Initialize the inner dictionary if needed
+        if result.ranks not in self.results:
+            self.results[result.ranks] = {}
+        self.results[result.ranks][result.codeword_length] = result
+    
+    def save_to_json(self, filename: str):
+        # Convert to dict with string keys for JSON compatibility
+        data = {
+            "results": {
+                # Convert ranks tuple to comma-separated string
+                ",".join(map(str, ranks)): {
+                    str(codeword_length): asdict(rank_codeword_length_results)
+                    for codeword_length, rank_codeword_length_results in rank_results.items()
+                    }
+                for ranks, rank_results in self.results.items()
+                }
+            }
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=2)
+    
+    @classmethod
+    def load_from_json(cls, filename: str):
+        with open(filename, "r") as f:
+            data = json.load(f)
+        
+        experiment = cls()
+        for ranks_str, rank_results_dict in data["results"].items():
+            ranks = tuple(int(r) for r in ranks_str.split(","))
+            experiment.results[ranks] = {}
+            
+            for codeword_length_str, rank_codeword_length_results_dict in rank_results_dict.items():
+                codeword_length = int(codeword_length_str)
+                if "ranks" in rank_codeword_length_results_dict and isinstance(rank_codeword_length_results_dict["ranks"], list):
+                    rank_codeword_length_results_dict["ranks"] = tuple(rank_codeword_length_results_dict["ranks"])
+                experiment.results[ranks][codeword_length] = QuantResults(**rank_codeword_length_results_dict)
+                
+        return experiment
+    
+    def get_result(self, ranks: Tuple[int, ...], codeword_length: int) -> QuantResults:
+        """Get results for a specific rank and codeword_length combination"""
+        if ranks in self.results and codeword_length in self.results[ranks]:
+            return self.results[ranks][codeword_length]
+        else:
+            raise ValueError(f"No results for {ranks=} and {codeword_length=}")
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
@@ -583,7 +680,7 @@ class ExperimentConfig:
     weight_decay: float = 0.0
 
     dataset_name: str = "MNIST"
-    new_data_shape: Optional[tuple[int, int]] = None
+    new_data_shape: Optional[Tuple[int, int]] = None
     model_act: str = "relu"
     model_name: Optional[str] = None
 

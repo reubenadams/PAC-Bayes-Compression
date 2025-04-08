@@ -1,4 +1,4 @@
-program: distillation_end_to_end.py
+program: quantization.py
 method: grid
 parameters:
 

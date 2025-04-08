@@ -1111,36 +1111,51 @@ class MLP(nn.Module):
             delta: float,
             train_loader: DataLoader,
             test_loader: DataLoader,
-            codeword_length: int
+            codeword_length: int,
+            C_domain: float,
+            C_data: float,
         ) -> QuantResults:
         """Returns the pac bound on the margin loss of the quantized model, which is
         then the bound on the error rate of the original model. The prior spreads its
         mass across different codeword lengths, so is valid for all codeword lengths
         simultaneously."""
         quant_model = self.get_quantized_model(codeword_length=codeword_length)
-        spectral_bound = self.get_spectral_bound(other=quant_model)
-        margin = torch.sqrt(torch.tensor(2)) * spectral_bound
+        spectral_bound_domain = self.get_spectral_bound(other=quant_model, C=C_domain)
+        spectral_bound_data = self.get_spectral_bound(other=quant_model, C=C_data)
+        margin_domain = torch.sqrt(torch.tensor(2)) * spectral_bound_domain
+        margin_data = torch.sqrt(torch.tensor(2)) * spectral_bound_data
 
         quant_train_accuracy = quant_model.get_full_accuracy(dataloader=train_loader)
         quant_test_accuracy = quant_model.get_full_accuracy(dataloader=test_loader)
-        train_margin_loss = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        train_margin_loss_domain = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        train_margin_loss_data = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
 
         quant_KL = quant_model.get_KL_of_quantized_model(codeword_length=codeword_length)
         quant_kl_bound = pacb_kl_bound(KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_inverse_kl = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_pinsker = pacb_error_bound_pinsker(empirical_error=train_margin_loss, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss_domain, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss_data, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_pinsker_domain = pacb_error_bound_pinsker(empirical_error=train_margin_loss_domain, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        quant_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=train_margin_loss_data, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
 
         quant_results = QuantResults(
+            ranks=self.dimensions,  # We're not doing any low rank approximations.
             codeword_length=codeword_length,
-            spectral_bound=spectral_bound,
-            margin=margin,
+            C_domain=C_domain,
+            C_data=C_data,
+            spectral_bound_domain=spectral_bound_domain,
+            spectral_bound_data=spectral_bound_data,
+            margin_domain=margin_domain,
+            margin_data=margin_data,
             train_accuracy=quant_train_accuracy,
             test_accuracy=quant_test_accuracy,
-            train_margin_loss=train_margin_loss,
+            train_margin_loss_domain=train_margin_loss_domain,
+            train_margin_loss_data=train_margin_loss_data,
             KL=quant_KL,
             kl_bound=quant_kl_bound,
-            error_bound_inverse_kl=quant_error_bound_inverse_kl,
-            error_bound_pinsker=quant_error_bound_pinsker,
+            error_bound_inverse_kl_domain=quant_error_bound_inverse_kl_domain,
+            error_bound_inverse_kl_data=quant_error_bound_inverse_kl_data,
+            error_bound_pinsker_domain=quant_error_bound_pinsker_domain,
+            error_bound_pinsker_data=quant_error_bound_pinsker_data,
         )
         return quant_results
 

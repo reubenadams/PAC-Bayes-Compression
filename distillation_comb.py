@@ -167,7 +167,7 @@ def log_and_save_metrics(
         all_metrics |= pacb_metrics.to_dict()
 
     df = pd.DataFrame([all_configs | all_metrics])
-    df.to_csv(base_config.metrics_path, index=False)
+    df.to_csv(base_config.dist_metrics_path, index=False)
 
 
 def main():
