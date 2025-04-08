@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Optional
+from typing import Optional, Tuple
 from copy import deepcopy
 from itertools import product
 
@@ -216,7 +216,6 @@ class MLP(nn.Module):
         dimensions,
         activation,
         dropout_prob=0.0,
-        low_rank=False,
         device="cpu",
         shift_logits=False
     ):
@@ -229,24 +228,27 @@ class MLP(nn.Module):
         self.shift_logits = shift_logits
 
         for i in range(len(dimensions) - 1):
-            if low_rank:
-                self.network_modules.append(
-                    LowRankLinear(dimensions[i], dimensions[i + 1])
-                )
-            else:
-                self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
+            self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation or dropout on the last layer
                 self.network_modules.append(self.activation())
                 if self.dropout_prob > 0:
                     self.network_modules.append(nn.Dropout(p=self.dropout_prob))
-        self.network = nn.Sequential(*self.network_modules).to(self.device)
-        self.layers = [layer for layer in self.network_modules if isinstance(layer, nn.Linear)]
-        self.num_parameters = sum([p.numel() for p in self.parameters()])
-        self.num_weights = sum([layer.weight.numel() for layer in self.layers])
-        self.num_biases = sum([layer.bias.numel() for layer in self.layers])
 
-        self._weight_norms = None
-        self._bias_norms = None
+        self.network = nn.Sequential(*self.network_modules).to(self.device)
+        self.linear_layers = [layer for layer in self.network_modules if isinstance(layer, nn.Linear)]
+        self.num_parameters = sum([p.numel() for p in self.parameters()])
+        self.num_weights = sum([layer.weight.numel() for layer in self.linear_layers])
+        self.num_biases = sum([layer.bias.numel() for layer in self.linear_layers])
+
+        # self._weight_norms = None
+        # self._bias_norms = None
+
+        # SVD Decompositions
+        self.Us = None
+        self.Ss = None
+        self.Vts = None
+        self.svds_computed = False
+        self._sensible_ranks = None
 
     def forward(self, x):
         logits = self.network(x)
@@ -306,7 +308,7 @@ class MLP(nn.Module):
     def square_l2_dist(self: MLP, other: MLP) -> torch.Tensor:
         with torch.no_grad():
             total = 0
-            for layer_self, layer_other in zip(self.layers, other.layers):
+            for layer_self, layer_other in zip(self.linear_layers, other.linear_layers):
                 total += torch.sum((layer_self.weight - layer_other.weight)**2)
                 total += torch.sum((layer_self.bias - layer_other.bias)**2)
             return total
@@ -342,7 +344,7 @@ class MLP(nn.Module):
         return min_bound, best_sigma
 
     def reinitialize_weights(self):
-        for layer in self.layers:
+        for layer in self.linear_layers:
             layer.reset_parameters()
 
     def get_full_loss(self, loss_fn, dataloader):
@@ -1014,37 +1016,44 @@ class MLP(nn.Module):
     def get_spectral_bound(self: MLP, other: MLP, C) -> torch.Tensor:
         if not self.same_architecture(other):
             raise ValueError("Models have different architectures.")
-        weight_distances = self.get_weight_distances(other)
-        return self.beta(other=other, i=self.dimensions - 1, C=C, weight_distances=weight_distances)
+        # weight_distances = self.weight_distance(other)
+        return self.beta(other=other, layer_num=self.dimensions - 1, C=C)
+        # return self.beta(other=other, i=self.dimensions - 1, C=C, weight_distances=weight_distances)
 
-    def alpha(self: MLP, other: MLP, i: int, C):
-        if i < 0:
-            raise ValueError(f"i must be positive but received {i=}")
-        elif i == 0:
+    def alpha(self: MLP, other: MLP, layer_num: int, C):
+        if layer_num < 0:
+            raise ValueError(f"layer_num must be positive but received {layer_num=}")
+        elif layer_num == 0:
             return C
         else:
-            return other.weight_norms(layer_num=i) * self.alpha(other=other, i=i - 1, C=C) + self.bias_norms(layer_num=i)
+            return other.weight_norm(layer_num=layer_num) * self.alpha(other=other, layer_num=layer_num - 1, C=C) + self.bias_norm(layer_num=layer_num)
 
-    def beta(self: MLP, other: MLP, i: int, C, weight_distances):
-        if i < 0:
-            raise ValueError(f"i must be positive but received {i=}")
-        elif i == 0:
+    def beta(self: MLP, other: MLP, layer_num: int, C):
+        if layer_num < 0:
+            raise ValueError(f"layer_num must be positive but received {layer_num=}")
+        elif layer_num == 0:
             return 0
         else:
-            return self.weight_norms(layer_num=i) * self.beta(other=other, i=i - 1, C=C) + weight_distances[i] * self.alpha(other=other, i=i - 1, C=C)
+            return self.weight_norm(layer_num=layer_num) * self.beta(other=other, layer_num=layer_num - 1, C=C) + self.weight_distance(other, layer_num=layer_num) * self.alpha(other=other, layer_num=layer_num - 1, C=C)
 
-    def weight_norms(self, layer_num):
-        if self._weight_norms is None:
-            self._weight_norms = {i + 1: torch.linalg.norm(layer.weight.detach(), ord=2) for i, layer in enumerate(self.layers)}
-        return self._weight_norms[layer_num]
+    @torch.no_grad()
+    def weight_norm(self, layer_num: int) -> torch.Tensor:
+        layer_idx = layer_num - 1
+        layer = self.linear_layers[layer_idx]
+        return torch.linalg.norm(layer.weight, ord=2)
 
-    def bias_norms(self, layer_num):
-        if self._bias_norms is None:
-            self._bias_norms = {i + 1: torch.linalg.norm(layer.bias.detach(), ord=2) for i, layer in enumerate(self.layers)}
-        return self._bias_norms[layer_num]
+    @torch.no_grad()
+    def bias_norm(self, layer_num: int) -> torch.Tensor:
+        layer_idx = layer_num - 1
+        layer = self.linear_layers[layer_idx]
+        return torch.linalg.norm(layer.bias, ord=2)
 
-    def get_weight_distances(self: MLP, other: MLP):
-        return {i + 1: torch.linalg.norm(layer_self.weight.detach() - layer_other.weight.detach(), ord=2) for i, (layer_self, layer_other) in enumerate(zip(self.layers, other.layers))}
+    @torch.no_grad()
+    def weight_distance(self: MLP, other: MLP, layer_num: int) -> torch.Tensor:
+        layer_idx = layer_num - 1
+        layer_self = self.linear_layers[layer_idx]
+        layer_other = other.linear_layers[layer_idx]
+        return torch.linalg.norm(layer_self.weight - layer_other.weight, ord=2)
 
     @staticmethod
     def get_act(act: str):
@@ -1059,22 +1068,24 @@ class MLP(nn.Module):
         else:
             raise ValueError("Invalid activation function")
 
-    def get_concatenated_weights(self):
+    # TODO: Pass a ranks tuple to this. If no ranks passed, concatenate the weights. If ranks passed, concatenate the U_truncs and V_truncs
+    def get_concatenated_weights(self) -> torch.Tensor:
         """Returns the concatenated weights of the model as a single (num_weights, 1) tensor"""
-        weights = [layer.weight.detach().clone().view(-1, 1) for layer in self.layers]
+        weights = [layer.weight.detach().clone().view(-1, 1) for layer in self.linear_layers]
         return torch.cat(weights, dim=0)
 
     @torch.no_grad()
-    def set_from_concatenated_weights(self, weights):
+    def set_from_concatenated_weights(self, concatenated_weights: torch.Tensor) -> None:
         """Sets the weights of the model from a concatenated (num_weights, 1) tensor"""
-        if len(weights) != self.num_weights:
-            raise ValueError(f"MLP has {self.num_weights} weights, but got {len(weights)} weights.")
+        if len(concatenated_weights) != self.num_weights:
+            raise ValueError(f"MLP has {self.num_weights} weights, but got {len(concatenated_weights)} weights.")
         i = 0
-        for layer in self.layers:
+        for layer in self.linear_layers:
             num_weights = layer.weight.numel()
-            layer.weight.copy_(weights[i:i+num_weights].view(layer.weight.shape))
+            layer.weight.copy_(concatenated_weights[i:i+num_weights].view(layer.weight.shape))
             i += num_weights
 
+    # TODO: Pass a ranks tuple to this. If no ranks passed, quantize the weights. If ranks passed, quantize the U_truncs and V_truncs
     def get_quantized_model(self, codeword_length: int) -> MLP:
         """Returns a new, quantized model by applying k-means clustering to the weights"""
         if codeword_length not in range(1, 33):
@@ -1091,6 +1102,8 @@ class MLP(nn.Module):
         quantized_model.eval()
         return quantized_model
 
+    # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
+    # If ranks passed, return the size of the quantized U_truncs and V_truncs.
     def quantized_size_in_bits(self, codeword_length: int) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
         weights_size = self.num_weights * codeword_length
@@ -1098,6 +1111,8 @@ class MLP(nn.Module):
         codebook_size = 2 ** codeword_length * 32
         return weights_size + biases_size + codebook_size
 
+    # TODO: Pass a ranks tuple to this. If no ranks passed, use the size of the quantized weights.
+    # If ranks passed, use the size of the quantized U_truncs and V_truncs.
     def get_KL_of_quantized_model(self, codeword_length: int) -> torch.Tensor:
         """We use a uniform prior over the possible codeword_lengths 1,...,32, which
         implicitly gives a uniform prior over the 32 possible quantized model bit
@@ -1106,6 +1121,7 @@ class MLP(nn.Module):
         Note there's no sigma as the posterior is a point mass on the final classifier."""
         return self.quantized_size_in_bits(codeword_length) * torch.log(torch.tensor(2)) + torch.log(torch.tensor(32))
 
+    # TODO: Pass a ranks tuple to this. If no ranks passed, quantize the weights. If ranks passed, quantize U_truncs and V_truncs
     def get_quantized_pacb_results(
             self: MLP,
             delta: float,
@@ -1159,7 +1175,155 @@ class MLP(nn.Module):
         )
         return quant_results
 
-# TODO: Implement the KL divergence
+    def compute_svd(self):
+        """Compute SVD for each layer and store the results"""
+        if not self.svds_computed:
+            self.Us = []
+            self.Ss = []
+            self.Vts = []
+            with torch.no_grad():
+                for layer in self.linear_layers:
+                    U, S, Vt = torch.linalg.svd(layer.weight)
+                    self.Us.append(U)
+                    self.Ss.append(S)
+                    self.Vts.append(Vt)
+            self.svds_computed = True
+
+    def U(self, layer_idx):
+        self.compute_svd()
+        return self.Us[layer_idx]
+
+    def S(self, layer_idx):
+        self.compute_svd()
+        return self.Ss[layer_idx]
+
+    def Vt(self, layer_idx):
+        self.compute_svd()
+        return self.Vts[layer_idx]
+
+    @property
+    def sensible_ranks(self):
+        """Returns the rank combinations that reduce the storage size for every layer."""
+        if self._sensible_ranks is None:
+            max_sensible_ranks = []
+            for layer in self.linear_layers:
+                m, n = layer.weight.shape
+                max_rank = (m * n) // (m + n)
+                max_sensible_ranks.append(max_rank)
+            self._sensible_ranks = list(product(*[range(r) for r in max_sensible_ranks]))
+        return self._sensible_ranks
+
+    def get_low_rank_model(self: MLP, ranks: Tuple[int, ...]) -> LowRankMLP:
+        """Creates a low-rank version of the MLP by truncated the SVDs of the weight matrices."""
+        if ranks not in self.sensible_ranks:
+            raise ValueError(f"{ranks=} are not sensible as for at least one layer they do not reduce storage size.")
+        return LowRankMLP(self, ranks)
+
+
+
+
+class LowRankMLP(MLP):
+    def __init__(self, original_mlp: MLP, ranks: Tuple[int, ...]):
+        """
+        Low-rank version of MLP with factorized weight matrices
+        
+        Args:
+            original_mlp (MLP): The original MLP to create a low-rank version from
+            ranks (tuple): Tuple of ranks for each linear layer factorization
+        """
+        super().__init__(
+            dimensions=original_mlp.dimensions,
+            activation=original_mlp.activation,
+            dropout_prob=0.0,
+            device=original_mlp.device,
+            shift_logits=False,
+        )
+        self.eval()
+
+        self.U_truncs = []
+        self.S_truncs = []
+        self.Vt_truncs = []
+        self.ranks = ranks
+
+        for i, layer in enumerate(self.linear_layers):
+            U = original_mlp.U(i)
+            S = original_mlp.S(i)
+            Vt = original_mlp.Vt(i)
+            rank = ranks[i]
+
+            U_trunc = U[:, :rank]
+            S_trunc = S[:rank]
+            Vt_trunc = Vt[:rank, :]
+            self.U_truncs.append(U_trunc)
+            self.S_truncs.append(S_trunc)
+            self.Vt_truncs.append(Vt_trunc)
+            
+            with torch.no_grad():
+                layer.weight.data = U_trunc @ torch.diag(S_trunc) @ Vt_trunc
+
+        self.num_UV_trunc_vals = sum([U_trunc.numel() + Vt_trunc.numel() for U_trunc, Vt_trunc in zip(self.U_truncs, self.Vt_truncs)])
+        self.num_S_trunc_vals = sum([S_trunc.numel() for S_trunc in self.S_truncs])
+
+    @torch.no_grad()
+    def update_weights(self) -> None:
+        for layer_idx, layer in enumerate(self.linear_layers):
+            U_trunc = self.U_truncs[layer_idx]
+            S_trunc = self.S_truncs[layer_idx]
+            Vt_trunc = self.Vt_truncs[layer_idx]
+            layer.weight.data = U_trunc @ torch.diag(S_trunc) @ Vt_trunc
+
+    def get_concatenated_UV_truncs(self) -> torch.Tensor:
+        """Returns the concatenated U_truncs and Vt_truncs of the model as a single (num_UV_trunc_vals, 1) tensor"""
+        U_truncs = [U_trunc.view(-1, 1) for U_trunc in self.U_truncs]
+        Vt_truncs = [Vt_trunc.view(-1, 1) for Vt_trunc in self.Vt_truncs]
+        return torch.cat(U_truncs + Vt_truncs, dim=0)
+
+    @torch.no_grad()
+    def set_from_concatenated_UV_truncs(self, concatenated_UV_truncs: torch.Tensor) -> None:
+        """Sets the U_truncs and V_truncs of the model from a concatenated (num_UV_trunc_vals, 1) tensor"""
+        if len(concatenated_UV_truncs) != self.num_UV_trunc_vals:
+            raise ValueError(f"LowRankMLP has {self.num_UV_trunc_vals} U_trunc and V_trunc vals, but got {len(concatenated_UV_truncs)}.")
+        i = 0
+        for U_trunc in self.U_truncs:
+            num_U_vals = U_trunc.numel()
+            U_trunc.copy_(concatenated_UV_truncs[i:i+num_U_vals].view(U_trunc.shape))
+            i += num_U_vals
+        for Vt_trunc in self.Vt_truncs:
+            num_Vt_vals = Vt_trunc.numel()
+            Vt_trunc.copy_(concatenated_UV_truncs[i:i+num_Vt_vals].view(Vt_trunc.shape))
+            i += num_Vt_vals
+        assert i != len(concatenated_UV_truncs)
+    
+    def get_quantized_model(self, codeword_length: int):
+        """Returns a new, quantized model by applying k-means clustering to the U_truncs and V_truncs"""
+        if codeword_length not in range(1, 33):
+            raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
+        if codeword_length == 32:
+            quantized_model = deepcopy(self)
+        else:
+            num_codewords = 2 ** codeword_length
+            concatenated_UV_truncs = self.get_concatenated_UV_truncs()
+            kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_UV_truncs.cpu().numpy())
+            quantized_UV_truncs = kmeans.cluster_centers_[kmeans.labels_]
+            quantized_model = deepcopy(self)
+            quantized_model.set_from_concatenated_UV_truncs(torch.tensor(quantized_UV_truncs, device=self.device))
+            self.update_weights()
+        quantized_model.eval()
+        return quantized_model
+
+    def quantized_size_in_bits(self, codeword_length: int) -> int:
+        """"Returns the number of bits required to specify the quantized model, including the codebook"""
+        UV_truncs_sizes = self.num_UV_trunc_vals * codeword_length
+        S_truncs_sizes = self.num_S_trunc_vals * 32
+        biases_sizes = self.num_biases * 32
+        codebook_size = 2 ** codeword_length * 32
+        return UV_truncs_sizes + S_truncs_sizes + biases_sizes + codebook_size
+
+    def get_KL_of_quantized_model(self, codeword_length):
+
+
+
+# TODO: Remove this once you're sure everything has been properly implemented above.
 class LowRankMLP(MLP):
     def __init__(self, dimensions, activation, device="cpu"):
         super().__init__(
@@ -1176,7 +1340,7 @@ class LowRankMLP(MLP):
         self._perturbation_norms = None
 
         self.rank_combs = list(
-            product(*[range(1, min(layer.weight.shape) + 1) for layer in self.layers])
+            product(*[range(1, min(layer.weight.shape) + 1) for layer in self.linear_layers])
         )
         # self._product_weight_spectral_norms = None
         # self._valid_rank_combs = None
@@ -1200,46 +1364,34 @@ class LowRankMLP(MLP):
                 x = layer(x)
         return x
 
-    def weight_norms(self, layer_num):
+    def weight_norm(self, layer_num):
         if self._weight_norms is None:
-            self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.layers)}
+            self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.linear_layers)}
         return self._weight_norms[layer_num]
 
-    def bias_norms(self, layer_num):
+    def bias_norm(self, layer_num):
         if self._bias_norms is None:
-            self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.layers)}
+            self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.linear_layers)}
         return self._bias_norms[layer_num]
 
     def low_rank_weight_norms(self, layer_num, rank):    
         if self._weight_norms is None:
             self._weight_norms = dict()
             for l_num in range(1, self.d + 1):
-                for r in range(1, min(self.layers[l_num].weight.shape) + 1):
-                    self._weight_norms[(l_num, r)] = self.layers[l_num].low_rank_Ws_spectral_norms[r]
+                for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+                    self._weight_norms[(l_num, r)] = self.linear_layers[l_num].low_rank_Ws_spectral_norms[r]
         return self._weight_norms[(layer_num, rank)]
 
     def perturbation_norms(self, layer_num, rank):
         if self._perturbation_norms is None:
             self._perturbation_norms = dict()
             for l_num in range(1, self.d + 1):
-                for r in range(1, min(self.layers[l_num].weight.shape) + 1):
-                    self._perturbation_norms[(l_num, r)] = self.layers[l_num]._perturbation_norms[r]
+                for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+                    self._perturbation_norms[(l_num, r)] = self.linear_layers[l_num]._perturbation_norms[r]
         return self._perturbation_norms[(layer_num, rank)]
 
-    # def alpha(self, C, i: int):
-    #     if i == 0:
-    #         return C
-    #     else:
-    #         return self.weight_norms(layer_num=i) * self.alpha(C, i - 1) + self.bias_norms(layer_num=i)
-
-    # def beta(self, C, i: int, ranks: list[int]):
-    #     if i == 1:
-    #         return self.perturbation_norms(layer_num=i, rank=ranks[0]) * C
-    #     else:
-    #         return self.low_rank_weight_norms(layer_num=i, rank=ranks[i - 1]) * self.beta(C, i - 1, ranks=ranks) + self.perturbation_norms(layer_num=i, rank=ranks[i - 1]) * self.alpha(C, i - 1)
-
     def max_l2_deviation(self, C, ranks: list[int]):
-        return self.beta(C, i=self.d, ranks=ranks)
+        return self.beta(C, layer_num=self.d, ranks=ranks)
 
     def KL_divergences(self):
         pass
@@ -1251,49 +1403,9 @@ class LowRankMLP(MLP):
             for rank_comb in self.rank_combs:
                 self._num_params[rank_comb] = sum(
                     layer.USV_num_params[rank]
-                    for rank, layer in zip(rank_comb, self.layers)
+                    for rank, layer in zip(rank_comb, self.linear_layers)
                 )
         return self._num_params
-
-    @property
-    def min_UVs(self):
-        if self._min_UVs is None:
-            self._min_UVs = {}
-            for rank_comb in self.rank_combs:
-                self._min_UVs[rank_comb] = min(
-                    layer.UV_min[rank] for rank, layer in zip(rank_comb, self.layers)
-                )
-        return self._min_UVs
-
-    @property
-    def max_UVs(self):
-        if self._max_UVs is None:
-            self._max_UVs = {}
-            for rank_comb in self.rank_combs:
-                self._max_UVs[rank_comb] = max(
-                    layer.UV_max[rank] for rank, layer in zip(rank_comb, self.layers)
-                )
-        return self._max_UVs
-
-    @property
-    def min_Ss(self):
-        if self._min_Ss is None:
-            self._min_Ss = {}
-            for rank_comb in self.rank_combs:
-                self._min_Ss[rank_comb] = min(
-                    layer.S_min[rank] for rank, layer in zip(rank_comb, self.layers)
-                )
-        return self._min_Ss
-
-    @property
-    def max_Ss(self):
-        if self._max_Ss is None:
-            self._max_Ss = {}
-            for rank_comb in self.rank_combs:
-                self._max_Ss[rank_comb] = max(
-                    layer.S_max[rank] for rank, layer in zip(rank_comb, self.layers)
-                )
-        return self._max_Ss
 
     # @property
     # def valid_rank_combs(self):
@@ -1384,7 +1496,7 @@ class BaseMLP(MLP):
     def load_from_hyper_model(self, hyper_model, transform=None):
         """Populate the weights of the base model with the estimated weights from the hyper_model"""
         with torch.no_grad():
-            for layer_num, layer in enumerate(self.layers):
+            for layer_num, layer in enumerate(self.linear_layers):
                 for row in range(layer.weight.size(0)):
                     for col in range(layer.weight.size(1) + 1):
 
@@ -1448,7 +1560,7 @@ class ParameterDataset(Dataset):
         super(ParameterDataset, self).__init__()
         self.params = []
         with torch.no_grad():
-            for layer_num, layer in enumerate(model.layers):
+            for layer_num, layer in enumerate(model.linear_layers):
                 weight = layer.weight.detach()
                 bias = layer.bias.detach()
                 for row in range(weight.size(0)):
