@@ -117,6 +117,8 @@ def get_datasets(
             data = get_dataset(args, path=path, download=True)
             x_train = torch.tensor(data["x"], dtype=torch.float32)
             x_test = torch.tensor(data["x_test"], dtype=torch.float32)
+            x_train.clip_(-4.0, 4.0)
+            x_test.clip_(-4.0, 4.0)
             y_train, y_test = torch.tensor(data["y"]), torch.tensor(data["y_test"])
 
             if _train_size is not None:

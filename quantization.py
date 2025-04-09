@@ -5,7 +5,7 @@ import torch
 
 from models import MLP
 from distillation_comb import get_base_config, get_pacb_config
-from config import FinalQuantResults
+from config import FinalCompResults
 
 
 def main():
@@ -40,20 +40,27 @@ def main():
     init_model.load(base_config.model_init_dir, base_config.model_name)
     base_model.load(base_config.model_base_dir, base_config.model_name)
 
-    final_quant_results = FinalQuantResults()
+    # TODO: Use `compress_difference` and `threshold_codeword_length_to_reduce_k_means_max_iter` from a CompConfig
+    print(f"{base_model.num_weights=}")
+    final_quant_only_results = FinalCompResults()
     for codeword_length in range(1, 33):
         print(f"{codeword_length=}")
-        quant_results = base_model.get_quantized_pacb_results(
+        quant_results = base_model.get_comp_pacb_results(
             delta=pacb_config.delta,
             train_loader=base_config.data.train_loader,
             test_loader=base_config.data.test_loader,
-            codeword_length=codeword_length,
             C_domain=base_config.data.C_train_domain,
             C_data=base_config.data.C_train_data,
+            codeword_length=codeword_length,
+            compress_difference=True,
+            init_model=init_model,
         )
-        final_quant_results.add_result(quant_results)
+        print(quant_results)
+        final_quant_only_results.add_result(quant_results)
         quant_results.log()
-    final_quant_results.save_to_json(filename=base_config.quant_metrics_path)
+    final_quant_only_results.save_to_json(filename=base_config.quant_metrics_path)
+
+    # TODO: Get quant *and* low rank results.
 
     run.finish()
 

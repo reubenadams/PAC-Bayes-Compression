@@ -60,8 +60,8 @@ class BaseDataConfig:
     train_loader: Optional[DataLoader] = None
     test_loader: Optional[DataLoader] = None
     data_dir: Optional[str] = None
-    C_train_domain = None
-    C_train_data = None
+    _C_train_domain = None
+    _C_train_data = None
 
     def add_sample_sizes(self, quick_test):
         if quick_test:
@@ -75,10 +75,14 @@ class BaseDataConfig:
         if self.new_input_shape is None:
             if self.dataset_name == "MNIST":
                 self._new_input_shape = (28, 28)
+                self.input_range = 2  # Data range was [0, 1] but became [-1, 1] after normalization
             elif self.dataset_name == "CIFAR10":
                 self._new_input_shape = (32, 32)
+                self.input_range = 2  # Data range was [0, 1] but became [-1, 1] after normalization
             elif self.dataset_name == "MNIST1D":
                 self._new_input_shape = (40,)
+                self.input_range = 8  # Data range was [-inf, inf] but became [-4, 4] after clipping
+
         else:
             self._new_input_shape = self.new_input_shape
 
@@ -98,8 +102,7 @@ class BaseDataConfig:
         """Returns the maximum l2 norm of a point in [0, input_range]^input_dim."""
         if self._C_train_domain is None:
             input_dim = prod(self._new_input_shape)
-            input_range = 1
-            self._C_train_domain = torch.sqrt(input_dim * input_range ** 2)
+            self._C_train_domain = self.input_range * torch.sqrt(torch.tensor(input_dim))
         return self._C_train_domain
 
     @property
@@ -565,8 +568,14 @@ class PACBResults:
 
 
 @dataclass
-class QuantResults:
-    ranks: Tuple[int, ...]
+class CompConfig:
+    threshold_codeword_length_to_reduce_k_means_max_iter: int = 10
+    compress_difference: bool = False
+
+
+@dataclass
+class CompResults:
+    ranks: Optional[Tuple[int, ...]]
     codeword_length: int
     C_domain: float
     C_data: float
@@ -588,39 +597,39 @@ class QuantResults:
     def to_wandb_dict(self):
         """Returns a dictionary with formatted keys for wandb logging"""
         return {
-            "Quant C Domain": self.C_domain,  # Fixed
-            "Quant C Data": self.C_data,  # Fixed
+            "Comp C Domain": self.C_domain,  # Stays fixed
+            "Comp C Data": self.C_data,  # Stays fixed
 
-            "Quant Ranks": self.ranks,
-            "Quant Codeword Length": self.codeword_length,
+            "Comp Ranks": self.ranks,
+            "Comp Codeword Length": self.codeword_length,
 
-            "Quant Spectral Bound Domain": self.spectral_bound_domain,
-            "Quant Spectral Bound Data": self.spectral_bound_data,
-            "Quant Margin Domain": self.margin_domain,
-            "Quant Margin Data": self.margin_data,
-            "Quant Train Accuracy": self.train_accuracy,
-            "Quant Test Accuracy": self.test_accuracy,
-            "Quant Train Margin Loss Domain": self.train_margin_loss_domain,
-            "Quant Train Margin Loss Data": self.train_margin_loss_data,
-            "Quant KL": self.KL,
-            "Quant kl Bound": self.kl_bound,
-            "Quant Error Bound Inverse kl Domain": self.error_bound_inverse_kl_domain,
-            "Quant Error Bound Inverse kl Data": self.error_bound_inverse_kl_data,
-            "Quant Error Bound Pinsker Domain": self.error_bound_pinsker_domain,
-            "Quant Error Bound Pinsker Data": self.error_bound_pinsker_data,
+            "Comp Spectral Bound (using C_domain)": self.spectral_bound_domain,
+            "Comp Spectral Bound (using C_data)": self.spectral_bound_data,
+            "Comp Margin (using C_domain)": self.margin_domain,
+            "Comp Margin (using C_data)": self.margin_data,
+            "Comp Train Accuracy": self.train_accuracy,
+            "Comp Test Accuracy": self.test_accuracy,
+            "Comp Train Margin Loss (using C_domain)": self.train_margin_loss_domain,
+            "Comp Train Margin Loss (using C_data)": self.train_margin_loss_data,
+            "Comp KL": self.KL,
+            "Comp kl Bound": self.kl_bound,
+            "Comp Error Bound Inverse kl (using C_domain)": self.error_bound_inverse_kl_domain,
+            "Comp Error Bound Inverse kl (using C_data)": self.error_bound_inverse_kl_data,
+            "Comp Error Bound Pinsker (using C_domain)": self.error_bound_pinsker_domain,
+            "Comp Error Bound Pinsker (using C_data)": self.error_bound_pinsker_data,
         }
 
     def log(self):
         """Log the metrics to wandb"""
-        wandb.log(self.to_wandb_dict().items())
+        wandb.log(self.to_wandb_dict())
 
 
 @dataclass
-class FinalQuantResults:
+class FinalCompResults:
     # Hierarchical structure: first by ranks, then by codeword_length
-    results: Dict[Tuple[int, ...], Dict[int, QuantResults]] = field(default_factory=dict)
+    results: Dict[Optional[Tuple[int, ...]], Dict[int, CompResults]] = field(default_factory=dict)
     
-    def add_result(self, result: QuantResults):
+    def add_result(self, result: CompResults):
         # Initialize the inner dictionary if needed
         if result.ranks not in self.results:
             self.results[result.ranks] = {}
@@ -655,11 +664,11 @@ class FinalQuantResults:
                 codeword_length = int(codeword_length_str)
                 if "ranks" in rank_codeword_length_results_dict and isinstance(rank_codeword_length_results_dict["ranks"], list):
                     rank_codeword_length_results_dict["ranks"] = tuple(rank_codeword_length_results_dict["ranks"])
-                experiment.results[ranks][codeword_length] = QuantResults(**rank_codeword_length_results_dict)
+                experiment.results[ranks][codeword_length] = CompResults(**rank_codeword_length_results_dict)
                 
         return experiment
     
-    def get_result(self, ranks: Tuple[int, ...], codeword_length: int) -> QuantResults:
+    def get_result(self, ranks: Optional[Tuple[int, ...]], codeword_length: int) -> CompResults:
         """Get results for a specific rank and codeword_length combination"""
         if ranks in self.results and codeword_length in self.results[ranks]:
             return self.results[ranks][codeword_length]

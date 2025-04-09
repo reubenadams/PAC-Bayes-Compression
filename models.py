@@ -3,6 +3,7 @@ import os
 from typing import Optional, Tuple
 from copy import deepcopy
 from itertools import product
+import matplotlib.pyplot as plt
 
 import torch
 from torch.utils.data import Dataset, RandomSampler, DataLoader
@@ -13,7 +14,7 @@ import math
 import wandb
 from sklearn.cluster import KMeans
 
-from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, QuantResults
+from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
 from load_data import get_epsilon_mesh, get_logits_dataloader
 from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
@@ -243,12 +244,14 @@ class MLP(nn.Module):
         # self._weight_norms = None
         # self._bias_norms = None
 
-        # SVD Decompositions
+        # SVD Decompositions. Note this does not make the model low rank; the Us, Ss and Vs are just used by get_low_rank_model()
         self.Us = None
         self.Ss = None
         self.Vts = None
         self.svds_computed = False
         self._sensible_ranks = None
+        self.sensible_codeword_lengths = math.floor(math.log(self.num_weights, 2))  # The number of codewords is 2**codeword_length, which should be at most self.num_weights
+        self.codeword_length = None
 
     def forward(self, x):
         logits = self.network(x)
@@ -1017,7 +1020,7 @@ class MLP(nn.Module):
         if not self.same_architecture(other):
             raise ValueError("Models have different architectures.")
         # weight_distances = self.weight_distance(other)
-        return self.beta(other=other, layer_num=self.dimensions - 1, C=C)
+        return self.beta(other=other, layer_num=len(self.dimensions) - 1, C=C)
         # return self.beta(other=other, i=self.dimensions - 1, C=C, weight_distances=weight_distances)
 
     def alpha(self: MLP, other: MLP, layer_num: int, C):
@@ -1085,95 +1088,145 @@ class MLP(nn.Module):
             layer.weight.copy_(concatenated_weights[i:i+num_weights].view(layer.weight.shape))
             i += num_weights
 
-    # TODO: Pass a ranks tuple to this. If no ranks passed, quantize the weights. If ranks passed, quantize the U_truncs and V_truncs
-    def get_quantized_model(self, codeword_length: int) -> MLP:
-        """Returns a new, quantized model by applying k-means clustering to the weights"""
+    def get_quantized_model(self, codeword_length: int, threshold_codeword_length_to_reduce_k_means_max_iter: int=10) -> MLP:
+        """Returns a new, quantized model by applying k-means clustering to the weights.
+        k-means takes a very long time for large values of k, for long codewords (and
+        therefore large values of k) we just use the initialization of k-means."""
         if codeword_length not in range(1, 33):
             raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
         if codeword_length == 32:
             quantized_model = deepcopy(self)
         else:
+            if codeword_length > threshold_codeword_length_to_reduce_k_means_max_iter:
+                max_iter = 1
+            else:
+                max_iter = 300
             num_codewords = 2 ** codeword_length
             concatenated_weights = self.get_concatenated_weights()
-            kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
+            kmeans = KMeans(n_clusters=num_codewords, random_state=0, max_iter=max_iter).fit(concatenated_weights.cpu().numpy())
+            print(f"Num iterations: {kmeans.n_iter_}")
+            # plt.hist(concatenated_weights.cpu().numpy(), bins=1000)
+            # plt.vlines(kmeans.cluster_centers_, ymin=0, ymax=3000, color='r')
+            # plt.show()
             quantized_weights = kmeans.cluster_centers_[kmeans.labels_]
             quantized_model = deepcopy(self)
             quantized_model.set_from_concatenated_weights(torch.tensor(quantized_weights, device=self.device))
+        quantized_model.codeword_length = codeword_length
         quantized_model.eval()
         return quantized_model
 
     # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
     # If ranks passed, return the size of the quantized U_truncs and V_truncs.
-    def quantized_size_in_bits(self, codeword_length: int) -> int:
+    def quantized_size_in_bits(self) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
+        if self.codeword_length is None:
+            codeword_length = 32
+        else:
+            codeword_length = self.codeword_length
         weights_size = self.num_weights * codeword_length
         biases_size = self.num_biases * 32
         codebook_size = 2 ** codeword_length * 32
         return weights_size + biases_size + codebook_size
 
-    # TODO: Pass a ranks tuple to this. If no ranks passed, use the size of the quantized weights.
-    # If ranks passed, use the size of the quantized U_truncs and V_truncs.
-    def get_KL_of_quantized_model(self, codeword_length: int) -> torch.Tensor:
-        """We use a uniform prior over the possible codeword_lengths 1,...,32, which
-        implicitly gives a uniform prior over the 32 possible quantized model bit
-        lengths. The final log(32) term is -log(prior(quantized_length)), making this
-        a union bound applying to the 32 possible quantized models simultaneously.
-        Note there's no sigma as the posterior is a point mass on the final classifier."""
-        return self.quantized_size_in_bits(codeword_length) * torch.log(torch.tensor(2)) + torch.log(torch.tensor(32))
+    def get_KL_of_quantized_model(self) -> torch.Tensor:
+        """The KL between a point mass on the compressed representation of the model, with bit length
+        b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
+        This assumes that the codeword_length is fixed. A union bound should later account
+        for any choice made over the codeword_length. Note there's no sigma as the posterior
+        is a point mass on the final classifier."""
+        return self.quantized_size_in_bits() * torch.log(torch.tensor(2))
 
-    # TODO: Pass a ranks tuple to this. If no ranks passed, quantize the weights. If ranks passed, quantize U_truncs and V_truncs
-    def get_quantized_pacb_results(
+    # TODO: Do we want to also try only doing one of low rank and quantized?
+    def get_comp_pacb_results(
             self: MLP,
             delta: float,
             train_loader: DataLoader,
             test_loader: DataLoader,
+            C_domain: torch.Tensor,
+            C_data: torch.Tensor,
             codeword_length: int,
-            C_domain: float,
-            C_data: float,
-        ) -> QuantResults:
+            ranks: Optional[Tuple[int, ...]] = None,
+            compress_difference: bool = False,
+            init_model: MLP = None,
+        ) -> CompResults:
         """Returns the pac bound on the margin loss of the quantized model, which is
         then the bound on the error rate of the original model. The prior spreads its
         mass across different codeword lengths, so is valid for all codeword lengths
         simultaneously."""
-        quant_model = self.get_quantized_model(codeword_length=codeword_length)
-        spectral_bound_domain = self.get_spectral_bound(other=quant_model, C=C_domain)
-        spectral_bound_data = self.get_spectral_bound(other=quant_model, C=C_data)
+        
+        # Account for union bound over all possible codeword lengths
+        delta /= 32
+
+        # diff_model is base_model - init_model if compress_difference is True, otherwise it's just self (aka difference from origin)
+        if compress_difference:
+            if init_model is None:
+                raise ValueError("If compress_difference is True, init_model must be provided.")
+            # Get the difference model
+            diff_model = self.get_model_difference(other=init_model)
+        else:
+            diff_model = deepcopy(self)
+
+        # Construct low rank model if necessary
+        if ranks is None:
+            diff_model = deepcopy(diff_model)
+        else:
+            diff_model = diff_model.get_low_rank_model(ranks=ranks)
+            # Account for union bound over all possible ranks
+            delta /= len(diff_model.sensible_ranks)
+        
+        # Construct quantized model
+        diff_model = diff_model.get_quantized_model(codeword_length=codeword_length)
+        
+        # Reconstruct the compressed model for evaluation by adding init_model back in if necessary
+        if compress_difference:
+            comp_model = diff_model.get_model_sum(other=init_model)
+        else:
+            comp_model = diff_model
+        
+        diff_KL = diff_model.get_KL_of_quantized_model()  # N.B. This is the KL of the compressed form of base_model - init_model
+
+        # Get spectral bounds and margins
+        spectral_bound_domain = self.get_spectral_bound(other=comp_model, C=C_domain)
+        spectral_bound_data = self.get_spectral_bound(other=comp_model, C=C_data)
         margin_domain = torch.sqrt(torch.tensor(2)) * spectral_bound_domain
         margin_data = torch.sqrt(torch.tensor(2)) * spectral_bound_data
 
-        quant_train_accuracy = quant_model.get_full_accuracy(dataloader=train_loader)
-        quant_test_accuracy = quant_model.get_full_accuracy(dataloader=test_loader)
-        train_margin_loss_domain = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
-        train_margin_loss_data = quant_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        # Get empirical errors
+        comp_train_accuracy = comp_model.get_full_accuracy(dataloader=train_loader)
+        comp_test_accuracy = comp_model.get_full_accuracy(dataloader=test_loader)
+        comp_train_margin_loss_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        comp_train_margin_loss_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
 
-        quant_KL = quant_model.get_KL_of_quantized_model(codeword_length=codeword_length)
-        quant_kl_bound = pacb_kl_bound(KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss_domain, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=train_margin_loss_data, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_pinsker_domain = pacb_error_bound_pinsker(empirical_error=train_margin_loss_domain, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
-        quant_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=train_margin_loss_data, KL=quant_KL, n=len(train_loader.dataset), delta=delta)
+        # Get pacb bounds
+        comp_kl_bound = pacb_kl_bound(KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_pinsker_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
 
-        quant_results = QuantResults(
-            ranks=self.dimensions,  # We're not doing any low rank approximations.
+        # Collect results together and return
+        comp_results = CompResults(
+            ranks=ranks,
             codeword_length=codeword_length,
-            C_domain=C_domain,
-            C_data=C_data,
-            spectral_bound_domain=spectral_bound_domain,
-            spectral_bound_data=spectral_bound_data,
-            margin_domain=margin_domain,
-            margin_data=margin_data,
-            train_accuracy=quant_train_accuracy,
-            test_accuracy=quant_test_accuracy,
-            train_margin_loss_domain=train_margin_loss_domain,
-            train_margin_loss_data=train_margin_loss_data,
-            KL=quant_KL,
-            kl_bound=quant_kl_bound,
-            error_bound_inverse_kl_domain=quant_error_bound_inverse_kl_domain,
-            error_bound_inverse_kl_data=quant_error_bound_inverse_kl_data,
-            error_bound_pinsker_domain=quant_error_bound_pinsker_domain,
-            error_bound_pinsker_data=quant_error_bound_pinsker_data,
+            C_domain=C_domain.item(),
+            C_data=C_data.item(),
+            spectral_bound_domain=spectral_bound_domain.item(),
+            spectral_bound_data=spectral_bound_data.item(),
+            margin_domain=margin_domain.item(),
+            margin_data=margin_data.item(),
+            train_accuracy=comp_train_accuracy.item(),
+            test_accuracy=comp_test_accuracy.item(),
+            train_margin_loss_domain=comp_train_margin_loss_domain.item(),
+            train_margin_loss_data=comp_train_margin_loss_data.item(),
+            KL=diff_KL.item(),
+            kl_bound=comp_kl_bound.item(),
+            error_bound_inverse_kl_domain=comp_error_bound_inverse_kl_domain.item(),
+            error_bound_inverse_kl_data=comp_error_bound_inverse_kl_data.item(),
+            error_bound_pinsker_domain=comp_error_bound_pinsker_domain.item(),
+            error_bound_pinsker_data=comp_error_bound_pinsker_data.item(),
         )
-        return quant_results
+        return comp_results
+
 
     def compute_svd(self):
         """Compute SVD for each layer and store the results"""
@@ -1203,7 +1256,7 @@ class MLP(nn.Module):
 
     @property
     def sensible_ranks(self):
-        """Returns the rank combinations that reduce the storage size for every layer."""
+        """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
         if self._sensible_ranks is None:
             max_sensible_ranks = []
             for layer in self.linear_layers:
@@ -1219,7 +1272,27 @@ class MLP(nn.Module):
             raise ValueError(f"{ranks=} are not sensible as for at least one layer they do not reduce storage size.")
         return LowRankMLP(self, ranks)
 
+    def get_model_difference(self: MLP, other: MLP) -> MLP:
+        """Returns the MLP with weights and biases equal to self - other."""
+        if not self.same_architecture(other):
+            raise ValueError("Models have different architectures.")
+        diff_model = deepcopy(self)
+        for i, layer in enumerate(diff_model.linear_layers):
+            layer.weight.data = layer.weight - other.linear_layers[i].weight
+            layer.bias.data = layer.bias - other.linear_layers[i].bias
+        diff_model.eval()
+        return diff_model
 
+    def get_model_sum(self: MLP, other: MLP) -> MLP:
+        """Returns the MLP with weights and biases equal to self + other."""
+        if not self.same_architecture(other):
+            raise ValueError("Models have different architectures.")
+        sum_model = deepcopy(self)
+        for i, layer in enumerate(sum_model.linear_layers):
+            layer.weight.data = layer.weight + other.linear_layers[i].weight
+            layer.bias.data = layer.bias + other.linear_layers[i].bias
+        sum_model.eval()
+        return sum_model
 
 
 class LowRankMLP(MLP):
@@ -1244,6 +1317,7 @@ class LowRankMLP(MLP):
         self.S_truncs = []
         self.Vt_truncs = []
         self.ranks = ranks
+        self.codeword_length = None
 
         for i, layer in enumerate(self.linear_layers):
             U = original_mlp.U(i)
@@ -1295,7 +1369,8 @@ class LowRankMLP(MLP):
         assert i != len(concatenated_UV_truncs)
     
     def get_quantized_model(self, codeword_length: int):
-        """Returns a new, quantized model by applying k-means clustering to the U_truncs and V_truncs"""
+        """Returns a new, quantized model by applying k-means clustering to the U_truncs
+        and V_truncs. Note the S_truncs are not quantized. Overwrites same named method in MLP."""
         if codeword_length not in range(1, 33):
             raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
         if codeword_length == 32:
@@ -1308,18 +1383,29 @@ class LowRankMLP(MLP):
             quantized_model = deepcopy(self)
             quantized_model.set_from_concatenated_UV_truncs(torch.tensor(quantized_UV_truncs, device=self.device))
             self.update_weights()
+        quantized_model.codeword_length = codeword_length
         quantized_model.eval()
         return quantized_model
 
-    def quantized_size_in_bits(self, codeword_length: int) -> int:
+    def quantized_size_in_bits(self) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
+        if self.codeword_length is None:
+            codeword_length = 32
+        else:
+            codeword_length = self.codeword_length
         UV_truncs_sizes = self.num_UV_trunc_vals * codeword_length
         S_truncs_sizes = self.num_S_trunc_vals * 32
         biases_sizes = self.num_biases * 32
         codebook_size = 2 ** codeword_length * 32
         return UV_truncs_sizes + S_truncs_sizes + biases_sizes + codebook_size
 
-    def get_KL_of_quantized_model(self, codeword_length):
+    def get_KL_of_quantized_model(self):
+        """The KL between a point mass on the compressed representation of the model, with bit length
+        b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
+        This assumes that the ranks and codeword_length are fixed. A union bound should later account
+        for any choice made over the ranks and codeword_length. Note there's no sigma as the posterior
+        is a point mass on the final classifier."""
+        return self.quantized_size_in_bits() * torch.log(torch.tensor(2))
 
 
 
