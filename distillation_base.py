@@ -71,7 +71,7 @@ def train_base_models():
 
     model = MLP(
         dimensions=base_experiment_config.model_dims,
-        activation=base_experiment_config.model_act,
+        activation_name=base_experiment_config.model_act,
         dropout_prob=base_experiment_config.dropout_prob,
         device=device
     )

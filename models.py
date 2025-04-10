@@ -19,6 +19,7 @@ from load_data import get_epsilon_mesh, get_logits_dataloader
 from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
 
+# TODO: Delete if not used anymore
 class LowRankLinear(nn.Linear):
     def __init__(self, in_features, out_features):
         super().__init__(in_features, out_features)  # Neyshabur et al. 2017 (spectrally-normalized margin bounds) don't allow a bias term, but we do.
@@ -215,14 +216,15 @@ class MLP(nn.Module):
     def __init__(
         self,
         dimensions,
-        activation,
+        activation_name,
         dropout_prob=0.0,
         device="cpu",
         shift_logits=False
     ):
         super(MLP, self).__init__()
         self.dimensions = dimensions
-        self.activation = self.get_act(activation)
+        self.activation_name = activation_name
+        self.activation_func = self.get_act(activation_name)
         self.dropout_prob = dropout_prob
         self.network_modules = []
         self.device = torch.device(device)
@@ -231,7 +233,7 @@ class MLP(nn.Module):
         for i in range(len(dimensions) - 1):
             self.network_modules.append(nn.Linear(dimensions[i], dimensions[i + 1]))
             if i < len(dimensions) - 2:  # No activation or dropout on the last layer
-                self.network_modules.append(self.activation())
+                self.network_modules.append(self.activation_func())
                 if self.dropout_prob > 0:
                     self.network_modules.append(nn.Dropout(p=self.dropout_prob))
 
@@ -249,8 +251,9 @@ class MLP(nn.Module):
         self.Ss = None
         self.Vts = None
         self.svds_computed = False
-        self._sensible_ranks = None
-        self.sensible_codeword_lengths = math.floor(math.log(self.num_weights, 2))  # The number of codewords is 2**codeword_length, which should be at most self.num_weights
+        self.sensible_ranks = None
+
+        self._sensible_codeword_lengths = None
         self.codeword_length = None
 
     def forward(self, x):
@@ -304,7 +307,7 @@ class MLP(nn.Module):
         for dim_self, dim_other in zip(self.dimensions, other.dimensions):
             if dim_self != dim_other:
                 return False
-        if type(self.activation) != type(other.activation):
+        if type(self.activation_func) != type(other.activation_func):
             return False
         return True
 
@@ -827,7 +830,7 @@ class MLP(nn.Module):
             # N.B. self is interpreted as the base model for this method
         dist_model = MLP(
             dimensions=dist_dims,
-            activation=dist_config.hyperparams.activation,
+            activation_name=dist_config.hyperparams.activation_name,
             device=self.device,
             shift_logits=dist_config.objective.shift_logits,
         )
@@ -977,7 +980,7 @@ class MLP(nn.Module):
         print(f"Attempting to distill into model with dims {dist_dims}")
         dist_model = MLP(
             dimensions=dist_dims,
-            activation=dist_config.dist_activation,
+            activation_name=dist_config.dist_activation,
             device=self.device,
             shift_logits=dist_config.shift_logits,
         )
@@ -1088,7 +1091,7 @@ class MLP(nn.Module):
             layer.weight.copy_(concatenated_weights[i:i+num_weights].view(layer.weight.shape))
             i += num_weights
 
-    def get_quantized_model(self, codeword_length: int, threshold_codeword_length_to_reduce_k_means_max_iter: int=10) -> MLP:
+    def get_quantized_model(self, codeword_length: int) -> MLP:
         """Returns a new, quantized model by applying k-means clustering to the weights.
         k-means takes a very long time for large values of k, for long codewords (and
         therefore large values of k) we just use the initialization of k-means."""
@@ -1097,13 +1100,9 @@ class MLP(nn.Module):
         if codeword_length == 32:
             quantized_model = deepcopy(self)
         else:
-            if codeword_length > threshold_codeword_length_to_reduce_k_means_max_iter:
-                max_iter = 1
-            else:
-                max_iter = 300
             num_codewords = 2 ** codeword_length
             concatenated_weights = self.get_concatenated_weights()
-            kmeans = KMeans(n_clusters=num_codewords, random_state=0, max_iter=max_iter).fit(concatenated_weights.cpu().numpy())
+            kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
             print(f"Num iterations: {kmeans.n_iter_}")
             # plt.hist(concatenated_weights.cpu().numpy(), bins=1000)
             # plt.vlines(kmeans.cluster_centers_, ymin=0, ymax=3000, color='r')
@@ -1117,15 +1116,15 @@ class MLP(nn.Module):
 
     # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
     # If ranks passed, return the size of the quantized U_truncs and V_truncs.
-    def quantized_size_in_bits(self) -> int:
+    def quantized_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
-        if self.codeword_length is None:
+        if codeword_length is None:
             codeword_length = 32
+            codebook_size = 0
         else:
-            codeword_length = self.codeword_length
+            codebook_size = 2 ** codeword_length * 32
         weights_size = self.num_weights * codeword_length
         biases_size = self.num_biases * 32
-        codebook_size = 2 ** codeword_length * 32
         return weights_size + biases_size + codebook_size
 
     def get_KL_of_quantized_model(self) -> torch.Tensor:
@@ -1134,7 +1133,7 @@ class MLP(nn.Module):
         This assumes that the codeword_length is fixed. A union bound should later account
         for any choice made over the codeword_length. Note there's no sigma as the posterior
         is a point mass on the final classifier."""
-        return self.quantized_size_in_bits() * torch.log(torch.tensor(2))
+        return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
 
     # TODO: Do we want to also try only doing one of low rank and quantized?
     def get_comp_pacb_results(
@@ -1144,9 +1143,9 @@ class MLP(nn.Module):
             test_loader: DataLoader,
             C_domain: torch.Tensor,
             C_data: torch.Tensor,
-            codeword_length: int,
             ranks: Optional[Tuple[int, ...]] = None,
-            compress_difference: bool = False,
+            codeword_length: int = None,
+            compress_model_difference: bool = False,
             init_model: MLP = None,
         ) -> CompResults:
         """Returns the pac bound on the margin loss of the quantized model, which is
@@ -1154,36 +1153,44 @@ class MLP(nn.Module):
         mass across different codeword lengths, so is valid for all codeword lengths
         simultaneously."""
         
-        # Account for union bound over all possible codeword lengths
-        delta /= 32
+        # if not (low_rank or quantize):
+        if ranks is None and codeword_length is None:
+            raise ValueError("Either ranks or codeword_length must be specified.")
+
+        if compress_model_difference and init_model is None:
+            raise ValueError("If compress_difference is True, init_model must be provided.")
+
+        if ranks is not None and self.sensible_ranks is None:
+            raise ValueError("sensible_ranks has not been populated. Call populate_sensible_ranks first.")
+
+        # Account for choice over ranks and codeword length
+        if ranks is not None:
+            delta /= len(self.sensible_ranks)
+        if codeword_length is not None:
+            delta /= 32
 
         # diff_model is base_model - init_model if compress_difference is True, otherwise it's just self (aka difference from origin)
-        if compress_difference:
-            if init_model is None:
-                raise ValueError("If compress_difference is True, init_model must be provided.")
-            # Get the difference model
-            diff_model = self.get_model_difference(other=init_model)
+        if compress_model_difference:
+            comp_diff_model = self.get_model_difference(other=init_model)
         else:
-            diff_model = deepcopy(self)
+            comp_diff_model = deepcopy(self)
 
         # Construct low rank model if necessary
-        if ranks is None:
-            diff_model = deepcopy(diff_model)
-        else:
-            diff_model = diff_model.get_low_rank_model(ranks=ranks)
-            # Account for union bound over all possible ranks
-            delta /= len(diff_model.sensible_ranks)
+        if ranks is not None:
+            comp_diff_model = comp_diff_model.get_low_rank_model(ranks=ranks)
         
-        # Construct quantized model
-        diff_model = diff_model.get_quantized_model(codeword_length=codeword_length)
+        # Construct quantized model if necessary
+        if codeword_length is not None:
+            comp_diff_model = comp_diff_model.get_quantized_model(codeword_length=codeword_length)
         
         # Reconstruct the compressed model for evaluation by adding init_model back in if necessary
-        if compress_difference:
-            comp_model = diff_model.get_model_sum(other=init_model)
+        if compress_model_difference:
+            comp_model = comp_diff_model.get_model_sum(other=init_model)
         else:
-            comp_model = diff_model
+            comp_model = deepcopy(comp_diff_model)
         
-        diff_KL = diff_model.get_KL_of_quantized_model()  # N.B. This is the KL of the compressed form of base_model - init_model
+        # Get the KL of the compressed form (of base_model - init_model if compress_difference is True)
+        diff_KL = comp_diff_model.get_KL_of_quantized_model()
 
         # Get spectral bounds and margins
         spectral_bound_domain = self.get_spectral_bound(other=comp_model, C=C_domain)
@@ -1254,20 +1261,29 @@ class MLP(nn.Module):
         self.compute_svd()
         return self.Vts[layer_idx]
 
-    @property
-    def sensible_ranks(self):
+    def populate_sensible_ranks(self, min_rank: int, rank_step: int) -> list[Tuple[int, ...]]:
         """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
-        if self._sensible_ranks is None:
-            max_sensible_ranks = []
-            for layer in self.linear_layers:
-                m, n = layer.weight.shape
-                max_rank = (m * n) // (m + n)
-                max_sensible_ranks.append(max_rank)
-            self._sensible_ranks = list(product(*[range(r) for r in max_sensible_ranks]))
-        return self._sensible_ranks
+        max_sensible_ranks = []
+        for layer in self.linear_layers:
+            m, n = layer.weight.shape
+            max_rank = (m * n) // (m + n)
+            max_sensible_ranks.append(max_rank)
+        self.sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r in max_sensible_ranks]))
+
+    @property
+    def sensible_codeword_lengths(self) -> list[int]:
+        if self._sensible_codeword_lengths is None:
+            self._sensible_codeword_lengths = []
+            for codeword_length in range(1, 33):
+                if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+                    if 2 ** codeword_length <= self.num_weights:  # Should not have more codewords than weights
+                        self._sensible_codeword_lengths.append(codeword_length)
+        return self._sensible_codeword_lengths
 
     def get_low_rank_model(self: MLP, ranks: Tuple[int, ...]) -> LowRankMLP:
         """Creates a low-rank version of the MLP by truncated the SVDs of the weight matrices."""
+        if self.sensible_ranks is None:
+            raise ValueError("sensible_ranks not populated. Please call populate_sensible_ranks first.")
         if ranks not in self.sensible_ranks:
             raise ValueError(f"{ranks=} are not sensible as for at least one layer they do not reduce storage size.")
         return LowRankMLP(self, ranks)
@@ -1306,7 +1322,7 @@ class LowRankMLP(MLP):
         """
         super().__init__(
             dimensions=original_mlp.dimensions,
-            activation=original_mlp.activation,
+            activation_name=original_mlp.activation_name,
             dropout_prob=0.0,
             device=original_mlp.device,
             shift_logits=False,
@@ -1317,6 +1333,8 @@ class LowRankMLP(MLP):
         self.S_truncs = []
         self.Vt_truncs = []
         self.ranks = ranks
+
+        self._sensible_codeword_lengths = None
         self.codeword_length = None
 
         for i, layer in enumerate(self.linear_layers):
@@ -1338,6 +1356,16 @@ class LowRankMLP(MLP):
         self.num_UV_trunc_vals = sum([U_trunc.numel() + Vt_trunc.numel() for U_trunc, Vt_trunc in zip(self.U_truncs, self.Vt_truncs)])
         self.num_S_trunc_vals = sum([S_trunc.numel() for S_trunc in self.S_truncs])
 
+    @property
+    def sensible_codeword_lengths(self) -> list[int]:
+        if self._sensible_codeword_lengths is None:
+            self._sensible_codeword_lengths = []
+            for codeword_length in range(1, 33):
+                if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+                    if 2 ** codeword_length <= self.num_UV_trunc_vals:  # Should not have more codewords than weights
+                        self._sensible_codeword_lengths.append(codeword_length)
+        return self._sensible_codeword_lengths
+
     @torch.no_grad()
     def update_weights(self) -> None:
         for layer_idx, layer in enumerate(self.linear_layers):
@@ -1348,8 +1376,8 @@ class LowRankMLP(MLP):
 
     def get_concatenated_UV_truncs(self) -> torch.Tensor:
         """Returns the concatenated U_truncs and Vt_truncs of the model as a single (num_UV_trunc_vals, 1) tensor"""
-        U_truncs = [U_trunc.view(-1, 1) for U_trunc in self.U_truncs]
-        Vt_truncs = [Vt_trunc.view(-1, 1) for Vt_trunc in self.Vt_truncs]
+        U_truncs = [U_trunc.reshape(-1, 1) for U_trunc in self.U_truncs]
+        Vt_truncs = [Vt_trunc.reshape(-1, 1) for Vt_trunc in self.Vt_truncs]
         return torch.cat(U_truncs + Vt_truncs, dim=0)
 
     @torch.no_grad()
@@ -1366,7 +1394,8 @@ class LowRankMLP(MLP):
             num_Vt_vals = Vt_trunc.numel()
             Vt_trunc.copy_(concatenated_UV_truncs[i:i+num_Vt_vals].view(Vt_trunc.shape))
             i += num_Vt_vals
-        assert i != len(concatenated_UV_truncs)
+        if i != len(concatenated_UV_truncs):
+            raise ValueError(f"Expected {len(concatenated_UV_truncs)} values but got {i}.")
     
     def get_quantized_model(self, codeword_length: int):
         """Returns a new, quantized model by applying k-means clustering to the U_truncs
@@ -1382,21 +1411,21 @@ class LowRankMLP(MLP):
             quantized_UV_truncs = kmeans.cluster_centers_[kmeans.labels_]
             quantized_model = deepcopy(self)
             quantized_model.set_from_concatenated_UV_truncs(torch.tensor(quantized_UV_truncs, device=self.device))
-            self.update_weights()
+            quantized_model.update_weights()
         quantized_model.codeword_length = codeword_length
         quantized_model.eval()
         return quantized_model
 
-    def quantized_size_in_bits(self) -> int:
+    def quantized_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
-        if self.codeword_length is None:
+        if codeword_length is None:
             codeword_length = 32
+            codebook_size = 0
         else:
-            codeword_length = self.codeword_length
+            codebook_size = 2 ** codeword_length * 32
         UV_truncs_sizes = self.num_UV_trunc_vals * codeword_length
         S_truncs_sizes = self.num_S_trunc_vals * 32
         biases_sizes = self.num_biases * 32
-        codebook_size = 2 ** codeword_length * 32
         return UV_truncs_sizes + S_truncs_sizes + biases_sizes + codebook_size
 
     def get_KL_of_quantized_model(self):
@@ -1405,93 +1434,93 @@ class LowRankMLP(MLP):
         This assumes that the ranks and codeword_length are fixed. A union bound should later account
         for any choice made over the ranks and codeword_length. Note there's no sigma as the posterior
         is a point mass on the final classifier."""
-        return self.quantized_size_in_bits() * torch.log(torch.tensor(2))
+        return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
 
 
 
 # TODO: Remove this once you're sure everything has been properly implemented above.
-class LowRankMLP(MLP):
-    def __init__(self, dimensions, activation, device="cpu"):
-        super().__init__(
-            dimensions=dimensions,
-            activation=activation,
-            low_rank=True,
-            device=device,
-        )
-        self.d = len(dimensions) - 1
+# class LowRankMLP(MLP):
+#     def __init__(self, dimensions, activation, device="cpu"):
+#         super().__init__(
+#             dimensions=dimensions,
+#             activation=activation,
+#             low_rank=True,
+#             device=device,
+#         )
+#         self.d = len(dimensions) - 1
 
-        self._weight_norms = None
-        self._bias_norms = None
-        self._low_rank_weight_norms = None
-        self._perturbation_norms = None
+#         self._weight_norms = None
+#         self._bias_norms = None
+#         self._low_rank_weight_norms = None
+#         self._perturbation_norms = None
 
-        self.rank_combs = list(
-            product(*[range(1, min(layer.weight.shape) + 1) for layer in self.linear_layers])
-        )
-        # self._product_weight_spectral_norms = None
-        # self._valid_rank_combs = None
-        # self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
-        self._num_params = None
-        self._min_UVs = None
-        self._max_UVs = None
-        self._min_Ss = None
-        self._max_Ss = None
-        self._KL_divergences = None
+#         self.rank_combs = list(
+#             product(*[range(1, min(layer.weight.shape) + 1) for layer in self.linear_layers])
+#         )
+#         # self._product_weight_spectral_norms = None
+#         # self._valid_rank_combs = None
+#         # self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
+#         self._num_params = None
+#         self._min_UVs = None
+#         self._max_UVs = None
+#         self._min_Ss = None
+#         self._max_Ss = None
+#         self._KL_divergences = None
 
-    def forward(self, x: torch.Tensor, ranks: list[int]):
-        if len(ranks) != self.d:
-            raise ValueError(f"Expected {self.d} ranks, got {ranks=}.")
-        i = 0
-        for layer in self.network:
-            if isinstance(layer, nn.Linear):
-                x = layer(x, rank=ranks[i])
-                i += 1
-            else:
-                x = layer(x)
-        return x
+#     def forward(self, x: torch.Tensor, ranks: list[int]):
+#         if len(ranks) != self.d:
+#             raise ValueError(f"Expected {self.d} ranks, got {ranks=}.")
+#         i = 0
+#         for layer in self.network:
+#             if isinstance(layer, nn.Linear):
+#                 x = layer(x, rank=ranks[i])
+#                 i += 1
+#             else:
+#                 x = layer(x)
+#         return x
 
-    def weight_norm(self, layer_num):
-        if self._weight_norms is None:
-            self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.linear_layers)}
-        return self._weight_norms[layer_num]
+#     def weight_norm(self, layer_num):
+#         if self._weight_norms is None:
+#             self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.linear_layers)}
+#         return self._weight_norms[layer_num]
 
-    def bias_norm(self, layer_num):
-        if self._bias_norms is None:
-            self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.linear_layers)}
-        return self._bias_norms[layer_num]
+#     def bias_norm(self, layer_num):
+#         if self._bias_norms is None:
+#             self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.linear_layers)}
+#         return self._bias_norms[layer_num]
 
-    def low_rank_weight_norms(self, layer_num, rank):    
-        if self._weight_norms is None:
-            self._weight_norms = dict()
-            for l_num in range(1, self.d + 1):
-                for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
-                    self._weight_norms[(l_num, r)] = self.linear_layers[l_num].low_rank_Ws_spectral_norms[r]
-        return self._weight_norms[(layer_num, rank)]
+#     def low_rank_weight_norms(self, layer_num, rank):    
+#         if self._weight_norms is None:
+#             self._weight_norms = dict()
+#             for l_num in range(1, self.d + 1):
+#                 for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+#                     self._weight_norms[(l_num, r)] = self.linear_layers[l_num].low_rank_Ws_spectral_norms[r]
+#         return self._weight_norms[(layer_num, rank)]
 
-    def perturbation_norms(self, layer_num, rank):
-        if self._perturbation_norms is None:
-            self._perturbation_norms = dict()
-            for l_num in range(1, self.d + 1):
-                for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
-                    self._perturbation_norms[(l_num, r)] = self.linear_layers[l_num]._perturbation_norms[r]
-        return self._perturbation_norms[(layer_num, rank)]
+#     def perturbation_norms(self, layer_num, rank):
+#         if self._perturbation_norms is None:
+#             self._perturbation_norms = dict()
+#             for l_num in range(1, self.d + 1):
+#                 for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+#                     self._perturbation_norms[(l_num, r)] = self.linear_layers[l_num]._perturbation_norms[r]
+#         return self._perturbation_norms[(layer_num, rank)]
 
-    def max_l2_deviation(self, C, ranks: list[int]):
-        return self.beta(C, layer_num=self.d, ranks=ranks)
+#     def max_l2_deviation(self, C, ranks: list[int]):
+#         return self.beta(C, layer_num=self.d, ranks=ranks)
 
-    def KL_divergences(self):
-        pass
+#     def KL_divergences(self):
+#         pass
 
-    @property
-    def num_params(self):
-        if self._num_params is None:
-            self._num_params = {}
-            for rank_comb in self.rank_combs:
-                self._num_params[rank_comb] = sum(
-                    layer.USV_num_params[rank]
-                    for rank, layer in zip(rank_comb, self.linear_layers)
-                )
-        return self._num_params
+#     @property
+#     def num_params(self):
+#         if self._num_params is None:
+#             self._num_params = {}
+#             for rank_comb in self.rank_combs:
+#                 self._num_params[rank_comb] = sum(
+#                     layer.USV_num_params[rank]
+#                     for rank, layer in zip(rank_comb, self.linear_layers)
+#                 )
+#         return self._num_params
 
     # @property
     # def valid_rank_combs(self):

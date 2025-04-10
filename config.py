@@ -19,7 +19,7 @@ class BaseHyperparamsConfig:
     batch_size: int
     dropout_prob: float
     weight_decay: float
-    activation: str = "relu"
+    activation_name: str = "relu"
 
     @property
     def run_name(self):
@@ -39,7 +39,7 @@ class BaseHyperparamsConfig:
 
     def to_dict(self):
         return {
-            "Base Activation": self.activation,
+            "Base Activation": self.activation_name,
             "Base Optimizer": self.optimizer_name,
             "Base Hidden Layer Width": self.hidden_layer_width,
             "Base Num Hidden Layers": self.num_hidden_layers,
@@ -216,16 +216,22 @@ class BaseConfig:
         self.model_base_dir = f"{self.model_root_dir}/base"
         self.model_dist_dir = f"{self.model_root_dir}/dist"
         self.dist_metrics_dir = f"{self.model_root_dir}/dist_metrics"
-        self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"
+        self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
+        self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
+        self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
 
         os.makedirs(self.model_init_dir, exist_ok=True)
         os.makedirs(self.model_base_dir, exist_ok=True)
         os.makedirs(self.model_dist_dir, exist_ok=True)
         os.makedirs(self.dist_metrics_dir, exist_ok=True)
-        os.makedirs(self.quant_metrics_dir, exist_ok=True)
+        os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
+        os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
+        os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
 
         self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
-        self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.json"
+        self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
+        self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
+        self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
     
     def to_dict(self):
         return self.data.to_dict() | self.hyperparams.to_dict() | self.stopping.to_dict()
@@ -265,7 +271,7 @@ class BaseResults:
 
 @dataclass
 class DistHyperparamsConfig:
-    activation: str = "relu"
+    activation_name: str = "relu"
     lr: float = 0.003  # Was 0.01 but for some models this was too high
 
     # dim_skip: int = 10  # TODO: This isn't actually used, so it shouldn't be here.
@@ -281,7 +287,7 @@ class DistHyperparamsConfig:
 
     def to_dict(self):
         return {
-            "Dist Activation": self.activation,
+            "Dist Activation": self.activation_name,
             "Dist Learning Rate": self.lr,
             # "Dist Dim Skip": self.dim_skip,
             # "Dist Min Hidden Dim": self.min_hidden_dim,
@@ -569,8 +575,21 @@ class PACBResults:
 
 @dataclass
 class CompConfig:
-    threshold_codeword_length_to_reduce_k_means_max_iter: int = 10
-    compress_difference: bool = False
+    delta: float = 0.05
+    min_rank: int = 1
+    rank_step: int = 1
+    max_codeword_length: int = 13
+    get_low_rank_only_results: bool = False
+    get_quant_only_results: bool = False
+    get_low_rank_and_quant_results: bool = True
+    compress_model_difference: bool = True
+
+    @classmethod
+    def create(cls, quick_test: bool):
+        if quick_test:
+            return cls(max_codeword_length=10, min_rank=3, rank_step=3)
+        else:
+            return cls()
 
 
 @dataclass
@@ -629,6 +648,75 @@ class FinalCompResults:
     # Hierarchical structure: first by ranks, then by codeword_length
     results: Dict[Optional[Tuple[int, ...]], Dict[int, CompResults]] = field(default_factory=dict)
     
+    def get_best(self) -> None:
+        """Returns a new CompResults object where each field is the best across all ranks and codeword lengths.
+        For most fields, 'best' means lowest value. For train_accuracy and test_accuracy, 'best' means highest value."""
+        if not self.results:
+            raise ValueError("No results available to find best from")
+        
+        # Initialize with extreme values
+        best_values = {
+            'C_domain': float('inf'),
+            'C_data': float('inf'),
+            'spectral_bound_domain': float('inf'),
+            'spectral_bound_data': float('inf'),
+            'margin_domain': float('inf'),
+            'margin_data': float('inf'),
+            'train_accuracy': float('-inf'),  # For accuracy, higher is better
+            'test_accuracy': float('-inf'),   # For accuracy, higher is better
+            'train_margin_loss_domain': float('inf'),
+            'train_margin_loss_data': float('inf'),
+            'KL': float('inf'),
+            'kl_bound': float('inf'),
+            'error_bound_inverse_kl_domain': float('inf'),
+            'error_bound_inverse_kl_data': float('inf'),
+            'error_bound_pinsker_domain': float('inf'),
+            'error_bound_pinsker_data': float('inf'),
+        }
+        
+        # Directly iterate through the nested dictionary structure
+        for ranks, rank_dict in self.results.items():
+            for codeword_length, result in rank_dict.items():
+                result_dict = asdict(result)
+                for key, value in result_dict.items():
+                    # Skip the ranks and codeword_length fields
+                    if key in ['ranks', 'codeword_length']:
+                        continue
+                        
+                    # For accuracy metrics, higher is better
+                    if key in ['train_accuracy', 'test_accuracy']:
+                        if value > best_values[key]:
+                            best_values[key] = value
+                    # For all other metrics, lower is better
+                    else:
+                        if value < best_values[key]:
+                            best_values[key] = value
+        
+        # Create a new CompResults with the best values
+        best_results = CompResults(
+            ranks=None,
+            codeword_length=None,
+            C_domain=best_values['C_domain'],
+            C_data=best_values['C_data'],
+            spectral_bound_domain=best_values['spectral_bound_domain'],
+            spectral_bound_data=best_values['spectral_bound_data'],
+            margin_domain=best_values['margin_domain'],
+            margin_data=best_values['margin_data'],
+            train_accuracy=best_values['train_accuracy'],
+            test_accuracy=best_values['test_accuracy'],
+            train_margin_loss_domain=best_values['train_margin_loss_domain'],
+            train_margin_loss_data=best_values['train_margin_loss_data'],
+            KL=best_values['KL'],
+            kl_bound=best_values['kl_bound'],
+            error_bound_inverse_kl_domain=best_values['error_bound_inverse_kl_domain'],
+            error_bound_inverse_kl_data=best_values['error_bound_inverse_kl_data'],
+            error_bound_pinsker_domain=best_values['error_bound_pinsker_domain'],
+            error_bound_pinsker_data=best_values['error_bound_pinsker_data'],
+        )
+
+        # Add the best results to the results dictionary with None keys
+        self.results[None][None] = best_results
+
     def add_result(self, result: CompResults):
         # Initialize the inner dictionary if needed
         if result.ranks not in self.results:
@@ -638,14 +726,12 @@ class FinalCompResults:
     def save_to_json(self, filename: str):
         # Convert to dict with string keys for JSON compatibility
         data = {
-            "results": {
                 # Convert ranks tuple to comma-separated string
-                ",".join(map(str, ranks)): {
+                self.str_ranks(ranks): {
                     str(codeword_length): asdict(rank_codeword_length_results)
                     for codeword_length, rank_codeword_length_results in rank_results.items()
                     }
                 for ranks, rank_results in self.results.items()
-                }
             }
         with open(filename, "w") as f:
             json.dump(data, f, indent=2)
@@ -656,7 +742,7 @@ class FinalCompResults:
             data = json.load(f)
         
         experiment = cls()
-        for ranks_str, rank_results_dict in data["results"].items():
+        for ranks_str, rank_results_dict in data.items():
             ranks = tuple(int(r) for r in ranks_str.split(","))
             experiment.results[ranks] = {}
             
@@ -674,6 +760,15 @@ class FinalCompResults:
             return self.results[ranks][codeword_length]
         else:
             raise ValueError(f"No results for {ranks=} and {codeword_length=}")
+
+    @staticmethod
+    def str_ranks(ranks):
+        """Convert ranks tuple to a string (or None) for JSON compatibility"""
+        if ranks is None or isinstance(ranks, str):
+            return ranks
+        if isinstance(ranks, tuple):
+            return ",".join(map(str, ranks))
+        raise ValueError(f"Invalid ranks type: {type(ranks)}. Expected tuple, None, or str.")
 
 
 # TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?

@@ -64,7 +64,7 @@ def train_base_model(
 
     init_model = MLP(
         dimensions=base_config.model_dims,
-        activation=base_config.hyperparams.activation,
+        activation_name=base_config.hyperparams.activation_name,
         dropout_prob=base_config.hyperparams.dropout_prob,
         device=base_config.data.device,
     )
