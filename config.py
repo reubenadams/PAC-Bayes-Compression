@@ -130,7 +130,7 @@ class BaseStoppingConfig:
     @classmethod
     def quick_test(cls):
         return cls(
-            max_epochs=1,  # TODO: Return to 100
+            max_epochs=100,
             use_early_stopping=True,
             target_full_train_loss=1.5,
             patience=1
@@ -185,6 +185,7 @@ class BaseConfig:
     data: BaseDataConfig
     stopping: BaseStoppingConfig
     records: BaseRecordsConfig
+    experiment_type: str
 
     @property
     def run_name(self):
@@ -211,27 +212,32 @@ class BaseConfig:
         self.new_input_shape_str = "x".join(map(str, self.data._new_input_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_root_dir = f"models/{self.data.dataset_name}/{self.new_input_shape_str}"
+        self.model_root_dir = f"{self.experiment_type}/models/{self.data.dataset_name}/{self.new_input_shape_str}"
         self.model_init_dir = f"{self.model_root_dir}/init"
         self.model_base_dir = f"{self.model_root_dir}/base"
-        self.model_dist_dir = f"{self.model_root_dir}/dist"
-        self.dist_metrics_dir = f"{self.model_root_dir}/dist_metrics"
-        self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
-        self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
-        self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
-
         os.makedirs(self.model_init_dir, exist_ok=True)
         os.makedirs(self.model_base_dir, exist_ok=True)
-        os.makedirs(self.model_dist_dir, exist_ok=True)
-        os.makedirs(self.dist_metrics_dir, exist_ok=True)
-        os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
-        os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
-        os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
-
-        self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
-        self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
-        self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
-        self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
+        if self.experiment_type == "distillation":
+            self.model_dist_dir = f"{self.model_root_dir}/dist"
+            self.dist_metrics_dir = f"{self.model_root_dir}/dist_metrics"
+            os.makedirs(self.model_dist_dir, exist_ok=True)
+            os.makedirs(self.dist_metrics_dir, exist_ok=True)
+            self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
+        elif self.experiment_type == "quantization":
+            self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the above paths because you're actually saving things twice.
+            self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
+            self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
+            self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
+            os.makedirs(self.quant_metrics_dir, exist_ok=True)
+            os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
+            os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
+            os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
+            self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the above paths because you're actually saving things twice.
+            self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
+        else:
+            raise ValueError(f"Invalid experiment type: {self.experiment_type}. Must be 'distillation' or 'quantization'.")
     
     def to_dict(self):
         return self.data.to_dict() | self.hyperparams.to_dict() | self.stopping.to_dict()
@@ -579,17 +585,29 @@ class CompConfig:
     min_rank: int = 1
     rank_step: int = 1
     max_codeword_length: int = 13
-    get_low_rank_only_results: bool = False
-    get_quant_only_results: bool = False
+    get_low_rank_only_results: bool = True
+    get_quant_only_results: bool = True
     get_low_rank_and_quant_results: bool = True
     compress_model_difference: bool = True
 
     @classmethod
     def create(cls, quick_test: bool):
         if quick_test:
-            return cls(max_codeword_length=10, min_rank=3, rank_step=3)
+            return cls(max_codeword_length=4, min_rank=3, rank_step=10**10)  # Large rank_step ensures only one low rank model is built
         else:
-            return cls()
+            return cls(max_codeword_length=13, min_rank=3, rank_step=3)
+    
+    def to_dict(self):
+        return {
+            "Comp Delta": self.delta,
+            "Comp Min Rank": self.min_rank,
+            "Comp Rank Step": self.rank_step,
+            "Comp Max Codeword Length": self.max_codeword_length,
+            "Comp Get Low Rank Only Results": self.get_low_rank_only_results,
+            "Comp Get Quant Only Results": self.get_quant_only_results,
+            "Comp Get Low Rank and Quant Results": self.get_low_rank_and_quant_results,
+            "Comp Compress Model Difference": self.compress_model_difference,
+        }
 
 
 @dataclass
@@ -613,7 +631,7 @@ class CompResults:
     error_bound_pinsker_domain: float
     error_bound_pinsker_data: float
 
-    def to_wandb_dict(self):
+    def to_dict(self):
         """Returns a dictionary with formatted keys for wandb logging"""
         return {
             "Comp C Domain": self.C_domain,  # Stays fixed
@@ -640,13 +658,14 @@ class CompResults:
 
     def log(self):
         """Log the metrics to wandb"""
-        wandb.log(self.to_wandb_dict())
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
 class FinalCompResults:
     # Hierarchical structure: first by ranks, then by codeword_length
-    results: Dict[Optional[Tuple[int, ...]], Dict[int, CompResults]] = field(default_factory=dict)
+    results: Dict[Tuple[int, ...], Dict[int, CompResults]] = field(default_factory=dict)
     
     def get_best(self) -> None:
         """Returns a new CompResults object where each field is the best across all ranks and codeword lengths.
@@ -714,13 +733,23 @@ class FinalCompResults:
             error_bound_pinsker_data=best_values['error_bound_pinsker_data'],
         )
 
-        # Add the best results to the results dictionary with None keys
-        self.results[None][None] = best_results
+        # Add the best results to the results dictionary with a special key
+        self.results["Best"] = dict()
+        self.results["Best"]["Best"] = best_results
+
+        self.best_results = best_results
+
+    def to_dict(self):
+        return self.best_results.to_dict()
+    
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
+        wandb.log(wandb_metrics)
 
     def add_result(self, result: CompResults):
         # Initialize the inner dictionary if needed
         if result.ranks not in self.results:
-            self.results[result.ranks] = {}
+            self.results[result.ranks] = dict()
         self.results[result.ranks][result.codeword_length] = result
     
     def save_to_json(self, filename: str):

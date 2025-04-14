@@ -8,7 +8,7 @@ import config
 from models import MLP
 
 
-def get_base_config(quick_test: bool, dataset_name: str, device: str):
+def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment_type: str):
     hyperparams = config.BaseHyperparamsConfig.from_wandb_config(wandb.config)
     data_config = config.BaseDataConfig(dataset_name=dataset_name, device=device)
     data_config.add_sample_sizes(quick_test)
@@ -20,6 +20,7 @@ def get_base_config(quick_test: bool, dataset_name: str, device: str):
         data=data_config,
         stopping=stopping_config,
         records=records,
+        experiment_type=experiment_type,
     )
 
 
@@ -184,7 +185,8 @@ def main():
     base_config = get_base_config(
         quick_test=quick_test,
         dataset_name=dataset_name,
-        device=device
+        device=device,
+        experiment_type="distillation",
     )
 
     run.name = base_config.run_name
@@ -198,6 +200,7 @@ def main():
         print("Model reached target train loss")
         base_model.save(base_config.model_base_dir, base_config.model_name)
     else:
+        # If the model did not reach the target train loss log the metrics and finish the run early
         print("Model failed to reach target train loss")
         log_and_save_metrics(
             run_id=run.id,
