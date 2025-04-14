@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Optional, Tuple
+from typing import Optional
 from copy import deepcopy
 from itertools import product
 import matplotlib.pyplot as plt
@@ -251,9 +251,7 @@ class MLP(nn.Module):
         self.Ss = None
         self.Vts = None
         self.svds_computed = False
-        self.sensible_ranks = None
 
-        self._sensible_codeword_lengths = None
         self.codeword_length = None
 
     def forward(self, x):
@@ -550,11 +548,16 @@ class MLP(nn.Module):
         else:
             raise ValueError(f"Invalid optimizer name {base_config.hyperparams.optimizer_name}. Should be 'sgd', 'adam' or 'rmsprop'.")
 
-        if base_config.stopping.target_full_train_loss:
-            best_loss = float("inf")
-            epochs_since_improvement = 0
+        # Initialize early stopping variables
+        best_loss = float("inf")
+        epochs_since_improvement = 0
+        reached_target = False
+        lost_patience = False
+        ran_out_of_epochs = False
 
         for epoch in range(1, base_config.stopping.max_epochs + 1):
+            
+            self.train()
 
             # Log every epoch for the first 100, every 10th until 1000, every 100th until 10000 etc.
             log_freq = 10 ** max(0, math.floor(math.log(epoch, 10)) - 1)
@@ -576,22 +579,15 @@ class MLP(nn.Module):
 
             epoch_log = {"Epoch": epoch}
 
-            ########## Evaluate model and return to training mode ##########
+            # Evaluate model
             self.eval()
-            if base_config.stopping.target_full_train_loss:
-                full_train_loss = self.get_full_loss(
-                    full_train_loss_fn, base_config.data.train_loader
-                )
-                epoch_log[base_config.records.train_loss_name] = (
-                    full_train_loss.item()
-                )
-                if full_train_loss < best_loss:
-                    best_loss = full_train_loss
-                    epochs_since_improvement = 0
-                else:
-                    epochs_since_improvement += 1
+            full_train_loss = None
 
             if (epoch % log_freq == 0) or (epoch == base_config.stopping.max_epochs):
+                if base_config.records.get_full_train_loss:
+                    full_train_loss = self.get_full_loss(full_train_loss_fn, base_config.data.train_loader)
+                    epoch_log[base_config.records.train_loss_name] = full_train_loss.item()
+
                 if base_config.records.get_full_test_loss:
                     test_loss = self.get_full_loss(test_loss_fn, base_config.data.test_loader)
                     epoch_log[base_config.records.test_loss_name] = test_loss.item()
@@ -603,37 +599,42 @@ class MLP(nn.Module):
                 if base_config.records.get_full_test_accuracy:
                     test_accuracy = self.get_full_accuracy(base_config.data.test_loader)
                     epoch_log[base_config.records.test_accuracy_name] = test_accuracy
-            self.train()
-            ########## Evaluate model and return to training mode ##########
 
             # Log metrics
             wandb.log(epoch_log)
 
             # Test if reached target loss
-            if base_config.stopping.target_full_train_loss:
-                # Reached target loss
-                if full_train_loss <= base_config.stopping.target_full_train_loss:
-                    reached_target = True
-                    lost_patience = False
-                    ran_out_of_epochs = False
-                    break
-                # Ran out of patience
-                if epochs_since_improvement >= base_config.stopping.patience:
-                    reached_target = False
-                    lost_patience = True
-                    ran_out_of_epochs = False
-                    break
+            if base_config.stopping.use_early_stopping:
+
+                # full_train_loss may not have been calculated earlier
+                if full_train_loss is None:
+                    full_train_loss = self.get_full_loss(full_train_loss_fn, base_config.data.train_loader)
+
+                # Check if target loss reached
+                if base_config.stopping.target_full_train_loss:
+                    if full_train_loss <= base_config.stopping.target_full_train_loss:
+                        reached_target = True
+                        print(f"Target loss reached at epoch {epoch}.")
+                        break
+
+                # Check patience criterion
+                if base_config.stopping.patience is not None:
+                    if full_train_loss < best_loss:
+                        best_loss = full_train_loss
+                        epochs_since_improvement = 0
+                    else:
+                        epochs_since_improvement += 1
+
+                    # Ran out of patience
+                    if epochs_since_improvement >= base_config.stopping.patience:
+                        lost_patience = True
+                        print(f"Ran out of patience at epoch {epoch}.")
+                        break
         
-        # Either no target set or ran out of epochs
         else:
-            # Ran out of epochs
-            if base_config.stopping.target_full_train_loss:
-                reached_target = False
-                lost_patience = False
-                ran_out_of_epochs = True
-            # No target set
-            else:
-                full_train_loss = None
+            ran_out_of_epochs = True
+            print(f"Ran out of epochs at epoch {epoch}.")
+            if not base_config.stopping.use_early_stopping:
                 reached_target = None
                 lost_patience = None
                 ran_out_of_epochs = None
@@ -1135,15 +1136,15 @@ class MLP(nn.Module):
         is a point mass on the final classifier."""
         return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
 
-    # TODO: Do we want to also try only doing one of low rank and quantized?
     def get_comp_pacb_results(
             self: MLP,
             delta: float,
+            num_union_bounds: int,
             train_loader: DataLoader,
             test_loader: DataLoader,
             C_domain: torch.Tensor,
             C_data: torch.Tensor,
-            ranks: Optional[Tuple[int, ...]] = None,
+            ranks: Optional[tuple[int]] = None,
             codeword_length: int = None,
             compress_model_difference: bool = False,
             init_model: MLP = None,
@@ -1152,22 +1153,12 @@ class MLP(nn.Module):
         then the bound on the error rate of the original model. The prior spreads its
         mass across different codeword lengths, so is valid for all codeword lengths
         simultaneously."""
-        
-        # if not (low_rank or quantize):
-        if ranks is None and codeword_length is None:
-            raise ValueError("Either ranks or codeword_length must be specified.")
 
         if compress_model_difference and init_model is None:
             raise ValueError("If compress_difference is True, init_model must be provided.")
 
-        if ranks is not None and self.sensible_ranks is None:
-            raise ValueError("sensible_ranks has not been populated. Call populate_sensible_ranks first.")
-
         # Account for choice over ranks and codeword length
-        if ranks is not None:
-            delta /= len(self.sensible_ranks)
-        if codeword_length is not None:
-            delta /= 32
+        delta /= num_union_bounds
 
         # diff_model is base_model - init_model if compress_difference is True, otherwise it's just self (aka difference from origin)
         if compress_model_difference:
@@ -1261,31 +1252,34 @@ class MLP(nn.Module):
         self.compute_svd()
         return self.Vts[layer_idx]
 
-    def populate_sensible_ranks(self, min_rank: int, rank_step: int) -> list[Tuple[int, ...]]:
+    def get_sensible_ranks(self, min_rank: int, rank_step: int) -> list[tuple[int]]:
         """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
         max_sensible_ranks = []
         for layer in self.linear_layers:
             m, n = layer.weight.shape
             max_rank = (m * n) // (m + n)
             max_sensible_ranks.append(max_rank)
-        self.sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r in max_sensible_ranks]))
+        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r in max_sensible_ranks]))
+        return sensible_ranks
 
-    @property
-    def sensible_codeword_lengths(self) -> list[int]:
-        if self._sensible_codeword_lengths is None:
-            self._sensible_codeword_lengths = []
-            for codeword_length in range(1, 33):
-                if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
-                    if 2 ** codeword_length <= self.num_weights:  # Should not have more codewords than weights
-                        self._sensible_codeword_lengths.append(codeword_length)
-        return self._sensible_codeword_lengths
+    def get_sensible_codeword_lengths_quant_only(self) -> list[int]:
+        sensible_lengths = []
+        for codeword_length in range(1, 33):
+            if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+                if 2 ** codeword_length <= self.num_weights:  # Should not have more codewords than weights
+                    sensible_lengths.append(codeword_length)
+        return sensible_lengths
 
-    def get_low_rank_model(self: MLP, ranks: Tuple[int, ...]) -> LowRankMLP:
-        """Creates a low-rank version of the MLP by truncated the SVDs of the weight matrices."""
-        if self.sensible_ranks is None:
-            raise ValueError("sensible_ranks not populated. Please call populate_sensible_ranks first.")
-        if ranks not in self.sensible_ranks:
-            raise ValueError(f"{ranks=} are not sensible as for at least one layer they do not reduce storage size.")
+    def get_sensible_codeword_lengths_low_rank_and_quant(self, min_rank: int, rank_step: int) -> dict[tuple[int], int]:
+        sensible_lengths = dict()
+        sensible_ranks = self.get_sensible_ranks(min_rank=min_rank, rank_step=rank_step)
+        for ranks in sensible_ranks:
+            low_rank_model = self.get_low_rank_model(ranks=ranks)
+            sensible_lengths[tuple(ranks)] = low_rank_model.get_sensible_codeword_lengths()
+        return sensible_lengths
+
+    def get_low_rank_model(self: MLP, ranks: tuple[int]) -> LowRankMLP:
+        """Creates a low-rank version of the MLP by truncating the SVDs of the weight matrices."""
         return LowRankMLP(self, ranks)
 
     def get_model_difference(self: MLP, other: MLP) -> MLP:
@@ -1312,7 +1306,7 @@ class MLP(nn.Module):
 
 
 class LowRankMLP(MLP):
-    def __init__(self, original_mlp: MLP, ranks: Tuple[int, ...]):
+    def __init__(self, original_mlp: MLP, ranks: tuple[int]):
         """
         Low-rank version of MLP with factorized weight matrices
         
@@ -1334,7 +1328,6 @@ class LowRankMLP(MLP):
         self.Vt_truncs = []
         self.ranks = ranks
 
-        self._sensible_codeword_lengths = None
         self.codeword_length = None
 
         for i, layer in enumerate(self.linear_layers):
@@ -1356,15 +1349,13 @@ class LowRankMLP(MLP):
         self.num_UV_trunc_vals = sum([U_trunc.numel() + Vt_trunc.numel() for U_trunc, Vt_trunc in zip(self.U_truncs, self.Vt_truncs)])
         self.num_S_trunc_vals = sum([S_trunc.numel() for S_trunc in self.S_truncs])
 
-    @property
-    def sensible_codeword_lengths(self) -> list[int]:
-        if self._sensible_codeword_lengths is None:
-            self._sensible_codeword_lengths = []
-            for codeword_length in range(1, 33):
-                if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
-                    if 2 ** codeword_length <= self.num_UV_trunc_vals:  # Should not have more codewords than weights
-                        self._sensible_codeword_lengths.append(codeword_length)
-        return self._sensible_codeword_lengths
+    def get_sensible_codeword_lengths(self) -> list[int]:
+        codeword_lengths = []
+        for codeword_length in range(1, 33):
+            if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+                if 2 ** codeword_length <= self.num_UV_trunc_vals:  # Should not have more codewords than weights
+                    codeword_lengths.append(codeword_length)
+        return codeword_lengths
 
     @torch.no_grad()
     def update_weights(self) -> None:

@@ -29,7 +29,7 @@ def kl_scalars_inverse(q, B, x_tol=2e-12):
         print("No upper bound on p")
         return torch.tensor(1.)
     root = bisect(f=f, a=q, b=p_max, xtol=x_tol)
-    return root
+    return torch.tensor(root)
 
 
 def pacb_kl_bound(KL, n, delta):

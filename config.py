@@ -1,7 +1,7 @@
 import os
 import json
 from dataclasses import dataclass, asdict, field
-from typing import Optional, List, Dict, Tuple
+from typing import Optional
 import wandb
 from math import prod
 import torch
@@ -54,7 +54,7 @@ class BaseHyperparamsConfig:
 class BaseDataConfig:
     dataset_name: str
     device: str
-    new_input_shape: Optional[Tuple[int, int]] = None
+    new_input_shape: Optional[tuple[int, int]] = None
     train_size: Optional[int] = None
     test_size: Optional[int] = None
     train_loader: Optional[DataLoader] = None
@@ -124,8 +124,13 @@ class BaseDataConfig:
 class BaseStoppingConfig:
     max_epochs: int
     use_early_stopping: bool
-    target_full_train_loss: float
-    patience: int
+    target_full_train_loss: Optional[float]
+    patience: Optional[int]
+
+    def __post_init__(self):
+        if self.use_early_stopping:
+            if self.patience is None and self.target_full_train_loss is None:
+                raise ValueError("Must provide one of patience or target_full_train_loss when use_early_stopping is True")
 
     @classmethod
     def quick_test(cls):
@@ -192,19 +197,6 @@ class BaseConfig:
         return self.hyperparams.run_name
 
     def __post_init__(self):
-        if self.stopping.use_early_stopping:
-            if self.stopping.target_full_train_loss is None:
-                raise ValueError(
-                    "Must provide target_full_train_loss when use_early_stopping is True"
-                )
-            if self.stopping.patience is None:
-                raise ValueError(
-                    "Must provide patience when use_early_stopping is True"
-                )
-            if self.records.get_full_train_loss is False:
-                raise ValueError(
-                    "Must set get_full_train_loss to True when use_early_stopping is True"
-                )
 
         self.model_dims = [prod(self.data._new_input_shape)] + [self.hyperparams.hidden_layer_width] * self.hyperparams.num_hidden_layers + [10]
         self.model_name = self.hyperparams.run_name
@@ -224,15 +216,23 @@ class BaseConfig:
             os.makedirs(self.dist_metrics_dir, exist_ok=True)
             self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
         elif self.experiment_type == "quantization":
-            self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the above paths because you're actually saving things twice.
+            self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
+
+            self.no_comp_metrics_dir = f"{self.model_root_dir}/no_comp_metrics"
             self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
             self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
             self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
+            
             os.makedirs(self.quant_metrics_dir, exist_ok=True)
+            
+            os.makedirs(self.no_comp_metrics_dir, exist_ok=True)
             os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
             os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
             os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
-            self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the above paths because you're actually saving things twice.
+
+            self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the below paths because you're actually saving things twice.
+            
+            self.no_comp_metrics_path = f"{self.no_comp_metrics_dir}/{self.hyperparams.run_name}.json"
             self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
             self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
             self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
@@ -595,7 +595,7 @@ class CompConfig:
         if quick_test:
             return cls(max_codeword_length=4, min_rank=3, rank_step=10**10)  # Large rank_step ensures only one low rank model is built
         else:
-            return cls(max_codeword_length=13, min_rank=3, rank_step=3)
+            return cls(max_codeword_length=10, min_rank=1, rank_step=1)
     
     def to_dict(self):
         return {
@@ -612,8 +612,8 @@ class CompConfig:
 
 @dataclass
 class CompResults:
-    ranks: Optional[Tuple[int, ...]]
-    codeword_length: int
+    ranks: Optional[tuple[int]]
+    codeword_length: Optional[int]
     C_domain: float
     C_data: float
     spectral_bound_domain: float
@@ -665,7 +665,7 @@ class CompResults:
 @dataclass
 class FinalCompResults:
     # Hierarchical structure: first by ranks, then by codeword_length
-    results: Dict[Tuple[int, ...], Dict[int, CompResults]] = field(default_factory=dict)
+    results: dict[tuple[int], dict[int, CompResults]] = field(default_factory=dict)
     
     def get_best(self) -> None:
         """Returns a new CompResults object where each field is the best across all ranks and codeword lengths.
@@ -783,7 +783,7 @@ class FinalCompResults:
                 
         return experiment
     
-    def get_result(self, ranks: Optional[Tuple[int, ...]], codeword_length: int) -> CompResults:
+    def get_result(self, ranks: Optional[tuple[int]], codeword_length: int) -> CompResults:
         """Get results for a specific rank and codeword_length combination"""
         if ranks in self.results and codeword_length in self.results[ranks]:
             return self.results[ranks][codeword_length]
@@ -805,7 +805,7 @@ class FinalCompResults:
 class ExperimentConfig:
     experiment: str  # "low_rank", "hypernet", "distillation"
     model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, base, dist
-    model_dims: List[int] = None
+    model_dims: list[int] = None
     optimizer_name: str = "adam"
     lr: float = 0.01
     batch_size: int = 64
@@ -813,7 +813,7 @@ class ExperimentConfig:
     weight_decay: float = 0.0
 
     dataset_name: str = "MNIST"
-    new_data_shape: Optional[Tuple[int, int]] = None
+    new_data_shape: Optional[tuple[int, int]] = None
     model_act: str = "relu"
     model_name: Optional[str] = None
 

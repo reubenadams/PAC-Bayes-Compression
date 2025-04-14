@@ -164,6 +164,7 @@ cython_debug/
 
 models/
 trained_models/
+quantization/
 wandb/
 data/
 wandb_api_key.txt
