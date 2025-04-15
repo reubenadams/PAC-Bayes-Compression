@@ -222,6 +222,7 @@ class BaseConfig:
             self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
             self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
             self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
+            self.best_comp_metrics_dir = f"{self.model_root_dir}/best_comp_metrics"
             
             os.makedirs(self.quant_metrics_dir, exist_ok=True)
             
@@ -229,6 +230,7 @@ class BaseConfig:
             os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
             os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
             os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
+            os.makedirs(self.best_comp_metrics_dir, exist_ok=True)
 
             self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the below paths because you're actually saving things twice.
             
@@ -236,6 +238,7 @@ class BaseConfig:
             self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
             self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
             self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.best_comp_metrics_path = f"{self.best_comp_metrics_dir}/{self.hyperparams.run_name}.json"
         else:
             raise ValueError(f"Invalid experiment type: {self.experiment_type}. Must be 'distillation' or 'quantization'.")
     
@@ -734,8 +737,8 @@ class FinalCompResults:
         )
 
         # Add the best results to the results dictionary with a special key
-        self.results["Best"] = dict()
-        self.results["Best"]["Best"] = best_results
+        self.results["best"] = dict()
+        self.results["best"]["best"] = best_results
 
         self.best_results = best_results
 

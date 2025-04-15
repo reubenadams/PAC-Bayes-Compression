@@ -6,7 +6,8 @@ from torchvision import datasets, transforms
 from torch.utils.data import Dataset, Subset, DataLoader
 import torch.nn.functional as F
 
-from mnist1d.data import get_dataset_args, get_dataset
+from mnist1d.data import get_dataset_args, get_dataset, make_dataset
+from mnist1d.utils import ObjectView
 
 
 dataset_shapes = {
@@ -113,8 +114,19 @@ def get_datasets(
         elif dataset_name == "MNIST1D":
             os.makedirs(data_dir, exist_ok=True)
             path = os.path.join(data_dir, "mnist1d_data.pkl")
-            args = get_dataset_args()
-            data = get_dataset(args, path=path, download=True)
+            
+            if _train_size is None and _test_size is None:
+                args = get_dataset_args()
+            elif _train_size is not None and _test_size is not None:
+                args = get_dataset_args(as_dict=True)
+                args["num_samples"] = _train_size + _test_size
+                args["train_split"] = _train_size / (train_size + test_size)
+                args = ObjectView(args)
+            else:
+                raise ValueError("Either both train_size and test_size should be specified or neither.")
+
+            data = make_dataset(args=args)
+            # data = get_dataset(args, path=path, download=True)
             x_train = torch.tensor(data["x"], dtype=torch.float32)
             x_test = torch.tensor(data["x_test"], dtype=torch.float32)
             x_train.clip_(-4.0, 4.0)

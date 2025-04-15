@@ -539,6 +539,8 @@ class MLP(nn.Module):
 
         self.train()
 
+        print(f"Training on {len(base_config.data.train_loader.dataset)} samples from {base_config.data.dataset_name}")
+
         if base_config.hyperparams.optimizer_name == "sgd":
             optimizer = torch.optim.SGD(self.parameters(), lr=base_config.hyperparams.lr, weight_decay=base_config.hyperparams.weight_decay)
         elif base_config.hyperparams.optimizer_name == "adam":
@@ -601,7 +603,6 @@ class MLP(nn.Module):
                     epoch_log[base_config.records.test_accuracy_name] = test_accuracy
 
             # Log metrics
-            wandb.log(epoch_log)
 
             # Test if reached target loss
             if base_config.stopping.use_early_stopping:
@@ -609,6 +610,7 @@ class MLP(nn.Module):
                 # full_train_loss may not have been calculated earlier
                 if full_train_loss is None:
                     full_train_loss = self.get_full_loss(full_train_loss_fn, base_config.data.train_loader)
+                    epoch_log[base_config.records.train_loss_name] = full_train_loss.item()
 
                 # Check if target loss reached
                 if base_config.stopping.target_full_train_loss:
@@ -630,6 +632,8 @@ class MLP(nn.Module):
                         lost_patience = True
                         print(f"Ran out of patience at epoch {epoch}.")
                         break
+
+            wandb.log(epoch_log)
         
         else:
             ran_out_of_epochs = True

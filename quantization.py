@@ -1,4 +1,5 @@
 import os
+import json
 import wandb
 import torch
 import pandas as pd
@@ -9,12 +10,16 @@ import config
 
 def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment_type: str):
     hyperparams = config.BaseHyperparamsConfig.from_wandb_config(wandb.config)
+    
     data_config = config.BaseDataConfig(dataset_name=dataset_name, device=device)
-    data_config.add_sample_sizes(quick_test)
+    # data_config.add_sample_sizes(quick_test)
+    data_config.train_size = 1000 if quick_test else 500000
+    data_config.test_size = 100 if quick_test else 10000
     data_config.add_dataloaders(hyperparams.batch_size)
+    
     stopping_config = config.BaseStoppingConfig.create(quick_test)
     stopping_config.target_full_train_loss = None  # Base model should train until convergence
-    stopping_config.patience = 3
+    stopping_config.patience = 1
     records = config.BaseRecordsConfig()
     return config.BaseConfig(
         hyperparams=hyperparams,
@@ -71,6 +76,7 @@ def main():
     device = "cpu"
     dataset_name = "MNIST1D"
     seed = 0
+    best_results = dict()
 
     torch.manual_seed(seed)
     os.environ["WANDB_SILENT"] = "true"
@@ -93,35 +99,34 @@ def main():
     init_model.save(base_config.model_init_dir, base_config.model_name)
     base_model.save(base_config.model_base_dir, base_config.model_name)
 
-    # Get results without any compression
-    if comp_config.get_quant_only_results:
-        
-        print()
-        print("Getting results without any compression...")
 
-        final_no_comp_results = config.FinalCompResults()
-        num_union_bounds = 1
+    # Get results without any compression        
+    print()
+    print("Getting results without any compression...")
 
-        no_comp_results = base_model.get_comp_pacb_results(
-            delta=pacb_config.delta,
-            num_union_bounds=num_union_bounds,
-            train_loader=base_config.data.train_loader,
-            test_loader=base_config.data.test_loader,
-            C_domain=base_config.data.C_train_domain,
-            C_data=base_config.data.C_train_data,
-            ranks=None,
-            codeword_length=None,
-            compress_model_difference=False,
-            init_model=None,
-        )
-        print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_domain}")
-        print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_data}")
-        print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_domain}")
-        print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_data}")
-        final_no_comp_results.add_result(no_comp_results)
-        no_comp_results.log()
-        final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)    
+    final_no_comp_results = config.FinalCompResults()
+    num_union_bounds = 1
 
+    no_comp_results = base_model.get_comp_pacb_results(
+        delta=pacb_config.delta,
+        num_union_bounds=num_union_bounds,
+        train_loader=base_config.data.train_loader,
+        test_loader=base_config.data.test_loader,
+        C_domain=base_config.data.C_train_domain,
+        C_data=base_config.data.C_train_data,
+        ranks=None,
+        codeword_length=None,
+        compress_model_difference=False,
+        init_model=None,
+    )
+    print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_domain}")
+    print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_data}")
+    print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_domain}")
+    print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_data}")
+    final_no_comp_results.add_result(no_comp_results)
+    no_comp_results.log()
+    final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
+    best_results["no_comp"] = no_comp_results.to_dict()
 
     # Get quant only results
     if comp_config.get_quant_only_results:
@@ -151,6 +156,7 @@ def main():
             quant_results.log()
         final_quant_only_results.get_best()
         final_quant_only_results.save_to_json(filename=base_config.quant_only_metrics_path)
+        best_results["quant_only"] = final_quant_only_results.best_results.to_dict()
 
     # Get low rank only results
     if comp_config.get_low_rank_only_results:
@@ -180,9 +186,9 @@ def main():
             low_rank_results.log()
         final_low_rank_only_results.get_best()
         final_low_rank_only_results.save_to_json(filename=base_config.low_rank_only_metrics_path)
+        best_results["low_rank_only"] = final_low_rank_only_results.best_results.to_dict()
 
     # Get low rank and quant results
-    # TODO: For each low rank, we should get the sensible codeword lengths!
     if comp_config.get_low_rank_and_quant_results:
 
         print()
@@ -217,6 +223,7 @@ def main():
                 low_rank_and_quant_results.log()
         final_low_rank_and_quant_results.get_best()
         final_low_rank_and_quant_results.save_to_json(filename=base_config.low_rank_and_quant_metrics_path)
+        best_results["low_rank_and_quant"] = final_low_rank_and_quant_results.best_results.to_dict()
 
     log_and_save_metrics(
         run_id=run.id,
@@ -228,6 +235,10 @@ def main():
         final_quant_only_results=final_quant_only_results,
         final_low_rank_and_quant_results=final_low_rank_and_quant_results,
     )
+
+    with open(base_config.best_comp_metrics_path, "w") as f:
+        json.dump(best_results, f, indent=2)
+    
     run.finish()
 
 if __name__ == "__main__":
