@@ -1,3 +1,5 @@
+from __future__ import annotations
+import inspect
 import os
 import json
 from dataclasses import dataclass, asdict, field
@@ -7,7 +9,7 @@ from math import prod
 import torch
 from torch.utils.data import DataLoader
 
-from load_data import get_dataloaders, get_max_l2_norm_data
+from load_data import get_dataloaders, get_rand_domain_loader, get_max_l2_norm_data
 
 
 @dataclass
@@ -63,14 +65,6 @@ class BaseDataConfig:
     _C_train_domain = None
     _C_train_data = None
 
-    def add_sample_sizes(self, quick_test):
-        if quick_test:
-            self.train_size = 100
-            self.test_size = 100
-        else:
-            self.train_size = None
-            self.test_size = None
-
     def __post_init__(self):
         if self.new_input_shape is None:
             if self.dataset_name == "MNIST":
@@ -82,9 +76,16 @@ class BaseDataConfig:
             elif self.dataset_name == "MNIST1D":
                 self._new_input_shape = (40,)
                 self.input_range = 8  # Data range was [-inf, inf] but became [-4, 4] after clipping
-
         else:
             self._new_input_shape = self.new_input_shape
+
+    def add_sample_sizes(self, quick_test):
+        if quick_test:
+            self.train_size = 100
+            self.test_size = 100
+        else:
+            self.train_size = None
+            self.test_size = None
 
     def add_dataloaders(self, batch_size):
         self.train_loader, self.test_loader, self.data_dir = get_dataloaders(
@@ -584,21 +585,73 @@ class PACBResults:
 
 @dataclass
 class CompConfig:
+    
+    # First three arguments to be passed from BaseConfig
+    dataset_name: str
+    device: str
+    new_input_shape: Optional[tuple[int, int]]
+
     delta: float = 0.05
     min_rank: int = 1
     rank_step: int = 1
-    max_codeword_length: int = 13
+    max_codeword_length: int = 10
     get_low_rank_only_results: bool = True
     get_quant_only_results: bool = True
     get_low_rank_and_quant_results: bool = True
     compress_model_difference: bool = True
 
-    @classmethod
-    def create(cls, quick_test: bool):
-        if quick_test:
-            return cls(max_codeword_length=4, min_rank=3, rank_step=10**10)  # Large rank_step ensures only one low rank model is built
+    rand_domain_loader_batch_size: int = 128
+    rand_domain_loader_sample_size: int = 10**6
+    rand_domain_loader_dist_name: str = "uniform"
+    dist_min: Optional[float] = None
+    dist_max: Optional[float] = None
+
+    def __post_init__(self):
+        if self.dataset_name == "MNIST1D":
+            self.dist_min = -4.0
+            self.dist_max = 4.0
+        # TODO: This depends on the normalization done in load_data.py, so the normalization values should be passed to this config
+        elif self.dataset_name in {"MNIST", "CIFAR10"}:
+            self.dist_min = -1.0
+            self.dist_max = 1.0
         else:
-            return cls(max_codeword_length=10, min_rank=1, rank_step=1)
+            raise ValueError(f"Invalid dataset name: {self.dataset_name}. Must be 'MNIST1D', 'MNIST', or 'CIFAR10'.")
+        
+        self.rand_domain_loader = get_rand_domain_loader(
+            data_shape=self.new_input_shape,
+            sample_size=self.rand_domain_loader_sample_size,
+            batch_size=self.rand_domain_loader_batch_size,
+            dist_name=self.rand_domain_loader_dist_name,
+            dist_min=self.dist_min,
+            dist_max=self.dist_max,
+            device=self.device,
+        )
+
+    @classmethod
+    def create(
+        cls,
+        quick_test: bool,
+        dataset_name: str,
+        device: str,
+        new_input_shape: Optional[tuple[int, int]]
+    ) -> CompConfig:
+        
+        if quick_test:
+            return cls(
+                dataset_name=dataset_name,
+                device=device,
+                new_input_shape=new_input_shape,
+                max_codeword_length=4,
+                min_rank=3,
+                rank_step=10**10,  # Large rank_step ensures only one low rank model is built
+                rand_domain_loader_sample_size=10**3
+            )
+        else:
+            return cls(
+                dataset_name=dataset_name,
+                device=device,
+                new_input_shape=new_input_shape,
+            )
     
     def to_dict(self):
         return {
@@ -615,54 +668,117 @@ class CompConfig:
 
 @dataclass
 class CompResults:
+
     ranks: Optional[tuple[int]]
     codeword_length: Optional[int]
+    
     C_domain: float
     C_data: float
-    spectral_bound_domain: float
-    spectral_bound_data: float
-    margin_domain: float
-    margin_data: float
+    
+    spectral_l2_bound_domain: float
+    spectral_l2_bound_data: float
+    empirical_l2_bound_domain: float
+    empirical_l2_bound_train_data: float
+    empirical_l2_bound_test_data: float
+    
+    margin_spectral_domain: float
+    margin_spectral_data: float
+    margin_empirical_domain: float
+    margin_empirical_train_data: float
+    margin_empirical_test_data: float
+    
     train_accuracy: float
     test_accuracy: float
-    train_margin_loss_domain: float
-    train_margin_loss_data: float
+    
+    train_margin_loss_spectral_domain: float
+    train_margin_loss_spectral_data: float
+    train_margin_loss_empirical_domain: float
+    train_margin_loss_empirical_train_data: float
+    train_margin_loss_empirical_test_data: float
+    
     KL: float
     kl_bound: float
-    error_bound_inverse_kl_domain: float
-    error_bound_inverse_kl_data: float
-    error_bound_pinsker_domain: float
-    error_bound_pinsker_data: float
+    
+    error_bound_inverse_kl_spectral_domain: float
+    error_bound_inverse_kl_spectral_data: float
+    error_bound_inverse_kl_empirical_domain: float
+    error_bound_inverse_kl_empirical_train_data: float
+    error_bound_inverse_kl_empirical_test_data: float
+
+    error_bound_pinsker_spectral_domain: float
+    error_bound_pinsker_spectral_data: float
+    error_bound_pinsker_empirical_domain: float
+    error_bound_pinsker_empirical_train_data: float
+    error_bound_pinsker_empirical_test_data: float
 
     def to_dict(self):
         """Returns a dictionary with formatted keys for wandb logging"""
         return {
+            "Comp Ranks": self.ranks,
+            "Comp Codeword Length": self.codeword_length,
+            
             "Comp C Domain": self.C_domain,  # Stays fixed
             "Comp C Data": self.C_data,  # Stays fixed
 
-            "Comp Ranks": self.ranks,
-            "Comp Codeword Length": self.codeword_length,
+            "Comp Spectral l2 Bound (using C_domain)": self.spectral_l2_bound_domain,
+            "Comp Spectral l2 Bound (using C_data)": self.spectral_l2_bound_data,
+            "Comp Empirical l2 Bound (on rand domain data)": self.empirical_l2_bound_domain,
+            "Comp Empirical l2 Bound (on train data)": self.empirical_l2_bound_train_data,
+            "Comp Empirical l2 Bound (on test data)": self.empirical_l2_bound_test_data,
 
-            "Comp Spectral Bound (using C_domain)": self.spectral_bound_domain,
-            "Comp Spectral Bound (using C_data)": self.spectral_bound_data,
-            "Comp Margin (using C_domain)": self.margin_domain,
-            "Comp Margin (using C_data)": self.margin_data,
+            "Comp Margin Spectral (using C_domain)": self.margin_spectral_domain,
+            "Comp Margin Spectral (using C_data)": self.margin_spectral_data,
+            "Comp Empirical Margin (on rand domain data)": self.margin_empirical_domain,
+            "Comp Empirical Margin (on train data)": self.margin_empirical_train_data,
+            "Comp Empirical Margin (on test data)": self.margin_empirical_test_data,
+
             "Comp Train Accuracy": self.train_accuracy,
             "Comp Test Accuracy": self.test_accuracy,
-            "Comp Train Margin Loss (using C_domain)": self.train_margin_loss_domain,
-            "Comp Train Margin Loss (using C_data)": self.train_margin_loss_data,
+
+            "Comp Train Margin Loss Spectral (using C_domain)": self.train_margin_loss_spectral_domain,
+            "Comp Train Margin Loss Spectral (using C_data)": self.train_margin_loss_spectral_data,
+            "Comp Train Margin Loss Empirical (on rand domain data)": self.train_margin_loss_empirical_domain,
+            "Comp Train Margin Loss Empirical (on train data)": self.train_margin_loss_empirical_train_data,
+            "Comp Train Margin Loss Empirical (on test data)": self.train_margin_loss_empirical_test_data,
+
             "Comp KL": self.KL,
             "Comp kl Bound": self.kl_bound,
-            "Comp Error Bound Inverse kl (using C_domain)": self.error_bound_inverse_kl_domain,
-            "Comp Error Bound Inverse kl (using C_data)": self.error_bound_inverse_kl_data,
-            "Comp Error Bound Pinsker (using C_domain)": self.error_bound_pinsker_domain,
-            "Comp Error Bound Pinsker (using C_data)": self.error_bound_pinsker_data,
+
+            "Comp Error Bound Inverse kl Spectral (using C_domain)": self.error_bound_inverse_kl_spectral_domain,
+            "Comp Error Bound Inverse kl Spectral (using C_data)": self.error_bound_inverse_kl_spectral_data,
+            "Comp Error Bound Inverse kl Empirical (on rand domain data)": self.error_bound_inverse_kl_empirical_domain,
+            "Comp Error Bound Inverse kl Empirical (on train data)": self.error_bound_inverse_kl_empirical_train_data,
+            "Comp Error Bound Inverse kl Empirical (on test data)": self.error_bound_inverse_kl_empirical_test_data,
+            
+            "Comp Error Bound Pinsker Spectral (using C_domain)": self.error_bound_pinsker_spectral_domain,
+            "Comp Error Bound Pinsker Spectral (using C_data)": self.error_bound_pinsker_spectral_data,
+            "Comp Error Bound Pinsker Empirical (on rand domain data)": self.error_bound_pinsker_empirical_domain,
+            "Comp Error Bound Pinsker Empirical (on train data)": self.error_bound_pinsker_empirical_train_data,
+            "Comp Error Bound Pinsker Empirical (on test data)": self.error_bound_pinsker_empirical_test_data,
         }
 
     def log(self):
         """Log the metrics to wandb"""
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
+
+    @classmethod 
+    def get_extreme_vals(cls):
+        """Returns an instance of CompResults with ranks and codeword_length set to None, train
+        and test accuracy set to float('-inf'), and all other float fields set to float('inf')."""
+
+        field_names = inspect.signature(cls).parameters
+        field_values = dict()
+
+        for field_name in field_names:
+            if field_name in {'ranks', 'codeword_length'}:
+                field_values[field_name] = None
+            elif field_name in {'train_accuracy', 'test_accuracy'}:
+                field_values[field_name] = float('-inf')
+            else:
+                field_values[field_name] = float('inf')
+        
+        return cls(**field_values)
 
 
 @dataclass
@@ -676,70 +792,24 @@ class FinalCompResults:
         if not self.results:
             raise ValueError("No results available to find best from")
         
-        # Initialize with extreme values
-        best_values = {
-            'C_domain': float('inf'),
-            'C_data': float('inf'),
-            'spectral_bound_domain': float('inf'),
-            'spectral_bound_data': float('inf'),
-            'margin_domain': float('inf'),
-            'margin_data': float('inf'),
-            'train_accuracy': float('-inf'),  # For accuracy, higher is better
-            'test_accuracy': float('-inf'),   # For accuracy, higher is better
-            'train_margin_loss_domain': float('inf'),
-            'train_margin_loss_data': float('inf'),
-            'KL': float('inf'),
-            'kl_bound': float('inf'),
-            'error_bound_inverse_kl_domain': float('inf'),
-            'error_bound_inverse_kl_data': float('inf'),
-            'error_bound_pinsker_domain': float('inf'),
-            'error_bound_pinsker_data': float('inf'),
-        }
-        
-        # Directly iterate through the nested dictionary structure
-        for ranks, rank_dict in self.results.items():
-            for codeword_length, result in rank_dict.items():
-                result_dict = asdict(result)
-                for key, value in result_dict.items():
-                    # Skip the ranks and codeword_length fields
-                    if key in ['ranks', 'codeword_length']:
+        field_names = inspect.signature(CompResults).parameters
+        best_values = asdict(CompResults.get_extreme_vals())
+
+        for field_name in field_names:
+            for ranks, rank_dict in self.results.items():
+                for codeword_length, result in rank_dict.items():
+                    value = getattr(result, field_name)
+                    if field_name in {'ranks', 'codeword_length'}:
                         continue
-                        
-                    # For accuracy metrics, higher is better
-                    if key in ['train_accuracy', 'test_accuracy']:
-                        if value > best_values[key]:
-                            best_values[key] = value
-                    # For all other metrics, lower is better
+                    if field_name in ['train_accuracy', 'test_accuracy']:
+                        best_values[field_name] = max(best_values[field_name], value)
                     else:
-                        if value < best_values[key]:
-                            best_values[key] = value
-        
-        # Create a new CompResults with the best values
-        best_results = CompResults(
-            ranks=None,
-            codeword_length=None,
-            C_domain=best_values['C_domain'],
-            C_data=best_values['C_data'],
-            spectral_bound_domain=best_values['spectral_bound_domain'],
-            spectral_bound_data=best_values['spectral_bound_data'],
-            margin_domain=best_values['margin_domain'],
-            margin_data=best_values['margin_data'],
-            train_accuracy=best_values['train_accuracy'],
-            test_accuracy=best_values['test_accuracy'],
-            train_margin_loss_domain=best_values['train_margin_loss_domain'],
-            train_margin_loss_data=best_values['train_margin_loss_data'],
-            KL=best_values['KL'],
-            kl_bound=best_values['kl_bound'],
-            error_bound_inverse_kl_domain=best_values['error_bound_inverse_kl_domain'],
-            error_bound_inverse_kl_data=best_values['error_bound_inverse_kl_data'],
-            error_bound_pinsker_domain=best_values['error_bound_pinsker_domain'],
-            error_bound_pinsker_data=best_values['error_bound_pinsker_data'],
-        )
+                        best_values[field_name] = min(best_values[field_name], value)
+        best_results = CompResults(**best_values)
 
         # Add the best results to the results dictionary with a special key
         self.results["best"] = dict()
         self.results["best"]["best"] = best_results
-
         self.best_results = best_results
 
     def to_dict(self):
@@ -776,7 +846,7 @@ class FinalCompResults:
         experiment = cls()
         for ranks_str, rank_results_dict in data.items():
             ranks = tuple(int(r) for r in ranks_str.split(","))
-            experiment.results[ranks] = {}
+            experiment.results[ranks] = dict()
             
             for codeword_length_str, rank_codeword_length_results_dict in rank_results_dict.items():
                 codeword_length = int(codeword_length_str)

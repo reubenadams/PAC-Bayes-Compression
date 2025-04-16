@@ -1,5 +1,6 @@
 import os
 from typing import Optional
+from math import prod
 
 import torch
 from torchvision import datasets, transforms
@@ -233,8 +234,19 @@ class CustomDataset(Dataset):
 
 class RandomDomainDataset(Dataset):
 
-    def __init__(self, data_shape, sample_size):
-        self.num_pixels = data_shape[0] * data_shape[1]
+    def __init__(self, data_shape, sample_size, dist_name, dist_mean=None, dist_std=None, dist_min=None, dist_max=None, device="cpu"):
+        self.device = device
+        if dist_name == "uniform":
+            assert dist_min is not None and dist_max is not None and dist_mean is None and dist_std is None, "dist_min and dist_max must be provided for uniform distribution, but not dist_mean and dist_std."
+            self.dist = torch.distributions.Uniform(dist_min, dist_max)
+        elif dist_name == "normal":
+            assert dist_mean is not None and dist_std is not None and dist_min is None and dist_max is None, "dist_mean and dist_std must be provided for normal distribution, but not dist_min and dist_max."
+            if dist_std <= 0:
+                raise ValueError("Standard deviation must be positive for normal distribution.")
+            self.dist = torch.distributions.Normal(dist_mean, dist_std)
+        else:
+            raise ValueError("Invalid distribution name. Use 'uniform' or 'normal'.")
+        self.num_pixels = prod(data_shape)
         self.sample_size = sample_size
 
     def __len__(self):
@@ -242,15 +254,14 @@ class RandomDomainDataset(Dataset):
 
     # We return idx just so the DataLoader doesn't complain.
     def __getitem__(self, idx):
-        return (
-            torch.rand((self.num_pixels)) - 0.5
-        ) / 0.5, idx  # TODO: To do this properly we need to pass in the actual range of the data, i.e. we need to know the mean and std of the data.
+        sample = self.dist.sample((self.num_pixels,)).to(self.device)
+        return sample, idx
 
 
 class MeshDomainDataset(Dataset):
 
     def __init__(self, data_shape, epsilon):
-        self.num_pixels = data_shape[0] * data_shape[1]
+        self.num_pixels = prod(data_shape)
         self.mesh, self.actual_epsilon, self.actual_cell_width = get_epsilon_mesh(
             epsilon, data_shape, device="cpu"
         )
@@ -267,9 +278,18 @@ class MeshDomainDataset(Dataset):
         return self.mesh[idx], idx
 
 
-def get_rand_domain_loader(data_shape, sample_size, batch_size):
-    dataset = RandomDomainDataset(data_shape, sample_size)
-    return DataLoader(dataset, batch_size, shuffle=True)
+def get_rand_domain_loader(data_shape, sample_size, batch_size, dist_name, dist_mean=None, dist_std=None, dist_min=None, dist_max=None, device="cpu"):
+    dataset = RandomDomainDataset(
+        data_shape=data_shape,
+        sample_size=sample_size,
+        dist_name=dist_name,
+        dist_mean=dist_mean,
+        dist_std=dist_std,
+        dist_min=dist_min,
+        dist_max=dist_max,
+        device=device,
+    )
+    return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
 
 
 def get_mesh_domain_loader(data_shape, epsilon):

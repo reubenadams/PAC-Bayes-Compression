@@ -8,18 +8,20 @@ from distillation_comb import get_pacb_config, train_base_model
 import config
 
 
-def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment_type: str):
+def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment_type: str) -> config.BaseConfig:
     hyperparams = config.BaseHyperparamsConfig.from_wandb_config(wandb.config)
     
     data_config = config.BaseDataConfig(dataset_name=dataset_name, device=device)
     # data_config.add_sample_sizes(quick_test)
-    data_config.train_size = 1000 if quick_test else 500000
+    data_config.train_size = 1000 if quick_test else 50000
     data_config.test_size = 100 if quick_test else 10000
     data_config.add_dataloaders(hyperparams.batch_size)
     
     stopping_config = config.BaseStoppingConfig.create(quick_test)
     stopping_config.target_full_train_loss = None  # Base model should train until convergence
     stopping_config.patience = 1
+    if quick_test:
+        stopping_config.max_epochs = 1
     records = config.BaseRecordsConfig()
     return config.BaseConfig(
         hyperparams=hyperparams,
@@ -30,8 +32,13 @@ def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment
     )
 
 
-def get_comp_config(quick_test: bool):
-    return config.CompConfig.create(quick_test)
+def get_comp_config(quick_test: bool, base_config: config.BaseConfig) -> config.CompConfig:
+    return config.CompConfig.create(
+        quick_test=quick_test,
+        dataset_name=base_config.data.dataset_name,
+        device=base_config.data.device,
+        new_input_shape=base_config.data._new_input_shape,
+    )
 
 
 def log_and_save_metrics(
@@ -89,7 +96,7 @@ def main():
         experiment_type="quantization",
     )
     pacb_config = get_pacb_config(quick_test=quick_test)
-    comp_config = get_comp_config(quick_test=quick_test)
+    comp_config = get_comp_config(quick_test=quick_test, base_config=base_config)
 
     run.name = base_config.run_name
     run.save()
@@ -99,131 +106,139 @@ def main():
     init_model.save(base_config.model_init_dir, base_config.model_name)
     base_model.save(base_config.model_base_dir, base_config.model_name)
 
+    with torch.no_grad():
 
-    # Get results without any compression        
-    print()
-    print("Getting results without any compression...")
-
-    final_no_comp_results = config.FinalCompResults()
-    num_union_bounds = 1
-
-    no_comp_results = base_model.get_comp_pacb_results(
-        delta=pacb_config.delta,
-        num_union_bounds=num_union_bounds,
-        train_loader=base_config.data.train_loader,
-        test_loader=base_config.data.test_loader,
-        C_domain=base_config.data.C_train_domain,
-        C_data=base_config.data.C_train_data,
-        ranks=None,
-        codeword_length=None,
-        compress_model_difference=False,
-        init_model=None,
-    )
-    print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_domain}")
-    print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_data}")
-    print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_domain}")
-    print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_data}")
-    final_no_comp_results.add_result(no_comp_results)
-    no_comp_results.log()
-    final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
-    best_results["no_comp"] = no_comp_results.to_dict()
-
-    # Get quant only results
-    if comp_config.get_quant_only_results:
-        
+        # Get results without any compression        
         print()
-        print("Getting quant only results...")
+        print("Getting results without any compression...")
 
-        final_quant_only_results = config.FinalCompResults()
-        codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths_quant_only()]
-        num_union_bounds = len(codeword_lengths)
-        print(f"{codeword_lengths=}")
+        final_no_comp_results = config.FinalCompResults()
+        num_union_bounds = 1
 
-        for codeword_length in codeword_lengths:
-            print(f"{codeword_length=}")
-            quant_results = base_model.get_comp_pacb_results(
-                delta=pacb_config.delta,
-                num_union_bounds=num_union_bounds,
-                train_loader=base_config.data.train_loader,
-                test_loader=base_config.data.test_loader,
-                C_domain=base_config.data.C_train_domain,
-                C_data=base_config.data.C_train_data,
-                codeword_length=codeword_length,
-                compress_model_difference=comp_config.compress_model_difference,
-                init_model=init_model,
-            )
-            final_quant_only_results.add_result(quant_results)
-            quant_results.log()
-        final_quant_only_results.get_best()
-        final_quant_only_results.save_to_json(filename=base_config.quant_only_metrics_path)
-        best_results["quant_only"] = final_quant_only_results.best_results.to_dict()
+        no_comp_results = base_model.get_comp_pacb_results(
+            delta=pacb_config.delta,
+            num_union_bounds=num_union_bounds,
+            train_loader=base_config.data.train_loader,
+            test_loader=base_config.data.test_loader,
+            rand_domain_loader=comp_config.rand_domain_loader,
+            C_domain=base_config.data.C_train_domain,
+            C_data=base_config.data.C_train_data,
+            ranks=None,
+            codeword_length=None,
+            compress_model_difference=False,
+            init_model=None,
+        )
+        print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_spectral_domain}")
+        print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_spectral_data}")
+        print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_spectral_domain}")
+        print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_spectral_data}")
+        final_no_comp_results.add_result(no_comp_results)
+        no_comp_results.log()
+        final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
+        best_results["no_comp"] = no_comp_results.to_dict()
 
-    # Get low rank only results
-    if comp_config.get_low_rank_only_results:
+        # Get quant only results
+        if comp_config.get_quant_only_results:
+            
+            print()
+            print("Getting quant only results...")
 
-        print()
-        print("Getting low rank only results...")
+            final_quant_only_results = config.FinalCompResults()
+            codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths_quant_only()]
+            num_union_bounds = len(codeword_lengths)
+            print()
+            print(f"{codeword_lengths=}")
 
-        final_low_rank_only_results = config.FinalCompResults()
-        rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-        num_union_bounds = len(rank_combs)
-        print(f"{rank_combs=}")
-
-        for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
-            print(f"{ranks=}")
-            low_rank_results = base_model.get_comp_pacb_results(
-                delta=pacb_config.delta,
-                num_union_bounds=num_union_bounds,
-                train_loader=base_config.data.train_loader,
-                test_loader=base_config.data.test_loader,
-                C_domain=base_config.data.C_train_domain,
-                C_data=base_config.data.C_train_data,
-                ranks=ranks,
-                compress_model_difference=comp_config.compress_model_difference,
-                init_model=init_model,
-            )
-            final_low_rank_only_results.add_result(low_rank_results)
-            low_rank_results.log()
-        final_low_rank_only_results.get_best()
-        final_low_rank_only_results.save_to_json(filename=base_config.low_rank_only_metrics_path)
-        best_results["low_rank_only"] = final_low_rank_only_results.best_results.to_dict()
-
-    # Get low rank and quant results
-    if comp_config.get_low_rank_and_quant_results:
-
-        print()
-        print("Getting low rank and quant results...")
-
-        final_low_rank_and_quant_results = config.FinalCompResults()
-        codeword_lengths = base_model.get_sensible_codeword_lengths_low_rank_and_quant(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-        num_union_bounds = 0
-        for ranks, code_lens in codeword_lengths.items():
-            codeword_lengths[ranks] = [length for length in code_lens if length <= comp_config.max_codeword_length]
-            num_union_bounds += len(codeword_lengths[ranks])
-        print(f"{codeword_lengths=}")
-
-        base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-        for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
-            for codeword_length in codeword_lengths[ranks]:
-                print(f"{ranks=}")
-                print(f"\t{codeword_length=}")
-                low_rank_and_quant_results = base_model.get_comp_pacb_results(
+            for codeword_length in codeword_lengths:
+                print(f"{codeword_length=}")
+                quant_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
                     train_loader=base_config.data.train_loader,
                     test_loader=base_config.data.test_loader,
+                    rand_domain_loader=comp_config.rand_domain_loader,
                     C_domain=base_config.data.C_train_domain,
                     C_data=base_config.data.C_train_data,
-                    ranks=ranks,
                     codeword_length=codeword_length,
                     compress_model_difference=comp_config.compress_model_difference,
                     init_model=init_model,
                 )
-                final_low_rank_and_quant_results.add_result(low_rank_and_quant_results)
-                low_rank_and_quant_results.log()
-        final_low_rank_and_quant_results.get_best()
-        final_low_rank_and_quant_results.save_to_json(filename=base_config.low_rank_and_quant_metrics_path)
-        best_results["low_rank_and_quant"] = final_low_rank_and_quant_results.best_results.to_dict()
+                final_quant_only_results.add_result(quant_results)
+                quant_results.log()
+            final_quant_only_results.get_best()
+            final_quant_only_results.save_to_json(filename=base_config.quant_only_metrics_path)
+            best_results["quant_only"] = final_quant_only_results.best_results.to_dict()
+
+        # Get low rank only results
+        if comp_config.get_low_rank_only_results:
+
+            print()
+            print("Getting low rank only results...")
+
+            final_low_rank_only_results = config.FinalCompResults()
+            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            num_union_bounds = len(rank_combs)
+            print(f"{rank_combs=}")
+
+            for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
+                print()
+                print(f"{ranks=}")
+                low_rank_results = base_model.get_comp_pacb_results(
+                    delta=pacb_config.delta,
+                    num_union_bounds=num_union_bounds,
+                    train_loader=base_config.data.train_loader,
+                    test_loader=base_config.data.test_loader,
+                    rand_domain_loader=comp_config.rand_domain_loader,
+                    C_domain=base_config.data.C_train_domain,
+                    C_data=base_config.data.C_train_data,
+                    ranks=ranks,
+                    compress_model_difference=comp_config.compress_model_difference,
+                    init_model=init_model,
+                )
+                final_low_rank_only_results.add_result(low_rank_results)
+                low_rank_results.log()
+            final_low_rank_only_results.get_best()
+            final_low_rank_only_results.save_to_json(filename=base_config.low_rank_only_metrics_path)
+            best_results["low_rank_only"] = final_low_rank_only_results.best_results.to_dict()
+
+        # Get low rank and quant results
+        if comp_config.get_low_rank_and_quant_results:
+
+            print()
+            print("Getting low rank and quant results...")
+
+            final_low_rank_and_quant_results = config.FinalCompResults()
+            codeword_lengths = base_model.get_sensible_codeword_lengths_low_rank_and_quant(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            num_union_bounds = 0
+            for ranks, code_lens in codeword_lengths.items():
+                codeword_lengths[ranks] = [length for length in code_lens if length <= comp_config.max_codeword_length]
+                num_union_bounds += len(codeword_lengths[ranks])
+            print(f"{codeword_lengths=}")
+
+            base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
+                for codeword_length in codeword_lengths[ranks]:
+                    print()
+                    print(f"{ranks=}")
+                    print(f"\t{codeword_length=}")
+                    low_rank_and_quant_results = base_model.get_comp_pacb_results(
+                        delta=pacb_config.delta,
+                        num_union_bounds=num_union_bounds,
+                        train_loader=base_config.data.train_loader,
+                        test_loader=base_config.data.test_loader,
+                        rand_domain_loader=comp_config.rand_domain_loader,
+                        C_domain=base_config.data.C_train_domain,
+                        C_data=base_config.data.C_train_data,
+                        ranks=ranks,
+                        codeword_length=codeword_length,
+                        compress_model_difference=comp_config.compress_model_difference,
+                        init_model=init_model,
+                    )
+                    final_low_rank_and_quant_results.add_result(low_rank_and_quant_results)
+                    low_rank_and_quant_results.log()
+            final_low_rank_and_quant_results.get_best()
+            final_low_rank_and_quant_results.save_to_json(filename=base_config.low_rank_and_quant_metrics_path)
+            best_results["low_rank_and_quant"] = final_low_rank_and_quant_results.best_results.to_dict()
 
     log_and_save_metrics(
         run_id=run.id,

@@ -617,6 +617,7 @@ class MLP(nn.Module):
                     if full_train_loss <= base_config.stopping.target_full_train_loss:
                         reached_target = True
                         print(f"Target loss reached at epoch {epoch}.")
+                        wandb.log(epoch_log)
                         break
 
                 # Check patience criterion
@@ -631,6 +632,7 @@ class MLP(nn.Module):
                     if epochs_since_improvement >= base_config.stopping.patience:
                         lost_patience = True
                         print(f"Ran out of patience at epoch {epoch}.")
+                        wandb.log(epoch_log)
                         break
 
             wandb.log(epoch_log)
@@ -1024,12 +1026,22 @@ class MLP(nn.Module):
         l2_norms = torch.linalg.vector_norm(self_output - base_output, ord=2, dim=-1)
         return l2_norms.max(), actual_epsilon, actual_cell_width
 
-    def get_spectral_bound(self: MLP, other: MLP, C) -> torch.Tensor:
+    @torch.no_grad()
+    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader) -> torch.Tensor:
+        max_empirical_l2 = torch.tensor(0.0, device=self.device)
+        for x, _ in dataloader:
+            x = x.to(self.device)
+            x = x.view(x.size(0), -1)
+            outputs_self = self(x)
+            outputs_other = other(x)
+            l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
+            max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
+        return max_empirical_l2
+
+    def get_spectral_l2_bound(self: MLP, other: MLP, C) -> torch.Tensor:
         if not self.same_architecture(other):
             raise ValueError("Models have different architectures.")
-        # weight_distances = self.weight_distance(other)
         return self.beta(other=other, layer_num=len(self.dimensions) - 1, C=C)
-        # return self.beta(other=other, i=self.dimensions - 1, C=C, weight_distances=weight_distances)
 
     def alpha(self: MLP, other: MLP, layer_num: int, C):
         if layer_num < 0:
@@ -1146,6 +1158,7 @@ class MLP(nn.Module):
             num_union_bounds: int,
             train_loader: DataLoader,
             test_loader: DataLoader,
+            rand_domain_loader: DataLoader,
             C_domain: torch.Tensor,
             C_data: torch.Tensor,
             ranks: Optional[tuple[int]] = None,
@@ -1172,10 +1185,12 @@ class MLP(nn.Module):
 
         # Construct low rank model if necessary
         if ranks is not None:
+            print("Constructing low rank model")
             comp_diff_model = comp_diff_model.get_low_rank_model(ranks=ranks)
         
         # Construct quantized model if necessary
         if codeword_length is not None:
+            print("Constructing quantized model")
             comp_diff_model = comp_diff_model.get_quantized_model(codeword_length=codeword_length)
         
         # Reconstruct the compressed model for evaluation by adding init_model back in if necessary
@@ -1187,45 +1202,92 @@ class MLP(nn.Module):
         # Get the KL of the compressed form (of base_model - init_model if compress_difference is True)
         diff_KL = comp_diff_model.get_KL_of_quantized_model()
 
-        # Get spectral bounds and margins
-        spectral_bound_domain = self.get_spectral_bound(other=comp_model, C=C_domain)
-        spectral_bound_data = self.get_spectral_bound(other=comp_model, C=C_data)
-        margin_domain = torch.sqrt(torch.tensor(2)) * spectral_bound_domain
-        margin_data = torch.sqrt(torch.tensor(2)) * spectral_bound_data
+        # Get spectral and empirical l2 bounds
+        print("Getting spectral and empirical l2 bounds")
+        spectral_l2_bound_domain = self.get_spectral_l2_bound(other=comp_model, C=C_domain)
+        spectral_l2_bound_data = self.get_spectral_l2_bound(other=comp_model, C=C_data)
+        empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader)
+        empirical_l2_bound_train_data = self.get_empirical_l2_bound(other=comp_model, dataloader=train_loader)
+        empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader)
+
+        # Get spectral and empirical margins
+        print
+        margin_domain = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_domain
+        margin_data = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_data
+        margin_empirical_domain = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_domain
+        margin_empirical_train_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_train_data
+        margin_empirical_test_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_test_data
 
         # Get empirical errors
+        print("Getting empirical errors")
         comp_train_accuracy = comp_model.get_full_accuracy(dataloader=train_loader)
         comp_test_accuracy = comp_model.get_full_accuracy(dataloader=test_loader)
+
+        # Get the empirical margin losses. Note these are *all* calculated on the train data, because it is only the margin they use that changes. More precisely, the bound we prove requires a margin which can be calculated in different ways, but you always measure the margin loss on the train data.
+        print("Getting empirical margin losses")
         comp_train_margin_loss_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
         comp_train_margin_loss_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        comp_train_margin_loss_empirical_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        comp_train_margin_loss_empirical_train_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_train_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        comp_train_margin_loss_empirical_test_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_test_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
 
         # Get pacb bounds
+        print("Getting PAC-B bounds")
         comp_kl_bound = pacb_kl_bound(KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_pinsker_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_inverse_kl_empirical_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_inverse_kl_empirical_train_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_inverse_kl_empirical_test_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_pinsker_empirical_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_pinsker_empirical_train_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        comp_error_bound_pinsker_empirical_test_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
 
         # Collect results together and return
         comp_results = CompResults(
             ranks=ranks,
             codeword_length=codeword_length,
+
             C_domain=C_domain.item(),
             C_data=C_data.item(),
-            spectral_bound_domain=spectral_bound_domain.item(),
-            spectral_bound_data=spectral_bound_data.item(),
-            margin_domain=margin_domain.item(),
-            margin_data=margin_data.item(),
+            
+            spectral_l2_bound_domain=spectral_l2_bound_domain.item(),
+            spectral_l2_bound_data=spectral_l2_bound_data.item(),
+            empirical_l2_bound_domain=empirical_l2_bound_domain.item(),
+            empirical_l2_bound_train_data=empirical_l2_bound_train_data.item(),
+            empirical_l2_bound_test_data=empirical_l2_bound_test_data.item(),
+            
+            margin_spectral_domain=margin_domain.item(),
+            margin_spectral_data=margin_data.item(),
+            margin_empirical_domain=margin_empirical_domain.item(),
+            margin_empirical_train_data=margin_empirical_train_data.item(),
+            margin_empirical_test_data=margin_empirical_test_data.item(),
+            
             train_accuracy=comp_train_accuracy.item(),
             test_accuracy=comp_test_accuracy.item(),
-            train_margin_loss_domain=comp_train_margin_loss_domain.item(),
-            train_margin_loss_data=comp_train_margin_loss_data.item(),
+            
+            train_margin_loss_spectral_domain=comp_train_margin_loss_domain.item(),
+            train_margin_loss_spectral_data=comp_train_margin_loss_data.item(),
+            train_margin_loss_empirical_domain=comp_train_margin_loss_empirical_domain.item(),
+            train_margin_loss_empirical_train_data=comp_train_margin_loss_empirical_train_data.item(),
+            train_margin_loss_empirical_test_data=comp_train_margin_loss_empirical_test_data.item(),
+            
             KL=diff_KL.item(),
             kl_bound=comp_kl_bound.item(),
-            error_bound_inverse_kl_domain=comp_error_bound_inverse_kl_domain.item(),
-            error_bound_inverse_kl_data=comp_error_bound_inverse_kl_data.item(),
-            error_bound_pinsker_domain=comp_error_bound_pinsker_domain.item(),
-            error_bound_pinsker_data=comp_error_bound_pinsker_data.item(),
+            
+            error_bound_inverse_kl_spectral_domain=comp_error_bound_inverse_kl_domain.item(),
+            error_bound_inverse_kl_spectral_data=comp_error_bound_inverse_kl_data.item(),
+            error_bound_inverse_kl_empirical_domain=comp_error_bound_inverse_kl_empirical_domain.item(),
+            error_bound_inverse_kl_empirical_train_data=comp_error_bound_inverse_kl_empirical_train_data.item(),
+            error_bound_inverse_kl_empirical_test_data=comp_error_bound_inverse_kl_empirical_test_data.item(),
+
+            error_bound_pinsker_spectral_domain=comp_error_bound_pinsker_domain.item(),
+            error_bound_pinsker_spectral_data=comp_error_bound_pinsker_data.item(),            
+            error_bound_pinsker_empirical_domain=comp_error_bound_pinsker_empirical_domain.item(),
+            error_bound_pinsker_empirical_train_data=comp_error_bound_pinsker_empirical_train_data.item(),
+            error_bound_pinsker_empirical_test_data=comp_error_bound_pinsker_empirical_test_data.item(),
         )
         return comp_results
 
