@@ -79,7 +79,7 @@ def log_and_save_metrics(
 
 def main():
 
-    quick_test = True
+    quick_test = False
     device = "cpu"
     dataset_name = "MNIST1D"
     seed = 0
