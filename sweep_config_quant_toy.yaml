@@ -3,7 +3,7 @@ method: grid
 parameters:
 
   hidden_layer_width:
-    values: [4]
+    values: [8]
   num_hidden_layers:
     values: [1]
   optimizer_name:

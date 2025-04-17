@@ -9,7 +9,7 @@ from math import prod
 import torch
 from torch.utils.data import DataLoader
 
-from load_data import get_dataloaders, get_rand_domain_loader, get_max_l2_norm_data
+from load_data import get_dataloaders, get_rand_domain_dataset_and_loader, get_max_l2_norm_data, get_logits_loader
 
 
 @dataclass
@@ -315,9 +315,9 @@ class DistDataConfig:
     use_whole_dataset: Optional[bool] = None
     domain_train_loader: Optional[DataLoader] = None
     domain_test_loader: Optional[DataLoader] = None
-    data_dir: Optional[str] = None
-    logit_train_loader: Optional[DataLoader] = None
-    logit_test_loader: Optional[DataLoader] = None
+    # data_dir: Optional[str] = None
+    base_logit_train_loader: Optional[DataLoader] = None
+    base_logit_test_loader: Optional[DataLoader] = None
     device: Optional[str] = None
 
     def __post_init__(self):
@@ -332,22 +332,39 @@ class DistDataConfig:
             self.train_size = None
             self.test_size = None
 
-    def add_dataloaders(self, new_input_shape, base_model):
+    # TODO: Should this take new_input_shape? Maybe it should *always* take a dataset? No, I think it's fine if we distill on a different dataset to what we trained the base model on.
+    def add_dataloaders(self, new_input_shape, train_dataset=None, test_dataset=None, data_dir=None):
         self.domain_train_loader, self.domain_test_loader, self.data_dir = get_dataloaders(
             dataset_name=self.dataset_name,
             batch_size=self.batch_size,
             train_size=self.train_size,
             test_size=self.test_size,
             new_input_shape=new_input_shape,
+            train_dataset=train_dataset,
+            test_dataset=test_dataset,
+            data_dir=data_dir,
             use_whole_dataset=self.use_whole_dataset,
             device=self.device
         )
-        self.logit_train_loader, self.logit_test_loader = base_model.get_logits_dataloaders(
-            domain_train_loader=self.domain_train_loader,
-            domain_test_loader=self.domain_test_loader,
-            batch_size=self.batch_size,
+    
+    def add_base_logit_loaders(
+            self,
+            base_model,
+            train_dataset,
+            test_dataset,
+            batch_size=None,
+        ):
+        self.base_logit_train_loader = get_logits_loader(
+            model=base_model,
+            dataset=train_dataset,
             use_whole_dataset=self.use_whole_dataset,
-            device=self.device,
+            batch_size=batch_size,
+        )
+        self.base_logit_test_loader = get_logits_loader(
+            model=base_model,
+            dataset=test_dataset,
+            use_whole_dataset=self.use_whole_dataset,
+            batch_size=batch_size,
         )
 
     def to_dict(self):
@@ -600,6 +617,7 @@ class CompConfig:
     get_low_rank_and_quant_results: bool = True
     compress_model_difference: bool = True
 
+    use_whole_dataset: bool = True  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
     rand_domain_loader_batch_size: int = 128
     rand_domain_loader_sample_size: int = 10**6
     rand_domain_loader_dist_name: str = "uniform"
@@ -616,9 +634,10 @@ class CompConfig:
             self.dist_max = 1.0
         else:
             raise ValueError(f"Invalid dataset name: {self.dataset_name}. Must be 'MNIST1D', 'MNIST', or 'CIFAR10'.")
-        
-        self.rand_domain_loader = get_rand_domain_loader(
+
+        self.rand_domain_dataset, self.rand_domain_loader = get_rand_domain_dataset_and_loader(
             data_shape=self.new_input_shape,
+            use_whole_dataset=self.use_whole_dataset,
             sample_size=self.rand_domain_loader_sample_size,
             batch_size=self.rand_domain_loader_batch_size,
             dist_name=self.rand_domain_loader_dist_name,
@@ -664,6 +683,46 @@ class CompConfig:
             "Comp Get Low Rank and Quant Results": self.get_low_rank_and_quant_results,
             "Comp Compress Model Difference": self.compress_model_difference,
         }
+
+    def add_dataloaders(self, train_dataset, test_dataset, data_dir):
+        self.train_loader, self.test_loader, self.data_dir = get_dataloaders(
+            dataset_name=self.dataset_name,
+            batch_size=None,
+            train_size=None,
+            test_size=None,
+            new_input_shape=None,
+            train_dataset=train_dataset,
+            test_dataset=test_dataset,
+            data_dir=data_dir,
+            use_whole_dataset=self.use_whole_dataset,
+            device=self.device
+        )
+
+    def add_base_logit_loaders(
+            self,
+            base_model,
+            train_dataset,
+            test_dataset,
+            batch_size=None
+        ):
+        self.base_logit_train_loader = get_logits_loader(
+            model=base_model,
+            dataset=train_dataset,
+            use_whole_dataset=self.use_whole_dataset,
+            batch_size=batch_size,
+        )
+        self.base_logit_test_loader = get_logits_loader(
+            model=base_model,
+            dataset=test_dataset,
+            use_whole_dataset=self.use_whole_dataset,
+            batch_size=batch_size,
+        )
+        self.base_logit_rand_domain_loader = get_logits_loader(
+            model=base_model,
+            dataset=self.rand_domain_dataset,
+            use_whole_dataset=self.use_whole_dataset,
+            batch_size=batch_size,
+        )
 
 
 @dataclass

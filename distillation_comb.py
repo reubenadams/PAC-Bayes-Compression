@@ -41,7 +41,14 @@ def get_dist_config(
     data_config.add_sample_sizes(quick_test)
     data_config.add_dataloaders(
         new_input_shape=base_config.data.new_input_shape,
+        train_dataset=base_config.data.train_loader.dataset,
+        test_dataset=base_config.data.test_loader.dataset,
+        data_dir=base_config.data.data_dir,
+    )
+    data_config.add_base_logit_loaders(
         base_model=base_model,
+        train_dataset=base_config.data.train_loader.dataset,
+        test_dataset=base_config.data.test_loader.dataset,
     )
     stopping_config = config.DistStoppingConfig.create(quick_test)
     objective = config.DistObjectiveConfig()

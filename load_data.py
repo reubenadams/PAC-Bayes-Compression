@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Union
 from math import prod
 
 import torch
@@ -57,12 +57,13 @@ def get_datasets(
                 raise ValueError(f"MNIST1D does not support resizing.")
 
     try:
-        print(f"Loading data from {data_dir}...")
         train = torch.load(os.path.join(data_dir, "train.pt"), weights_only=False)
         test = torch.load(os.path.join(data_dir, "test.pt"), weights_only=False)
+        print(f"Data successfully loaded from {data_dir}.")
 
     except FileNotFoundError:
 
+        print(f"Data not found in {data_dir}. Downloading (MNIST, CIFAR10) or generating (MNIST1D) data...")
         print(f"{new_input_shape=}, {train_size=}, {test_size=}")
         transform = transforms.Compose(
             [
@@ -149,56 +150,6 @@ def get_datasets(
     return train, test, data_dir
 
 
-def get_dataloaders(
-    dataset_name,
-    batch_size,
-    train_size,
-    test_size,
-    new_input_shape,
-    use_whole_dataset=False,
-    device="cpu",
-):
-
-    train, test, data_dir = get_datasets(
-        dataset_name=dataset_name,
-        new_input_shape=new_input_shape,
-        train_size=train_size,
-        test_size=test_size,
-    )
-
-    assert (
-        isinstance(train, Dataset) and isinstance(test, Dataset)) or (
-        isinstance(train, Subset) and isinstance(test, Subset)
-    ), "train and test should be both Dataset or both Subset instances."
-
-    if isinstance(train, Subset):
-        train.dataset.data = train.dataset.data.to(device)
-        train.dataset.targets = train.dataset.targets.to(device)
-        train.dataset.data = train.dataset.data.to(device)
-        train.dataset.targets = train.dataset.targets.to(device)
-    else:
-        train.data = train.data.to(device)
-        train.targets = train.targets.to(device)
-        test.data = test.data.to(device)
-        test.targets = test.targets.to(device)
-
-
-    if use_whole_dataset:
-        if isinstance(train, Subset):
-            train_data = train.dataset.data[train.indices]
-            train_targets = train.dataset.targets[train.indices]
-            test_data = test.dataset.data[test.indices]
-            test_targets = test.dataset.targets[test.indices]
-            return FakeDataLoader(train_data, train_targets), FakeDataLoader(test_data, test_targets), data_dir
-        else:
-            return FakeDataLoader(train.data, train.targets), FakeDataLoader(test.data, test.targets), data_dir
-
-    train_loader = DataLoader(train, batch_size, shuffle=True)
-    test_loader = DataLoader(test, batch_size, shuffle=False)
-
-    return train_loader, test_loader, data_dir
-
-
 class FakeDataLoader:
     """Fake DataLoader that returns the whole dataset in one batch."""
     def __init__(self, data, targets):
@@ -208,6 +159,62 @@ class FakeDataLoader:
 
     def __iter__(self):
         return iter([(self.data, self.targets)])
+
+
+def get_dataloaders(
+    dataset_name,
+    batch_size,
+    train_size,
+    test_size,
+    new_input_shape,
+    train_dataset=None,
+    test_dataset=None,
+    data_dir=None,
+    use_whole_dataset=False,
+    device="cpu",
+) -> Union[DataLoader, FakeDataLoader]:
+
+    if train_dataset is None or test_dataset is None or data_dir is None:
+        print("At least one of train_dataset or test_dataset is None. Loading datasets...")
+        train_dataset, test_dataset, data_dir = get_datasets(
+            dataset_name=dataset_name,
+            new_input_shape=new_input_shape,
+            train_size=train_size,
+            test_size=test_size,
+        )
+
+    assert (
+        isinstance(train_dataset, Dataset) and isinstance(test_dataset, Dataset)) or (
+        isinstance(train_dataset, Subset) and isinstance(test_dataset, Subset)
+    ), "train and test should be both Dataset or both Subset instances."
+
+    if isinstance(train_dataset, Subset):
+        train_dataset.dataset.data = train_dataset.dataset.data.to(device)
+        train_dataset.dataset.targets = train_dataset.dataset.targets.to(device)
+        train_dataset.dataset.data = train_dataset.dataset.data.to(device)
+        train_dataset.dataset.targets = train_dataset.dataset.targets.to(device)
+    else:
+        train_dataset.data = train_dataset.data.to(device)
+        train_dataset.targets = train_dataset.targets.to(device)
+        test_dataset.data = test_dataset.data.to(device)
+        test_dataset.targets = test_dataset.targets.to(device)
+
+    if use_whole_dataset:
+        if isinstance(train_dataset, Subset):
+            train_data = train_dataset.dataset.data[train_dataset.indices]
+            train_targets = train_dataset.dataset.targets[train_dataset.indices]
+            test_data = test_dataset.dataset.data[test_dataset.indices]
+            test_targets = test_dataset.dataset.targets[test_dataset.indices]
+            print("Returning fake dataloaders!")
+            return FakeDataLoader(train_data, train_targets), FakeDataLoader(test_data, test_targets), data_dir
+        else:
+            print("Returning fake dataloaders!")
+            return FakeDataLoader(train_dataset.data, train_dataset.targets), FakeDataLoader(test_dataset.data, test_dataset.targets), data_dir
+
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=False)
+    print("Returning real dataloaders!")
+    return train_loader, test_loader, data_dir
 
 
 def get_max_l2_norm_data(dataloader: DataLoader):
@@ -234,8 +241,22 @@ class CustomDataset(Dataset):
 
 class RandomDomainDataset(Dataset):
 
-    def __init__(self, data_shape, sample_size, dist_name, dist_mean=None, dist_std=None, dist_min=None, dist_max=None, device="cpu"):
+    def __init__(
+        self,
+        data_shape,
+        sample_size,
+        dist_name,
+        dist_mean=None,
+        dist_std=None,
+        dist_min=None,
+        dist_max=None,
+        device="cpu"
+    ):
         self.device = device
+        self.data_shape = data_shape
+        self.num_pixels = prod(data_shape)
+        self.sample_size = sample_size
+
         if dist_name == "uniform":
             assert dist_min is not None and dist_max is not None and dist_mean is None and dist_std is None, "dist_min and dist_max must be provided for uniform distribution, but not dist_mean and dist_std."
             self.dist = torch.distributions.Uniform(dist_min, dist_max)
@@ -246,16 +267,15 @@ class RandomDomainDataset(Dataset):
             self.dist = torch.distributions.Normal(dist_mean, dist_std)
         else:
             raise ValueError("Invalid distribution name. Use 'uniform' or 'normal'.")
-        self.num_pixels = prod(data_shape)
-        self.sample_size = sample_size
+
+        self.data = self.dist.sample((sample_size, self.num_pixels)).to(device)
+        self.targets = torch.arange(sample_size).to(device)  # We return idx as target just so the DataLoader doesn't complain.
 
     def __len__(self):
         return self.sample_size
 
-    # We return idx just so the DataLoader doesn't complain.
     def __getitem__(self, idx):
-        sample = self.dist.sample((self.num_pixels,)).to(self.device)
-        return sample, idx
+        return self.data[idx], self.targets[idx]
 
 
 class MeshDomainDataset(Dataset):
@@ -278,7 +298,18 @@ class MeshDomainDataset(Dataset):
         return self.mesh[idx], idx
 
 
-def get_rand_domain_loader(data_shape, sample_size, batch_size, dist_name, dist_mean=None, dist_std=None, dist_min=None, dist_max=None, device="cpu"):
+def get_rand_domain_dataset_and_loader(
+    data_shape,
+    use_whole_dataset,
+    sample_size,
+    batch_size,
+    dist_name,
+    dist_mean=None,
+    dist_std=None,
+    dist_min=None,
+    dist_max=None,
+    device="cpu"
+) -> Union[DataLoader, FakeDataLoader]:
     dataset = RandomDomainDataset(
         data_shape=data_shape,
         sample_size=sample_size,
@@ -289,7 +320,9 @@ def get_rand_domain_loader(data_shape, sample_size, batch_size, dist_name, dist_
         dist_max=dist_max,
         device=device,
     )
-    return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
+    if use_whole_dataset:
+        return dataset, FakeDataLoader(dataset.data, dataset.targets)
+    return dataset, DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
 
 
 def get_mesh_domain_loader(data_shape, epsilon):
@@ -312,23 +345,57 @@ def get_epsilon_mesh(epsilon, data_shape, device):
     return mesh, actual_epsilon, actual_cell_width
 
 
-def get_logits_dataloader(model, data_loader, batch_size, use_whole_dataset, device):
-    model.to(device)
-    inputs = []
-    logits = []
+def get_logits_loader(model, dataset: Union[Dataset, RandomDomainDataset], use_whole_dataset, batch_size) -> FakeDataLoader:
+    if not use_whole_dataset or batch_size is not None:
+        raise NotImplementedError("Logit loaders are not implemented for use_whole_dataset=False, as dataloaders and logit loaders can get out of sink.")
+    inputs = dataset.data.to(model.device)
+    targets = dataset.targets.to(model.device)
+    assert not model.training, "Model must be in eval mode to get logits."
     with torch.no_grad():
-        for data, _ in data_loader:
-            data = data.to(device)
-            print(f"{data.dtype=}")
-            print(f"{model.network_modules[0].weight.dtype=}")
-            inputs.append(data)
-            logits.append(F.log_softmax(model(data), dim=-1))
-    inputs = torch.cat(inputs)
-    logits = torch.cat(logits)
+        logits = model(inputs)
+    return FakeDataLoader(logits, targets)
 
-    if use_whole_dataset:
-        return FakeDataLoader(inputs, logits)
-    
-    logits_dataset = CustomDataset(inputs, logits)
-    logits_loader = DataLoader(logits_dataset, batch_size=batch_size, shuffle=True)
-    return logits_loader
+
+# TODO: Make this work with use_whole_dataset=False. Currently, the dataloader will shuffle the data, so the logits won't match the inputs.
+# def get_logits_loader(
+#     model,
+#     data_loader,
+#     batch_size,
+#     use_whole_dataset,
+#     device
+# ):
+#     if use_whole_dataset:
+#         model.to(device)
+#         inputs = []
+#         logits = []
+#         with torch.no_grad():
+#             for data, _ in data_loader:
+#                 data = data.to(device)
+#                 print(f"{data.dtype=}")
+#                 print(f"{model.network_modules[0].weight.dtype=}")
+#                 inputs.append(data)
+#                 logits.append(F.log_softmax(model(data), dim=-1))
+#         inputs = torch.cat(inputs)
+#         logits = torch.cat(logits)
+
+#         if use_whole_dataset:
+#             return FakeDataLoader(inputs, logits)
+        
+#         logits_dataset = CustomDataset(inputs, logits)
+#         logits_loader = DataLoader(logits_dataset, batch_size=batch_size, shuffle=True)  # TODO: *Surely* you shouldn't be shuffling the logits, right?
+#         check_logits_loader(model, data_loader, logits_loader)
+#         return logits_loader
+#     else:
+#         raise NotImplementedError("Logit loaders are not implemented for use_whole_dataset=False, as dataloaders and logit loaders can get out of sink.")
+
+
+def check_logits_loader(model, data_loader, logits_loader):
+    """Check that the logits loader returns the same logits as the model on the data loader."""
+    for _ in range(2):
+        for (x, y1), (logits, y2) in zip(data_loader, logits_loader):
+            x = x.to(model.device)
+            logits = logits.to(model.device)
+            y1 = y1.to(model.device)
+            y2 = y2.to(model.device)
+            assert torch.allclose(y1, y2), "Labels do not match in data_loader and logits_loader."
+            assert torch.allclose(model(x), logits), "Logits do not match model output."

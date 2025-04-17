@@ -79,7 +79,7 @@ def log_and_save_metrics(
 
 def main():
 
-    quick_test = False
+    quick_test = True
     device = "cpu"
     dataset_name = "MNIST1D"
     seed = 0
@@ -105,6 +105,16 @@ def main():
     init_model, base_model, base_metrics = train_base_model(base_config=base_config)
     init_model.save(base_config.model_init_dir, base_config.model_name)
     base_model.save(base_config.model_base_dir, base_config.model_name)
+    comp_config.add_dataloaders(
+        train_dataset=base_config.data.train_loader.dataset,
+        test_dataset=base_config.data.test_loader.dataset,
+        data_dir=base_config.data.data_dir,
+    )
+    comp_config.add_base_logit_loaders(
+        base_model=base_model,
+        train_dataset=base_config.data.train_loader.dataset,
+        test_dataset=base_config.data.test_loader.dataset,
+    )
 
     with torch.no_grad():
 
@@ -118,9 +128,12 @@ def main():
         no_comp_results = base_model.get_comp_pacb_results(
             delta=pacb_config.delta,
             num_union_bounds=num_union_bounds,
-            train_loader=base_config.data.train_loader,
-            test_loader=base_config.data.test_loader,
+            train_loader=comp_config.train_loader,
+            test_loader=comp_config.test_loader,
             rand_domain_loader=comp_config.rand_domain_loader,
+            base_logit_train_loader=comp_config.base_logit_train_loader,
+            base_logit_test_loader=comp_config.base_logit_test_loader,
+            base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
             C_domain=base_config.data.C_train_domain,
             C_data=base_config.data.C_train_data,
             ranks=None,
@@ -154,9 +167,12 @@ def main():
                 quant_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
-                    train_loader=base_config.data.train_loader,
-                    test_loader=base_config.data.test_loader,
+                    train_loader=comp_config.train_loader,
+                    test_loader=comp_config.test_loader,
                     rand_domain_loader=comp_config.rand_domain_loader,
+                    base_logit_train_loader=comp_config.base_logit_train_loader,
+                    base_logit_test_loader=comp_config.base_logit_test_loader,
+                    base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                     C_domain=base_config.data.C_train_domain,
                     C_data=base_config.data.C_train_data,
                     codeword_length=codeword_length,
@@ -186,9 +202,12 @@ def main():
                 low_rank_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
-                    train_loader=base_config.data.train_loader,
-                    test_loader=base_config.data.test_loader,
+                    train_loader=comp_config.train_loader,
+                    test_loader=comp_config.test_loader,
                     rand_domain_loader=comp_config.rand_domain_loader,
+                    base_logit_train_loader=comp_config.base_logit_train_loader,
+                    base_logit_test_loader=comp_config.base_logit_test_loader,
+                    base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                     C_domain=base_config.data.C_train_domain,
                     C_data=base_config.data.C_train_data,
                     ranks=ranks,
@@ -224,9 +243,12 @@ def main():
                     low_rank_and_quant_results = base_model.get_comp_pacb_results(
                         delta=pacb_config.delta,
                         num_union_bounds=num_union_bounds,
-                        train_loader=base_config.data.train_loader,
-                        test_loader=base_config.data.test_loader,
+                        train_loader=comp_config.train_loader,
+                        test_loader=comp_config.test_loader,
                         rand_domain_loader=comp_config.rand_domain_loader,
+                        base_logit_train_loader=comp_config.base_logit_train_loader,
+                        base_logit_test_loader=comp_config.base_logit_test_loader,
+                        base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                         C_domain=base_config.data.C_train_domain,
                         C_data=base_config.data.C_train_data,
                         ranks=ranks,

@@ -15,7 +15,7 @@ import wandb
 from sklearn.cluster import KMeans
 
 from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
-from load_data import get_epsilon_mesh, get_logits_dataloader
+from load_data import get_epsilon_mesh, get_logits_loader, FakeDataLoader
 from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
 
@@ -410,10 +410,10 @@ class MLP(nn.Module):
             complexity: int
         ) -> DistFinalResults:
         # N.B. self is interpreted as the dist model for this method
-        kl_on_train_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_train_loader) if dist_config.records.get_final_kl_on_train_data else None
-        kl_on_test_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_test_loader) if dist_config.records.get_final_kl_on_test_data else None
-        accuracy_on_train_data = self.get_full_accuracy(dist_config.data.logit_train_loader) if dist_config.records.get_full_accuracy_on_train_data else None
-        accuracy_on_test_data = self.get_full_accuracy(dist_config.data.logit_test_loader) if dist_config.records.get_full_accuracy_on_test_data else None
+        kl_on_train_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.base_logit_train_loader) if dist_config.records.get_final_kl_on_train_data else None
+        kl_on_test_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.base_logit_test_loader) if dist_config.records.get_final_kl_on_test_data else None
+        accuracy_on_train_data = self.get_full_accuracy(dist_config.data.base_logit_train_loader) if dist_config.records.get_full_accuracy_on_train_data else None
+        accuracy_on_test_data = self.get_full_accuracy(dist_config.data.base_logit_test_loader) if dist_config.records.get_full_accuracy_on_test_data else None
         final_dist_metrics = DistFinalResults(
             complexity=complexity,
             mean_kl_on_train_data=kl_on_train_data.item() if kl_on_train_data is not None else None,
@@ -735,7 +735,7 @@ class MLP(nn.Module):
             if epoch % dist_config.stopping.print_every == 1:
                 print(f"Epoch [{epoch}/{dist_config.stopping.max_epochs}]")
 
-            for x, targets in dist_config.data.logit_train_loader:
+            for x, targets in dist_config.data.base_logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
                 outputs = F.log_softmax(self(x), dim=-1)
@@ -762,7 +762,7 @@ class MLP(nn.Module):
                     full_kl_on_train_data = loss
                 else:
                     full_kl_on_train_data = (
-                        self.get_full_kl_loss_with_logit_loader(dist_config.data.logit_train_loader)
+                        self.get_full_kl_loss_with_logit_loader(dist_config.data.base_logit_train_loader)
                     )
                 epoch_log[dist_config.records.train_kl_name] = full_kl_on_train_data
 
@@ -774,7 +774,7 @@ class MLP(nn.Module):
 
             if dist_config.records.get_full_kl_on_test_data:
                 full_kl_on_test_data = self.get_full_kl_loss_with_logit_loader(
-                    dist_config.data.logit_test_loader
+                    dist_config.data.base_logit_test_loader
                 )
                 epoch_log[dist_config.records.test_kl_name] = full_kl_on_test_data
 
@@ -830,10 +830,10 @@ class MLP(nn.Module):
         )
 
     def dist_best_of_n(
-            self,
-            dist_config: DistConfig,
-            dist_dims: list[int],
-            ) -> tuple[bool, Optional[MLP]]:
+        self,
+        dist_config: DistConfig,
+        dist_dims: list[int],
+    ) -> tuple[bool, Optional[MLP]]:
             # N.B. self is interpreted as the base model for this method
         dist_model = MLP(
             dimensions=dist_dims,
@@ -873,28 +873,38 @@ class MLP(nn.Module):
     #     ]
     #     return dist_dims
 
-    def get_logits_dataloaders(self, domain_train_loader, domain_test_loader, batch_size, use_whole_dataset, device):
+    def get_logits_loaders(
+        self,
+        domain_train_loader,
+        domain_test_loader,
+        batch_size,
+        use_whole_dataset,
+        device
+    ):
         # N.B. self is interpreted as the base model for this method
-        logit_train_loader = get_logits_dataloader(
-            model=self,
-            data_loader=domain_train_loader,
-            batch_size=batch_size,
-            use_whole_dataset=use_whole_dataset,
-            device=device
-        )
-        logit_test_loader = get_logits_dataloader(
-            model=self,
-            data_loader=domain_test_loader,
-            batch_size=batch_size,
-            use_whole_dataset=use_whole_dataset,
-            device=device
-        )
-        return logit_train_loader, logit_test_loader
+        if use_whole_dataset:
+            logit_train_loader = get_logits_loader(
+                model=self,
+                data_loader=domain_train_loader,
+                batch_size=batch_size,
+                use_whole_dataset=use_whole_dataset,
+                device=device
+            )
+            logit_test_loader = get_logits_loader(
+                model=self,
+                data_loader=domain_test_loader,
+                batch_size=batch_size,
+                use_whole_dataset=use_whole_dataset,
+                device=device
+            )
+            return logit_train_loader, logit_test_loader
+        else:
+            raise NotImplementedError("Logit loaders are not implemented for use_whole_dataset=False, as dataloaders and logit loaders can get out of sink.")
 
     def get_dist_complexity(
-            self,
-            dist_config: DistConfig,
-            ) -> tuple[Optional[MLP], DistFinalResults]:
+        self,
+        dist_config: DistConfig,
+    ) -> tuple[Optional[MLP], DistFinalResults]:
         # N.B. self is interpreted as the base model for this method
 
         hidden_dim_guess = dist_config.hyperparams.initial_guess_hidden_dim
@@ -1027,16 +1037,29 @@ class MLP(nn.Module):
         return l2_norms.max(), actual_epsilon, actual_cell_width
 
     @torch.no_grad()
-    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader) -> torch.Tensor:
+    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader, base_logit_loader: Optional[FakeDataLoader]=None) -> torch.Tensor:
+        # N.B. self is interpreted as the base model for this method
         max_empirical_l2 = torch.tensor(0.0, device=self.device)
-        for x, _ in dataloader:
-            x = x.to(self.device)
-            x = x.view(x.size(0), -1)
-            outputs_self = self(x)
-            outputs_other = other(x)
-            l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
-            max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
-        return max_empirical_l2
+        if base_logit_loader is None:
+            for x, _ in dataloader:
+                x = x.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs_self = self(x)
+                outputs_other = other(x)
+                l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
+                max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
+            return max_empirical_l2
+        else:
+            assert isinstance(dataloader, FakeDataLoader), "dataloader must be a FakeDataLoader"
+            assert isinstance(base_logit_loader, FakeDataLoader), "base_logit_loader must be a FakeDataLoader"
+            for (x, _), (base_logits, _) in zip(dataloader, base_logit_loader):
+                x = x.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs_self = base_logits
+                outputs_other = other(x)
+                l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
+                max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
+            return max_empirical_l2
 
     def get_spectral_l2_bound(self: MLP, other: MLP, C) -> torch.Tensor:
         if not self.same_architecture(other):
@@ -1159,6 +1182,9 @@ class MLP(nn.Module):
             train_loader: DataLoader,
             test_loader: DataLoader,
             rand_domain_loader: DataLoader,
+            base_logit_train_loader: DataLoader,
+            base_logit_test_loader: DataLoader,
+            base_logit_rand_domain_loader: DataLoader,
             C_domain: torch.Tensor,
             C_data: torch.Tensor,
             ranks: Optional[tuple[int]] = None,
@@ -1206,9 +1232,9 @@ class MLP(nn.Module):
         print("Getting spectral and empirical l2 bounds")
         spectral_l2_bound_domain = self.get_spectral_l2_bound(other=comp_model, C=C_domain)
         spectral_l2_bound_data = self.get_spectral_l2_bound(other=comp_model, C=C_data)
-        empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader)
-        empirical_l2_bound_train_data = self.get_empirical_l2_bound(other=comp_model, dataloader=train_loader)
-        empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader)
+        empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader, base_logit_loader=base_logit_rand_domain_loader)
+        empirical_l2_bound_train_data = self.get_empirical_l2_bound(other=comp_model, dataloader=train_loader, base_logit_loader=base_logit_train_loader)
+        empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader, base_logit_loader=base_logit_test_loader)
 
         # Get spectral and empirical margins
         print
