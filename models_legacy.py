@@ -15,7 +15,201 @@ import wandb
 from sklearn.cluster import KMeans
 
 from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
+from load_data import get_epsilon_mesh, get_logits_loader, FakeDataLoader
 from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
+
+
+# TODO: Delete if not used anymore
+class LowRankLinear(nn.Linear):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features, out_features)  # Neyshabur et al. 2017 (spectrally-normalized margin bounds) don't allow a bias term, but we do.
+
+        self._weight_norm = None  # This is the ||Wi||_2 in our notation.
+        self._bias_norm = None
+
+        self._U = None
+        self._S = None
+        self._Vt = None
+
+        self._U_truncs = None
+        self._S_truncs = None
+        self._Vt_truncs = None
+
+        self._low_rank_weights = None  # This is the Wi + Ui in our notation.
+        self._perturbations = None  # This is the Ui in our notation.
+        self._low_rank_weight_norms = None  # This is the ||Wi + Ui||_2 in our notation.
+        self._perturbation_norms = None  # This is the ||Ui||_2 in our notation.
+
+        self._USV_num_params = None
+        self._UV_min = None
+        self._UV_max = None
+        self._S_min = None
+        self._S_max = None
+
+    def forward(self, x: torch.Tensor, rank: int) -> torch.Tensor:
+        if rank < 1 or rank > min(self.weight.shape):
+            raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
+        return F.linear(x, self.low_rank_Ws[rank], self.bias)
+
+    @property
+    def weight_norm(self) -> torch.Tensor:
+        if self._weight_norm is None:
+            self._weight_norm = torch.linalg.norm(self.weight.detach(), ord=2)
+        return self._weight_norm
+
+    @property
+    def bias_norm(self) -> torch.Tensor:
+        if self._bias_norm is None:
+            self._bias_norm = torch.linalg.norm(self.bias.detach(), ord=2)
+        return self._bias_norm
+
+    @property
+    def U(self) -> torch.Tensor:
+        if self._U is None:
+            self.compute_svd()
+        return self._U
+
+    @property
+    def S(self) -> torch.Tensor:
+        if self._S is None:
+            self.compute_svd()
+        return self._S
+
+    @property
+    def Vt(self) -> torch.Tensor:
+        if self._Vt is None:
+            self.compute_svd()
+        return self._Vt
+
+    @property
+    def U_truncs(self) -> dict[int, torch.Tensor]:
+        if self._U_truncs is None:
+            self._U_truncs = {
+                rank: self.U[:, :rank] for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._U_truncs
+
+    @property
+    def S_truncs(self) -> dict[int, torch.Tensor]:
+        if self._S_truncs is None:
+            self._S_truncs = {
+                rank: self.S[:rank] for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._S_truncs
+
+    @property
+    def Vt_truncs(self) -> dict[int, torch.Tensor]:
+        if self._Vt_truncs is None:
+            self._Vt_truncs = {
+                rank: self.Vt[:rank, :] for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._Vt_truncs
+
+    @property
+    def low_rank_Ws(self) -> dict[int, torch.Tensor]:
+        if self._low_rank_weights is None:
+            self._low_rank_weights = {
+                rank: self.U_truncs[rank]
+                @ torch.diag(self.S_truncs[rank])
+                @ self.Vt_truncs[rank]
+                for rank in range(1, min(self.weight.shape))
+            }
+            self._low_rank_weights[min(self.weight.shape)] = (
+                self.weight.clone().detach()
+            )  # Last one stores the original weights
+        return self._low_rank_weights
+
+    @property
+    def perturbations(self) -> dict[int, torch.Tensor]:
+        if self._perturbations is None:
+            self._perturbations = {
+                rank: self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)]
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._perturbations
+
+    @property
+    def low_rank_Ws_norms(self) -> dict[int, torch.Tensor]:
+        if self._low_rank_norms is None:
+            self._low_rank_norms = {
+                rank: torch.linalg.norm(self.low_rank_Ws[rank], ord=2)
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._low_rank_norms
+
+    @property
+    def perturbation_norms(self) -> dict[int, torch.Tensor]:
+        if self._perturbation_norms is None:
+            self._perturbation_spectral_norms = {
+                rank: torch.linalg.norm(self.low_rank_Ws[rank] - self.low_rank_Ws[min(self.weight.shape)], ord=2)
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._perturbation_norms
+
+    @property
+    def USV_num_params(self) -> dict[int, int]:
+        if self._USV_num_params is None:
+            self._USV_num_params = {
+                rank: self.U_truncs[rank].numel()
+                + self.S_truncs[rank].numel()
+                + self.Vt_truncs[rank].numel()
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._USV_num_params
+
+    @property
+    def UV_min(self):
+        if self._UV_min is None:
+            self._UV_min = {
+                rank: min(self.U_truncs[rank].min(), self.Vt_truncs[rank].min())
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._UV_min
+
+    @property
+    def UV_max(self):
+        if self._UV_max is None:
+            self._UV_max = {
+                rank: max(self.U_truncs[rank].max(), self.Vt_truncs[rank].max())
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._UV_max
+
+    @property
+    def S_min(self):
+        if self._S_min is None:
+            self._S_min = {
+                rank: self.S_truncs[rank].min()
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._S_min
+
+    @property
+    def S_max(self):
+        if self._S_max is None:
+            self._S_max = {
+                rank: self.S_truncs[rank].max()
+                for rank in range(1, min(self.weight.shape) + 1)
+            }
+        return self._S_max
+
+    def compute_svd(self):
+        self._U, self._S, self._Vt = torch.linalg.svd(self.weight.clone().detach())
+
+    # # TODO: Add @torch.no_grad() decorator?
+    # def set_to_rank(self, rank):
+    #     if rank < 1 or rank > min(self.weight.shape):
+    #         raise ValueError(f"Rank must be between 1 and {min(self.weight.shape)}")
+    #     self.weight.data = self.low_rank_Ws[rank]
+
+    # def valid_ranks(self, num_layers):
+    #     """Returns the ranks for which the perturbation matches the requirements of Lemma 2 in the paper"""
+    #     return [
+    #         rank
+    #         for rank in range(1, min(self.weight.shape) + 1)
+    #         if num_layers * self.perturbation_spectral_norms[rank]
+    #         <= self.weight_spectral_norm
+    #     ]
 
 
 class MLP(nn.Module):
@@ -48,6 +242,9 @@ class MLP(nn.Module):
         self.num_parameters = sum([p.numel() for p in self.parameters()])
         self.num_weights = sum([layer.weight.numel() for layer in self.linear_layers])
         self.num_biases = sum([layer.bias.numel() for layer in self.linear_layers])
+
+        # self._weight_norms = None
+        # self._bias_norms = None
 
         # SVD Decompositions. Note this does not make the model low rank; the Us, Ss and Vs are just used by get_low_rank_model()
         self.Us = None
@@ -371,9 +568,19 @@ class MLP(nn.Module):
                 print(f"Epoch [{epoch}/{base_config.stopping.max_epochs}]")
 
             for x, labels in base_config.data.train_loader:
+                print("Before to device")
+                print(f"{x.shape=}, {labels.shape=}")
+                print(f"{x.device=}, {labels.device=}")
+                print(f"{x.dtype=}, {labels.dtype=}")
                 assert self.training
                 x, labels = x.to(self.device), labels.to(self.device)
                 x = x.view(x.size(0), -1)
+                print("After to device")
+                print(f"{x.shape=}, {labels.shape=}")
+                print(f"{x.device=}, {labels.device=}")
+                print(f"{x.dtype=}, {labels.dtype=}")
+                print(x)
+                print(labels)
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
                 wandb.log({base_config.records.train_loss_name + " (batch)": loss.item()})
@@ -506,7 +713,7 @@ class MLP(nn.Module):
         ) -> DistAttemptResults:
         # N.B. self is interpreted as the dist model for this method
         
-        # Set up loss function and optimizer
+        # Set up loss function, optimizer and scheduler
         assert not base_model.training, "Base model should be in eval mode."
         train_loss_fn = self.get_dist_loss_fn(
             dist_config.objective.objective_name,
@@ -521,6 +728,11 @@ class MLP(nn.Module):
         train_acc_name = f"Dist Train Accuracy"
         test_acc_name = f"Dist Test Accuracy"
         optimizer = torch.optim.Adam(self.parameters(), lr=dist_config.hyperparams.lr)
+        scheduler = (
+            torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3)
+            if dist_config.objective.use_scheduler
+            else None
+        )
 
         # Initialize variables for early stopping
         if dist_config.stopping.target_kl_on_train:
@@ -551,6 +763,8 @@ class MLP(nn.Module):
             epoch_log = {"Epoch": epoch + epoch_shift}
             if dist_config.objective.objective_name == "l2":
                 epoch_log["Alpha"] = dist_config.objective.alpha
+            if scheduler:
+                epoch_log["lr"] = scheduler.get_last_lr()[0]
 
             ########## Evaluate model ##########
             if dist_config.records.get_full_kl_on_train_data:
@@ -581,7 +795,21 @@ class MLP(nn.Module):
             if dist_config.records.get_full_accuracy_on_test_data:
                 test_accuracy = self.get_full_accuracy(dist_config.data.domain_test_loader)
                 epoch_log[dist_config.records.test_accuracy_name] = test_accuracy
+
+            # l2 deviation on test data
+            # if dist_config.records.get_full_l2_on_test_data:
+            #     max_l2_dev, mean_l2_dev = self.get_max_and_mean_l2_deviation(
+            #         base_model, dist_config.data.domain_test_loader
+            #     )
+            #     epoch_log[
+            #         f"Max l2 Deviation ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
+            #     ] = max_l2_dev
+            #     epoch_log[
+            #         f"Mean l2 Deviation ({dist_config.objective.objective_name} {dist_config.objective.reduction})"
+            #     ] = mean_l2_dev
             ########## Evaluate model ##########
+
+            # scheduler.step(max_l2_dev)
 
             wandb.log(epoch_log)
 
@@ -654,6 +882,34 @@ class MLP(nn.Module):
     #         [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
     #     ]
     #     return dist_dims
+
+    def get_logits_loaders(
+        self,
+        domain_train_loader,
+        domain_test_loader,
+        batch_size,
+        use_whole_dataset,
+        device
+    ):
+        # N.B. self is interpreted as the base model for this method
+        if use_whole_dataset:
+            logit_train_loader = get_logits_loader(
+                model=self,
+                data_loader=domain_train_loader,
+                batch_size=batch_size,
+                use_whole_dataset=use_whole_dataset,
+                device=device
+            )
+            logit_test_loader = get_logits_loader(
+                model=self,
+                data_loader=domain_test_loader,
+                batch_size=batch_size,
+                use_whole_dataset=use_whole_dataset,
+                device=device
+            )
+            return logit_train_loader, logit_test_loader
+        else:
+            raise NotImplementedError("Logit loaders are not implemented for use_whole_dataset=False, as dataloaders and logit loaders can get out of sink.")
 
     def get_dist_complexity(
         self,
@@ -780,11 +1036,21 @@ class MLP(nn.Module):
         model_path = f"{model_dir}/{model_name}"
         self.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
 
+    def max_deviation(self, base_model, epsilon, data_shape):
+        mesh, actual_epsilon, actual_cell_width = get_epsilon_mesh(
+            epsilon, data_shape, device=self.device
+        )
+        mesh = (mesh - 0.5) / 0.5
+        self_output = self(mesh)
+        base_output = base_model(mesh)
+        l2_norms = torch.linalg.vector_norm(self_output - base_output, ord=2, dim=-1)
+        return l2_norms.max(), actual_epsilon, actual_cell_width
+
     @torch.no_grad()
-    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader, logit_loader: Optional[DataLoader] = None) -> torch.Tensor:
-        # N.B. self is interpreted as the base model for this method, and logit_loader should yield logits from the base model
+    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader, base_logit_loader: Optional[FakeDataLoader]=None) -> torch.Tensor:
+        # N.B. self is interpreted as the base model for this method
         max_empirical_l2 = torch.tensor(0.0, device=self.device)
-        if logit_loader is None:
+        if base_logit_loader is None:
             for x, _ in dataloader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
@@ -794,10 +1060,12 @@ class MLP(nn.Module):
                 max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
             return max_empirical_l2
         else:
-            for x, self_targets, self_logits, self_log_probs, self_probs in logit_loader:
+            assert isinstance(dataloader, FakeDataLoader), "dataloader must be a FakeDataLoader"
+            assert isinstance(base_logit_loader, FakeDataLoader), "base_logit_loader must be a FakeDataLoader"
+            for (x, _), (base_logits, _) in zip(dataloader, base_logit_loader):
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
-                outputs_self = self_logits
+                outputs_self = base_logits
                 outputs_other = other(x)
                 l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
                 max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
@@ -979,7 +1247,7 @@ class MLP(nn.Module):
         empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader, base_logit_loader=base_logit_test_loader)
 
         # Get spectral and empirical margins
-        print("Getting spectral and empirical margins")
+        print
         margin_domain = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_domain
         margin_data = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_data
         margin_empirical_domain = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_domain
@@ -1260,3 +1528,272 @@ class LowRankMLP(MLP):
         for any choice made over the ranks and codeword_length. Note there's no sigma as the posterior
         is a point mass on the final classifier."""
         return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
+
+
+
+# TODO: Remove this once you're sure everything has been properly implemented above.
+# class LowRankMLP(MLP):
+#     def __init__(self, dimensions, activation, device="cpu"):
+#         super().__init__(
+#             dimensions=dimensions,
+#             activation=activation,
+#             low_rank=True,
+#             device=device,
+#         )
+#         self.d = len(dimensions) - 1
+
+#         self._weight_norms = None
+#         self._bias_norms = None
+#         self._low_rank_weight_norms = None
+#         self._perturbation_norms = None
+
+#         self.rank_combs = list(
+#             product(*[range(1, min(layer.weight.shape) + 1) for layer in self.linear_layers])
+#         )
+#         # self._product_weight_spectral_norms = None
+#         # self._valid_rank_combs = None
+#         # self._epsilons = None  # Note this is without the B from Lemma 2 in the paper
+#         self._num_params = None
+#         self._min_UVs = None
+#         self._max_UVs = None
+#         self._min_Ss = None
+#         self._max_Ss = None
+#         self._KL_divergences = None
+
+#     def forward(self, x: torch.Tensor, ranks: list[int]):
+#         if len(ranks) != self.d:
+#             raise ValueError(f"Expected {self.d} ranks, got {ranks=}.")
+#         i = 0
+#         for layer in self.network:
+#             if isinstance(layer, nn.Linear):
+#                 x = layer(x, rank=ranks[i])
+#                 i += 1
+#             else:
+#                 x = layer(x)
+#         return x
+
+#     def weight_norm(self, layer_num):
+#         if self._weight_norms is None:
+#             self._weight_norms = {i + 1: layer.weight_norm for i, layer in enumerate(self.linear_layers)}
+#         return self._weight_norms[layer_num]
+
+#     def bias_norm(self, layer_num):
+#         if self._bias_norms is None:
+#             self._bias_norms = {i + 1: layer.bias_norm for i, layer in enumerate(self.linear_layers)}
+#         return self._bias_norms[layer_num]
+
+#     def low_rank_weight_norms(self, layer_num, rank):    
+#         if self._weight_norms is None:
+#             self._weight_norms = dict()
+#             for l_num in range(1, self.d + 1):
+#                 for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+#                     self._weight_norms[(l_num, r)] = self.linear_layers[l_num].low_rank_Ws_spectral_norms[r]
+#         return self._weight_norms[(layer_num, rank)]
+
+#     def perturbation_norms(self, layer_num, rank):
+#         if self._perturbation_norms is None:
+#             self._perturbation_norms = dict()
+#             for l_num in range(1, self.d + 1):
+#                 for r in range(1, min(self.linear_layers[l_num].weight.shape) + 1):
+#                     self._perturbation_norms[(l_num, r)] = self.linear_layers[l_num]._perturbation_norms[r]
+#         return self._perturbation_norms[(layer_num, rank)]
+
+#     def max_l2_deviation(self, C, ranks: list[int]):
+#         return self.beta(C, layer_num=self.d, ranks=ranks)
+
+#     def KL_divergences(self):
+#         pass
+
+#     @property
+#     def num_params(self):
+#         if self._num_params is None:
+#             self._num_params = {}
+#             for rank_comb in self.rank_combs:
+#                 self._num_params[rank_comb] = sum(
+#                     layer.USV_num_params[rank]
+#                     for rank, layer in zip(rank_comb, self.linear_layers)
+#                 )
+#         return self._num_params
+
+    # @property
+    # def valid_rank_combs(self):
+    #     """Returns a dictionary with rank combinations as keys and booleans as values,
+    #     indicating whether the rank combination is valid produces a perturbation U within
+    #     the tolerance of Lemma 2 from Neyshabur et al. 2017 (spectrally-normalized margin bounds)."""
+    #     if self._valid_rank_combs is None:
+    #         self._valid_rank_combs = {}
+    #         for rank_comb in self.rank_combs:
+    #             self._valid_rank_combs[rank_comb] = all(
+    #                 [
+    #                     layer.perturbation_spectral_norms[rank]
+    #                     <= layer.weight_spectral_norm / len(self.layers)
+    #                     for rank, layer in zip(rank_comb, self.layers)
+    #                 ]
+    #             )
+    #     return self._valid_rank_combs
+
+    # @property
+    # def epsilons(self):
+    #     if self._epsilons is None:
+    #         self._epsilons = {}
+    #         for rank_comb in self.rank_combs:
+    #             norm_ratios = [
+    #                 layer.perturbation_spectral_norms[rank] / layer.weight_spectral_norm
+    #                 for rank, layer in zip(rank_comb, self.layers)
+    #             ]
+    #             self._epsilons[rank_comb] = (
+    #                 torch.e * self.product_weight_spectral_norms * sum(norm_ratios)
+    #             )
+    #     return self._epsilons
+
+
+class BaseMLP(MLP):
+    def __init__(self, dimensions, activation):
+        super().__init__(dimensions, activation, low_rank=False)
+
+        self.num_layers = len(dimensions) - 1
+        self.max_rows = max(dimensions[1:])
+        self.max_cols = max(dimensions[:-1])
+        self.max_indices = (
+            self.num_layers - 1,
+            self.max_rows - 1,
+            self.max_cols,
+        )  # Extra col is for bias
+        self.bit_lengths = (
+            self.num_layers.bit_length(),
+            self.max_rows.bit_length(),
+            self.max_cols.bit_length(),
+        )
+
+    @staticmethod
+    def scale_indices(indices, max_indices):
+        return (
+            torch.tensor(indices, dtype=torch.float)
+            / torch.tensor(max_indices, dtype=torch.float)
+            - 0.5
+        )
+
+    @property
+    def scale_indices_transform(self):
+        max_indices = [
+            max(1, idx) for idx in self.max_indices
+        ]  # To avoid division by zero if there is only one layer/row/col
+        return lambda indices: self.scale_indices(indices, max_indices)
+
+    def binary_indices(self, indices, bit_lengths):
+        binary_string = "".join(
+            [
+                to_padded_binary(idx, num_bits)
+                for idx, num_bits in zip(indices, bit_lengths)
+            ]
+        )
+        return (
+            torch.tensor(
+                [int(d) for d in binary_string], dtype=torch.float, device=self.device
+            )
+            - 0.5
+        )
+
+    @property
+    def binary_indices_transform(self):
+        return lambda indices: self.binary_indices(indices, self.bit_lengths)
+
+    def get_parameter_dataset(self, transform=None):
+        return ParameterDataset(self, transform)
+
+    def load_from_hyper_model(self, hyper_model, transform=None):
+        """Populate the weights of the base model with the estimated weights from the hyper_model"""
+        with torch.no_grad():
+            for layer_num, layer in enumerate(self.linear_layers):
+                for row in range(layer.weight.size(0)):
+                    for col in range(layer.weight.size(1) + 1):
+
+                        x = [layer_num, row, col]
+
+                        if transform:
+                            x = transform(x)
+                        param_hat = hyper_model(x)
+
+                        if col < layer.weight.size(1):  # Weight
+                            layer.weight[row, col] = param_hat
+                        else:  # Bias
+                            layer.bias[row] = param_hat
+
+    def get_hyper_model_scaled_input(self, hyper_config):
+        assert (
+            hyper_config.model_dims[0] == 3
+        ), "The first dimension of the hyper_model must be 3"
+        assert (
+            hyper_config.model_dims[-1] == 1
+        ), "The last dimension of the hyper_model must be 1"
+        return HyperModel(
+            hyper_config.model_dims,
+            hyper_config.model_act,
+            transform=self.scale_indices_transform,
+        )
+
+    def get_hyper_model_binary_input(self, hyper_config):
+        if hyper_config.model_dims[0] != sum(self.bit_lengths):
+            print(
+                f"Changing dimensions from {hyper_config.model_dims[0]} to {sum(self.bit_lengths)}"
+            )
+            hyper_config.model_dims[0] = sum(self.bit_lengths)
+        assert (
+            hyper_config.model_dims[-1] == 1
+        ), "The last dimension of the hyper_model must be 1"
+        return HyperModel(
+            hyper_config.model_dims,
+            hyper_config.model_act,
+            transform=self.binary_indices_transform,
+        )
+
+
+# Do you want to inherit from BaseMLP or MLP?
+class HyperModel(MLP):
+    def __init__(self, dimensions, activation, transform=None, transform_input=False):
+        super().__init__(dimensions, activation)
+        self.transform = transform
+        self.transform_input = transform_input
+
+    def forward(self, x):
+        if self.transform_input:
+            x = self.transform(x)
+        return self.network(x).view(
+            -1
+        )  # TODO: I think you want to change this to self(x) so that it uses the inherited forward method which deals with the device
+
+
+class ParameterDataset(Dataset):
+    def __init__(self, model: MLP, transform=None):
+        super(ParameterDataset, self).__init__()
+        self.params = []
+        with torch.no_grad():
+            for layer_num, layer in enumerate(model.linear_layers):
+                weight = layer.weight.detach()
+                bias = layer.bias.detach()
+                for row in range(weight.size(0)):
+                    for col in range(weight.size(1) + 1):
+                        x = [layer_num, row, col]
+                        if transform:
+                            x = transform(x)
+                        if col < weight.size(1):  # Weight
+                            y = weight[row, col]
+                        else:  # Bias
+                            y = bias[row]
+                        self.params.append((x, y))
+
+    def __len__(self):
+        return len(self.params)
+
+    def __getitem__(self, idx):
+        return self.params[idx]
+
+
+def to_padded_binary(n, b):
+    return format(n, f"0{b}b")
+
+
+def get_reconstructed_accuracy(base_model, hyper_model, transform, dataloader):
+    base_model_estimate = deepcopy(base_model)
+    base_model_estimate.load_from_hyper_model(hyper_model, transform=transform)
+    return base_model_estimate.get_full_accuracy(dataloader).item()

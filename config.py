@@ -9,7 +9,7 @@ from math import prod
 import torch
 from torch.utils.data import DataLoader
 
-from load_data import get_dataloaders, get_rand_domain_dataset_and_loader, get_max_l2_norm_data, get_logits_loader
+from load_data import get_dataloaders, get_rand_domain_dataset_and_loader, get_max_l2_norm_data, get_logit_loader
 
 
 @dataclass
@@ -61,7 +61,7 @@ class BaseDataConfig:
     test_size: Optional[int] = None
     train_loader: Optional[DataLoader] = None
     test_loader: Optional[DataLoader] = None
-    data_dir: Optional[str] = None
+    data_filepath: Optional[str] = None
     _C_train_domain = None
     _C_train_data = None
 
@@ -88,7 +88,7 @@ class BaseDataConfig:
             self.test_size = None
 
     def add_dataloaders(self, batch_size):
-        self.train_loader, self.test_loader, self.data_dir = get_dataloaders(
+        self.train_loader, self.test_loader, self.data_filepath = get_dataloaders(
             dataset_name=self.dataset_name,
             batch_size=batch_size,
             train_size=self.train_size,
@@ -315,7 +315,6 @@ class DistDataConfig:
     use_whole_dataset: Optional[bool] = None
     domain_train_loader: Optional[DataLoader] = None
     domain_test_loader: Optional[DataLoader] = None
-    # data_dir: Optional[str] = None
     base_logit_train_loader: Optional[DataLoader] = None
     base_logit_test_loader: Optional[DataLoader] = None
     device: Optional[str] = None
@@ -323,6 +322,8 @@ class DistDataConfig:
     def __post_init__(self):
         if self.use_whole_dataset and self.batch_size is not None:
             raise ValueError(f"use_whole_dataset is {self.use_whole_dataset} but batch_size is not None: {self.batch_size} ")
+        if not self.use_whole_dataset and self.batch_size is None:
+            raise ValueError(f"use_whole_dataset is {self.use_whole_dataset} but batch_size is None")
 
     def add_sample_sizes(self, quick_test):
         if quick_test:
@@ -332,21 +333,21 @@ class DistDataConfig:
             self.train_size = None
             self.test_size = None
 
-    # TODO: Should this take new_input_shape? Maybe it should *always* take a dataset? No, I think it's fine if we distill on a different dataset to what we trained the base model on.
-    def add_dataloaders(self, new_input_shape, train_dataset=None, test_dataset=None, data_dir=None):
-        self.domain_train_loader, self.domain_test_loader, self.data_dir = get_dataloaders(
+    # Add a dataset to distill on
+    def add_dataloaders(self, new_input_shape, train_dataset=None, test_dataset=None, data_filepath=None):
+        self.domain_train_loader, self.domain_test_loader, self.data_filepath = get_dataloaders(
             dataset_name=self.dataset_name,
-            batch_size=self.batch_size,
             train_size=self.train_size,
             test_size=self.test_size,
             new_input_shape=new_input_shape,
             train_dataset=train_dataset,
             test_dataset=test_dataset,
-            data_dir=data_dir,
+            data_filepath=data_filepath,
             use_whole_dataset=self.use_whole_dataset,
+            batch_size=self.batch_size,
             device=self.device
         )
-    
+
     def add_base_logit_loaders(
             self,
             base_model,
@@ -354,16 +355,14 @@ class DistDataConfig:
             test_dataset,
             batch_size=None,
         ):
-        self.base_logit_train_loader = get_logits_loader(
+        self.base_logit_train_loader = get_logit_loader(
             model=base_model,
             dataset=train_dataset,
-            use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
-        self.base_logit_test_loader = get_logits_loader(
+        self.base_logit_test_loader = get_logit_loader(
             model=base_model,
             dataset=test_dataset,
-            use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
 
@@ -620,7 +619,6 @@ class CompConfig:
     use_whole_dataset: bool = True  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
     rand_domain_loader_batch_size: int = 128
     rand_domain_loader_sample_size: int = 10**6
-    rand_domain_loader_dist_name: str = "uniform"
     dist_min: Optional[float] = None
     dist_max: Optional[float] = None
 
@@ -640,7 +638,6 @@ class CompConfig:
             use_whole_dataset=self.use_whole_dataset,
             sample_size=self.rand_domain_loader_sample_size,
             batch_size=self.rand_domain_loader_batch_size,
-            dist_name=self.rand_domain_loader_dist_name,
             dist_min=self.dist_min,
             dist_max=self.dist_max,
             device=self.device,
@@ -684,8 +681,8 @@ class CompConfig:
             "Comp Compress Model Difference": self.compress_model_difference,
         }
 
-    def add_dataloaders(self, train_dataset, test_dataset, data_dir):
-        self.train_loader, self.test_loader, self.data_dir = get_dataloaders(
+    def add_dataloaders(self, train_dataset, test_dataset, data_filepath):
+        self.train_loader, self.test_loader, self.data_filepath = get_dataloaders(
             dataset_name=self.dataset_name,
             batch_size=None,
             train_size=None,
@@ -693,7 +690,7 @@ class CompConfig:
             new_input_shape=None,
             train_dataset=train_dataset,
             test_dataset=test_dataset,
-            data_dir=data_dir,
+            data_filepath=data_filepath,
             use_whole_dataset=self.use_whole_dataset,
             device=self.device
         )

@@ -21,7 +21,7 @@ def get_base_config(quick_test: bool, dataset_name: str, device: str, experiment
     stopping_config.target_full_train_loss = None  # Base model should train until convergence
     stopping_config.patience = 1
     if quick_test:
-        stopping_config.max_epochs = 1
+        stopping_config.max_epochs = 2
     records = config.BaseRecordsConfig()
     return config.BaseConfig(
         hyperparams=hyperparams,
@@ -79,7 +79,7 @@ def log_and_save_metrics(
 
 def main():
 
-    quick_test = False
+    quick_test = True
     device = "cpu"
     dataset_name = "MNIST1D"
     seed = 0
@@ -108,7 +108,7 @@ def main():
     comp_config.add_dataloaders(
         train_dataset=base_config.data.train_loader.dataset,
         test_dataset=base_config.data.test_loader.dataset,
-        data_dir=base_config.data.data_dir,
+        data_filepath=base_config.data.data_filepath,
     )
     comp_config.add_base_logit_loaders(
         base_model=base_model,

@@ -43,7 +43,7 @@ def get_dist_config(
         new_input_shape=base_config.data.new_input_shape,
         train_dataset=base_config.data.train_loader.dataset,
         test_dataset=base_config.data.test_loader.dataset,
-        data_dir=base_config.data.data_dir,
+        data_filepath=base_config.data.data_filepath,
     )
     data_config.add_base_logit_loaders(
         base_model=base_model,
@@ -180,7 +180,7 @@ def log_and_save_metrics(
 
 def main():
 
-    quick_test = False
+    quick_test = True
     device = "cpu"
     dataset_name = "MNIST1D"
     seed = 0
