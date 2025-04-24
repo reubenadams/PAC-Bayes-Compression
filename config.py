@@ -358,11 +358,13 @@ class DistDataConfig:
         self.base_logit_train_loader = get_logit_loader(
             model=base_model,
             dataset=train_dataset,
+            use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
         self.base_logit_test_loader = get_logit_loader(
             model=base_model,
             dataset=test_dataset,
+            use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
 
@@ -617,7 +619,7 @@ class CompConfig:
     compress_model_difference: bool = True
 
     use_whole_dataset: bool = True  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
-    rand_domain_loader_batch_size: int = 128
+    rand_domain_loader_batch_size: Optional[int] = None
     rand_domain_loader_sample_size: int = 10**6
     dist_min: Optional[float] = None
     dist_max: Optional[float] = None
@@ -702,19 +704,19 @@ class CompConfig:
             test_dataset,
             batch_size=None
         ):
-        self.base_logit_train_loader = get_logits_loader(
+        self.base_logit_train_loader = get_logit_loader(
             model=base_model,
             dataset=train_dataset,
             use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
-        self.base_logit_test_loader = get_logits_loader(
+        self.base_logit_test_loader = get_logit_loader(
             model=base_model,
             dataset=test_dataset,
             use_whole_dataset=self.use_whole_dataset,
             batch_size=batch_size,
         )
-        self.base_logit_rand_domain_loader = get_logits_loader(
+        self.base_logit_rand_domain_loader = get_logit_loader(
             model=base_model,
             dataset=self.rand_domain_dataset,
             use_whole_dataset=self.use_whole_dataset,

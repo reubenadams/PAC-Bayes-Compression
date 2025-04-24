@@ -38,7 +38,7 @@ def distillation_loss(
         student_log_probs: torch.Tensor,
         teacher_log_probs: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute the knowledge distillation loss between student and teacher."""
+    """Compute the knowledge distillation loss between student and teacher, averaged over the batch."""
     if not (student_probs.shape == student_log_probs.shape == teacher_log_probs.shape):
         raise ValueError("All input tensors must have the same shape.")
     if student_probs.min() < 0 or student_probs.max() > 1:

@@ -30,6 +30,7 @@ class CustomDataset(Dataset):
         return len(self.data)
 
 
+# TODO: Don't get rid of this! While most of the time you only use data and log_probs, in get_empirical_l2_bound you use logits.
 class LogitDataset(Dataset):
     def __init__(self, data, targets, logits, log_probs, probs):
         self.data = data
@@ -146,10 +147,10 @@ def get_rand_domain_dataset_and_loader(
 def get_logit_loader(
         model,
         dataset: Union[Dataset, CustomDataset, RandomDomainDataset],
+        use_whole_dataset: bool,
         batch_size: Optional[int],
     ) -> DataLoader:
-    if batch_size is None:
-        batch_size = len(dataset)
+    batch_size = update_batch_size(use_whole_dataset, batch_size, dataset)
     dist_datset = get_logit_dataset(model, dataset)
     return DataLoader(dist_datset, batch_size=batch_size, shuffle=True)
 

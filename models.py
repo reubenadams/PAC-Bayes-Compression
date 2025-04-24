@@ -15,7 +15,7 @@ import wandb
 from sklearn.cluster import KMeans
 
 from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
-from kl_utils import kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
+from kl_utils import distillation_loss, kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 
 
 class MLP(nn.Module):
@@ -215,8 +215,8 @@ class MLP(nn.Module):
         # N.B. self is interpreted as the dist model for this method
         kl_on_train_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.base_logit_train_loader) if dist_config.records.get_final_kl_on_train_data else None
         kl_on_test_data = self.get_full_kl_loss_with_logit_loader(dist_config.data.base_logit_test_loader) if dist_config.records.get_final_kl_on_test_data else None
-        accuracy_on_train_data = self.get_full_accuracy(dist_config.data.base_logit_train_loader) if dist_config.records.get_full_accuracy_on_train_data else None
-        accuracy_on_test_data = self.get_full_accuracy(dist_config.data.base_logit_test_loader) if dist_config.records.get_full_accuracy_on_test_data else None
+        accuracy_on_train_data = self.get_full_accuracy(dist_config.data.domain_train_loader) if dist_config.records.get_full_accuracy_on_train_data else None
+        accuracy_on_test_data = self.get_full_accuracy(dist_config.data.domain_test_loader) if dist_config.records.get_full_accuracy_on_test_data else None
         final_dist_metrics = DistFinalResults(
             complexity=complexity,
             mean_kl_on_train_data=kl_on_train_data.item() if kl_on_train_data is not None else None,
@@ -294,27 +294,35 @@ class MLP(nn.Module):
             total_margin_loss += (target_values <= margin + max_non_target_values).sum()
         return total_margin_loss / len(dataloader.dataset)
 
-    def get_full_kl_loss(self, base_model, domain_dataloader):
+    def get_full_kl_loss(self, base_model: MLP, domain_dataloader: DataLoader):
         assert not self.training, "Model should be in eval mode."
         total_dist_kl_loss = torch.tensor(0.0, device=self.device)
-        kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
         for x, _ in domain_dataloader:
             x = x.to(self.device)
             x = x.view(x.size(0), -1)
-            outputs = F.log_softmax(self(x), dim=-1)
-            targets = F.log_softmax(base_model(x), dim=-1)
-            total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
+            student_log_probs = F.log_softmax(self(x), dim=-1)
+            student_probs = torch.exp(student_log_probs)
+            teacher_log_probs = F.log_softmax(base_model(x), dim=-1)
+            total_dist_kl_loss += distillation_loss(
+                student_probs=student_probs,
+                student_log_probs=student_log_probs,
+                teacher_log_probs=teacher_log_probs,
+            ) * x.size(0)
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
-    def get_full_kl_loss_with_logit_loader(self, logit_loader):
+    def get_full_kl_loss_with_logit_loader(self, logit_loader: DataLoader):
         assert not self.training, "Model should be in eval mode."
         total_dist_kl_loss = torch.tensor(0.0, device=self.device)
-        kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
-        for x, targets in logit_loader:
+        for x, targets, base_logits, base_log_probs, base_probs in logit_loader:
             x = x.to(self.device)
             x = x.view(x.size(0), -1)
-            outputs = F.log_softmax(self(x), dim=-1)
-            total_dist_kl_loss += kl_loss_fn(outputs, targets) * x.size(0)
+            student_log_probs = F.log_softmax(self(x), dim=-1)
+            student_probs = torch.exp(student_log_probs)
+            total_dist_kl_loss += distillation_loss(
+                student_probs=student_probs,
+                student_log_probs=student_log_probs,
+                teacher_log_probs=base_log_probs
+            ) * x.size(0)
         return total_dist_kl_loss / len(logit_loader.dataset)
 
     def get_max_and_mean_l2_deviation(self, base_model, domain_loader):
@@ -533,11 +541,18 @@ class MLP(nn.Module):
             if epoch % dist_config.stopping.print_every == 1:
                 print(f"Epoch [{epoch}/{dist_config.stopping.max_epochs}]")
 
-            for x, base_logits in dist_config.data.base_logit_train_loader:
+            for x, targets, base_logits, base_log_probs, base_probs in dist_config.data.base_logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
-                dist_logits = F.log_softmax(self(x), dim=-1)
-                loss = train_loss_fn(dist_logits, base_logits)
+                student_log_probs = F.log_softmax(self(x), dim=-1)
+                student_probs = torch.exp(student_log_probs)
+                loss = distillation_loss(
+                    student_probs=student_probs,
+                    student_log_probs=student_log_probs,
+                    teacher_log_probs=base_log_probs,
+                )
+
+                # loss = train_loss_fn(dist_logits, base_logits)
                 # wandb.log({train_loss_name: loss.item()})
                 wandb.log({train_loss_name + " (batch)": loss.item()})
 
@@ -781,25 +796,25 @@ class MLP(nn.Module):
         self.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
 
     @torch.no_grad()
-    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader, logit_loader: Optional[DataLoader] = None) -> torch.Tensor:
+    def get_empirical_l2_bound(self: MLP, other: MLP, dataloader: DataLoader, base_logit_loader: Optional[DataLoader] = None) -> torch.Tensor:
         # N.B. self is interpreted as the base model for this method, and logit_loader should yield logits from the base model
         max_empirical_l2 = torch.tensor(0.0, device=self.device)
-        if logit_loader is None:
-            for x, _ in dataloader:
+        if base_logit_loader is not None:
+            for x, self_targets, self_logits, self_log_probs, self_probs in base_logit_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
-                outputs_self = self(x)
-                outputs_other = other(x)
-                l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
+                self_logits = self_logits
+                other_logits = other(x)
+                l2_norms = torch.linalg.vector_norm(self_logits - other_logits, ord=2, dim=-1)
                 max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
             return max_empirical_l2
         else:
-            for x, self_targets, self_logits, self_log_probs, self_probs in logit_loader:
+            for x, _ in dataloader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
-                outputs_self = self_logits
-                outputs_other = other(x)
-                l2_norms = torch.linalg.vector_norm(outputs_self - outputs_other, ord=2, dim=-1)
+                self_logits = self(x)
+                other_logits = other(x)
+                l2_norms = torch.linalg.vector_norm(self_logits - other_logits, ord=2, dim=-1)
                 max_empirical_l2 = max(max_empirical_l2, l2_norms.max())
             return max_empirical_l2
 
