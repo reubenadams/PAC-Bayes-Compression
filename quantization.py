@@ -136,6 +136,7 @@ def main():
 
         # Results without compression
         if comp_config.get_no_comp_results:
+
             print()
             print("Getting results without any compression...")
 
@@ -161,30 +162,25 @@ def main():
                 compress_model_difference=False,
                 init_model=None,
             )
-            print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_spectral_domain}")
-            print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_spectral_data}")
-            print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_spectral_domain}")
-            print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_spectral_data}")
             final_no_comp_results.add_result(no_comp_results)
             no_comp_results.log()
+            final_no_comp_results.get_best()
             final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
-            best_results["no_comp"] = no_comp_results.to_dict()
+            best_results["no_comp"] = final_no_comp_results.best_results.to_dict()
 
 
         # Quant k-means results
         if comp_config.get_quant_k_means_results:
-            
+
             print()
             print("Getting quant k-means results...")
 
             final_quant_k_means_results = config.FinalCompResults()
             sensible_ranks_and_codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths()]
             num_union_bounds = len(sensible_ranks_and_codeword_lengths)
-            print()
             print(f"{sensible_ranks_and_codeword_lengths=}")
 
             for codeword_length in sensible_ranks_and_codeword_lengths:
-                print()
                 print(f"\t{codeword_length=}")
                 quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
@@ -214,18 +210,16 @@ def main():
 
         # Quant truncation results
         if comp_config.get_quant_trunc_results:
-            
+
             print()
             print("Getting quant truncation results...")
             
             final_quant_trunc_results = config.FinalCompResults()
             num_union_bounds = 8 * 23  # 8 bits for exponent, 23 bits for mantissa
-            print()
 
             # TODO: Surely we don't want to cover *all* values of b_e and b_m?
             for b_e in range(9):
                 for b_m in range(24):
-                    print()
                     print(f"\t{b_e=}, {b_m=}")
                     quant_trunc_results = base_model.get_comp_pacb_results(
                         delta=pacb_config.delta,
@@ -265,7 +259,6 @@ def main():
             print(f"{rank_combs=}")
 
             for ranks in rank_combs:
-                print()
                 print(f"\t{ranks=}")
                 low_rank_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
@@ -306,7 +299,6 @@ def main():
             print(f"{sensible_ranks_and_codeword_lengths=}")
 
             for ranks, codeword_length in sensible_ranks_and_codeword_lengths:
-                print()
                 print(f"\t{ranks=}, {codeword_length=}")
                 low_rank_and_quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
@@ -348,7 +340,6 @@ def main():
                 print(f"\t{ranks=}")
                 for b_e in range(9):
                     for b_m in range(24):
-                        print()
                         print(f"\t\t{b_e=}, {b_m=}")
                         low_rank_and_quant_trunc_results = base_model.get_comp_pacb_results(
                             delta=pacb_config.delta,
@@ -382,9 +373,14 @@ def main():
         pacb_config=pacb_config,
         comp_config=comp_config,
         base_metrics=base_metrics,
-        final_low_rank_results=final_low_rank_results,
+
+        final_no_comp_results=final_no_comp_results,
         final_quant_k_means_results=final_quant_k_means_results,
+        final_quant_trunc_results=final_quant_trunc_results,
+
+        final_low_rank_results=final_low_rank_results,
         final_low_rank_and_quant_k_means_results=final_low_rank_and_quant_k_means_results,
+        final_low_rank_and_quant_trunc_results=final_low_rank_and_quant_trunc_results,
     )
 
     with open(base_config.best_comp_metrics_path, "w") as f:

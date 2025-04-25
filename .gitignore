@@ -164,7 +164,7 @@ cython_debug/
 
 models/
 trained_models/
-quantization/models
+quantization/
 quantization/quant_results
 wandb/
 data/
@@ -174,4 +174,3 @@ scratch2.py
 scratch3.py
 scratch4.py
 pac_bayes_compression.o*
-
