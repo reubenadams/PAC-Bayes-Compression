@@ -92,7 +92,7 @@ def truncate_exponent(x: torch.Tensor, b_e: int) -> torch.Tensor:
         truncated_unbiased_exps = np.clip(unbiased_exps, -clip_val, clip_val)
         truncated_exps = truncated_unbiased_exps + 127
         truncated_exps[zero_locs] = 0
-    assert len(set(truncated_exps)) <= 2 ** b_e, "Too many unique exponent values after truncation."  # Check that the number of unique exponent values is less than or equal to 2^b_e
+    assert len(set(truncated_exps.reshape(-1))) <= 2 ** b_e, "Too many unique exponent values after truncation."  # Check that the number of unique exponent values is less than or equal to 2^b_e
 
     # Combine components and convert back to pytorch tensor
     result_int = (signs | (truncated_exps << 23) | mantissas).astype(np.uint32)

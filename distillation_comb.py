@@ -182,7 +182,7 @@ def main():
 
     quick_test = True
     device = "cpu"
-    dataset_name = "MNIST"
+    dataset_name = "MNIST1D"
     seed = 0
 
     torch.manual_seed(seed)

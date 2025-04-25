@@ -27,7 +27,6 @@ def kl_scalars_inverse(q, B, x_tol=2e-12):
     assert q < p_max < 1
     f = lambda p: kl_scalars(q, p) - B
     if f(p_max) < 0:
-        print("No upper bound on p")
         return torch.tensor(1.)
     root = bisect(f=f, a=q, b=p_max, xtol=x_tol)
     return torch.tensor(root)

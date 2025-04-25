@@ -184,7 +184,8 @@ def main():
             print(f"{sensible_ranks_and_codeword_lengths=}")
 
             for codeword_length in sensible_ranks_and_codeword_lengths:
-                print(f"{codeword_length=}")
+                print()
+                print(f"\t{codeword_length=}")
                 quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
@@ -196,7 +197,11 @@ def main():
                     base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                     C_domain=base_config.data.C_train_domain,
                     C_data=base_config.data.C_train_data,
+
+                    ranks=None,
                     codeword_length=codeword_length,
+                    exponent_bits=None,
+                    mantissa_bits=None,
                     compress_model_difference=comp_config.compress_model_difference,
                     init_model=init_model,
                 )
@@ -220,7 +225,8 @@ def main():
             # TODO: Surely we don't want to cover *all* values of b_e and b_m?
             for b_e in range(9):
                 for b_m in range(24):
-                    print(f"{b_e=}, {b_m=}")
+                    print()
+                    print(f"\t{b_e=}, {b_m=}")
                     quant_trunc_results = base_model.get_comp_pacb_results(
                         delta=pacb_config.delta,
                         num_union_bounds=num_union_bounds,
@@ -232,6 +238,7 @@ def main():
                         base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                         C_domain=base_config.data.C_train_domain,
                         C_data=base_config.data.C_train_data,
+
                         ranks=None,
                         codeword_length=None,
                         exponent_bits=b_e,
@@ -259,7 +266,7 @@ def main():
 
             for ranks in rank_combs:
                 print()
-                print(f"{ranks=}")
+                print(f"\t{ranks=}")
                 low_rank_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
@@ -300,7 +307,7 @@ def main():
 
             for ranks, codeword_length in sensible_ranks_and_codeword_lengths:
                 print()
-                print(f"{ranks=}, {codeword_length=}")
+                print(f"\t{ranks=}, {codeword_length=}")
                 low_rank_and_quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
@@ -338,11 +345,11 @@ def main():
             num_union_bounds = 8 * 23 * len(rank_combs)  # TODO: Should we really use all possibilities for b_e and b_m?
 
             for ranks in rank_combs:
+                print(f"\t{ranks=}")
                 for b_e in range(9):
                     for b_m in range(24):
                         print()
-                        print(f"{ranks=}")
-                        print(f"\{b_e=}, {b_m=}")
+                        print(f"\t\t{b_e=}, {b_m=}")
                         low_rank_and_quant_trunc_results = base_model.get_comp_pacb_results(
                             delta=pacb_config.delta,
                             num_union_bounds=num_union_bounds,

@@ -1110,7 +1110,7 @@ class MLP(nn.Module):
         )
 
         # Get spectral and empirical l2 bounds
-        print("Getting spectral and empirical l2 bounds")
+        # print("Getting spectral and empirical l2 bounds")
         spectral_l2_bound_domain = self.get_spectral_l2_bound(other=comp_model, C=C_domain)
         spectral_l2_bound_data = self.get_spectral_l2_bound(other=comp_model, C=C_data)
         empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader, base_logit_loader=base_logit_rand_domain_loader)
@@ -1118,7 +1118,7 @@ class MLP(nn.Module):
         empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader, base_logit_loader=base_logit_test_loader)
 
         # Get spectral and empirical margins
-        print("Getting spectral and empirical margins")
+        # print("Getting spectral and empirical margins")
         margin_domain = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_domain
         margin_data = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_data
         margin_empirical_domain = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_domain
@@ -1126,12 +1126,12 @@ class MLP(nn.Module):
         margin_empirical_test_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_test_data
 
         # Get empirical errors
-        print("Getting empirical errors")
+        # print("Getting empirical errors")
         comp_train_accuracy = comp_model.get_full_accuracy(dataloader=train_loader)
         comp_test_accuracy = comp_model.get_full_accuracy(dataloader=test_loader)
 
         # Get the empirical margin losses. Note these are *all* calculated on the train data, because it is only the margin they use that changes. More precisely, the bound we prove requires a margin which can be calculated in different ways, but you always measure the margin loss on the train data.
-        print("Getting empirical margin losses")
+        # print("Getting empirical margin losses")
         comp_train_margin_loss_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
         comp_train_margin_loss_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
         comp_train_margin_loss_empirical_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
@@ -1139,7 +1139,7 @@ class MLP(nn.Module):
         comp_train_margin_loss_empirical_test_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_test_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
 
         # Get pacb bounds
-        print("Getting PAC-B bounds")
+        # print("Getting PAC-B bounds")
         comp_kl_bound = pacb_kl_bound(KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
