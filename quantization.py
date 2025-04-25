@@ -48,10 +48,15 @@ def log_and_save_metrics(
         comp_config: config.CompConfig = None,
         base_metrics: config.BaseResults = None,
         pacb_metrics: config.PACBResults = None,
-        final_low_rank_only_results: config.FinalCompResults = None,
-        final_quant_only_results: config.FinalCompResults = None,
-        final_low_rank_and_quant_results: config.FinalCompResults = None,
-    ):
+
+        final_no_comp_results: config.FinalCompResults = None,
+        final_quant_k_means_results: config.FinalCompResults = None,
+        final_quant_trunc_results: config.FinalCompResults = None,
+        
+        final_low_rank_results: config.FinalCompResults = None,
+        final_low_rank_and_quant_k_means_results: config.FinalCompResults = None,
+        final_low_rank_and_quant_trunc_results: config.FinalCompResults = None,
+    ) -> None:
     all_configs = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict()
     if pacb_config is not None:
         all_configs |= pacb_config.to_dict()
@@ -63,15 +68,26 @@ def log_and_save_metrics(
     if pacb_metrics is not None:
         pacb_metrics.log()
         all_metrics |= pacb_metrics.to_dict()
-    if final_low_rank_only_results is not None:
-        final_low_rank_only_results.log()
-        all_metrics |= final_low_rank_only_results.to_dict()
-    if final_quant_only_results is not None:
-        final_quant_only_results.log()
-        all_metrics |= final_quant_only_results.to_dict()
-    if final_low_rank_and_quant_results is not None:
-        final_low_rank_and_quant_results.log()
-        all_metrics |= final_low_rank_and_quant_results.to_dict()
+
+    if final_no_comp_results is not None:
+        final_no_comp_results.log()
+        all_metrics |= final_no_comp_results.to_dict()
+    if final_quant_k_means_results is not None:
+        final_quant_k_means_results.log()
+        all_metrics |= final_quant_k_means_results.to_dict()
+    if final_quant_trunc_results is not None:
+        final_quant_trunc_results.log()
+        all_metrics |= final_quant_trunc_results.to_dict()
+
+    if final_low_rank_results is not None:
+        final_low_rank_results.log()
+        all_metrics |= final_low_rank_results.to_dict()
+    if final_low_rank_and_quant_k_means_results is not None:
+        final_low_rank_and_quant_k_means_results.log()
+        all_metrics |= final_low_rank_and_quant_k_means_results.to_dict()
+    if final_low_rank_and_quant_trunc_results is not None:
+        final_low_rank_and_quant_trunc_results.log()
+        all_metrics |= final_low_rank_and_quant_trunc_results.to_dict()
 
     df = pd.DataFrame([all_configs | all_metrics])
     df.to_csv(base_config.quant_metrics_path, index=False)
@@ -118,53 +134,58 @@ def main():
 
     with torch.no_grad():
 
-        # Get results without any compression        
-        print()
-        print("Getting results without any compression...")
+        # Results without compression
+        if comp_config.get_no_comp_results:
+            print()
+            print("Getting results without any compression...")
 
-        final_no_comp_results = config.FinalCompResults()
-        num_union_bounds = 1
+            final_no_comp_results = config.FinalCompResults()
+            num_union_bounds = 1
 
-        no_comp_results = base_model.get_comp_pacb_results(
-            delta=pacb_config.delta,
-            num_union_bounds=num_union_bounds,
-            train_loader=comp_config.train_loader,
-            test_loader=comp_config.test_loader,
-            rand_domain_loader=comp_config.rand_domain_loader,
-            base_logit_train_loader=comp_config.base_logit_train_loader,
-            base_logit_test_loader=comp_config.base_logit_test_loader,
-            base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
-            C_domain=base_config.data.C_train_domain,
-            C_data=base_config.data.C_train_data,
-            ranks=None,
-            codeword_length=None,
-            compress_model_difference=False,
-            init_model=None,
-        )
-        print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_spectral_domain}")
-        print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_spectral_data}")
-        print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_spectral_domain}")
-        print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_spectral_data}")
-        final_no_comp_results.add_result(no_comp_results)
-        no_comp_results.log()
-        final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
-        best_results["no_comp"] = no_comp_results.to_dict()
+            no_comp_results = base_model.get_comp_pacb_results(
+                delta=pacb_config.delta,
+                num_union_bounds=num_union_bounds,
+                train_loader=comp_config.train_loader,
+                test_loader=comp_config.test_loader,
+                rand_domain_loader=comp_config.rand_domain_loader,
+                base_logit_train_loader=comp_config.base_logit_train_loader,
+                base_logit_test_loader=comp_config.base_logit_test_loader,
+                base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
+                C_domain=base_config.data.C_train_domain,
+                C_data=base_config.data.C_train_data,
+                
+                ranks=None,
+                codeword_length=None,
+                exponent_bits=None,
+                mantissa_bits=None,
+                compress_model_difference=False,
+                init_model=None,
+            )
+            print(f"Bound inverse kl domain: {no_comp_results.error_bound_inverse_kl_spectral_domain}")
+            print(f"Bound inverse kl data: {no_comp_results.error_bound_inverse_kl_spectral_data}")
+            print(f"Bound pinsker domain: {no_comp_results.error_bound_pinsker_spectral_domain}")
+            print(f"Bound pinsker data: {no_comp_results.error_bound_pinsker_spectral_data}")
+            final_no_comp_results.add_result(no_comp_results)
+            no_comp_results.log()
+            final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
+            best_results["no_comp"] = no_comp_results.to_dict()
 
-        # Get quant only results
-        if comp_config.get_quant_only_results:
+
+        # Quant k-means results
+        if comp_config.get_quant_k_means_results:
             
             print()
-            print("Getting quant only results...")
+            print("Getting quant k-means results...")
 
-            final_quant_only_results = config.FinalCompResults()
-            codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths_quant_only()]
-            num_union_bounds = len(codeword_lengths)
+            final_quant_k_means_results = config.FinalCompResults()
+            sensible_ranks_and_codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths()]
+            num_union_bounds = len(sensible_ranks_and_codeword_lengths)
             print()
-            print(f"{codeword_lengths=}")
+            print(f"{sensible_ranks_and_codeword_lengths=}")
 
-            for codeword_length in codeword_lengths:
+            for codeword_length in sensible_ranks_and_codeword_lengths:
                 print(f"{codeword_length=}")
-                quant_results = base_model.get_comp_pacb_results(
+                quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
                     num_union_bounds=num_union_bounds,
                     train_loader=comp_config.train_loader,
@@ -179,24 +200,64 @@ def main():
                     compress_model_difference=comp_config.compress_model_difference,
                     init_model=init_model,
                 )
-                final_quant_only_results.add_result(quant_results)
-                quant_results.log()
-            final_quant_only_results.get_best()
-            final_quant_only_results.save_to_json(filename=base_config.quant_only_metrics_path)
-            best_results["quant_only"] = final_quant_only_results.best_results.to_dict()
+                final_quant_k_means_results.add_result(quant_k_means_results)
+                quant_k_means_results.log()
+            final_quant_k_means_results.get_best()
+            final_quant_k_means_results.save_to_json(filename=base_config.quant_k_means_metrics_path)
+            best_results["quant_k_means"] = final_quant_k_means_results.best_results.to_dict()
 
-        # Get low rank only results
-        if comp_config.get_low_rank_only_results:
+
+        # Quant truncation results
+        if comp_config.get_quant_trunc_results:
+            
+            print()
+            print("Getting quant truncation results...")
+            
+            final_quant_trunc_results = config.FinalCompResults()
+            num_union_bounds = 8 * 23  # 8 bits for exponent, 23 bits for mantissa
+            print()
+
+            # TODO: Surely we don't want to cover *all* values of b_e and b_m?
+            for b_e in range(9):
+                for b_m in range(24):
+                    print(f"{b_e=}, {b_m=}")
+                    quant_trunc_results = base_model.get_comp_pacb_results(
+                        delta=pacb_config.delta,
+                        num_union_bounds=num_union_bounds,
+                        train_loader=comp_config.train_loader,
+                        test_loader=comp_config.test_loader,
+                        rand_domain_loader=comp_config.rand_domain_loader,
+                        base_logit_train_loader=comp_config.base_logit_train_loader,
+                        base_logit_test_loader=comp_config.base_logit_test_loader,
+                        base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
+                        C_domain=base_config.data.C_train_domain,
+                        C_data=base_config.data.C_train_data,
+                        ranks=None,
+                        codeword_length=None,
+                        exponent_bits=b_e,
+                        mantissa_bits=b_m,
+                        compress_model_difference=comp_config.compress_model_difference,
+                        init_model=init_model,
+                    )
+                    final_quant_trunc_results.add_result(quant_trunc_results)
+                    quant_trunc_results.log()
+            final_quant_trunc_results.get_best()
+            final_quant_trunc_results.save_to_json(filename=base_config.quant_trunc_metrics_path)
+            best_results["quant_trunc"] = final_quant_trunc_results.best_results.to_dict()
+
+
+        # Low rank results
+        if comp_config.get_low_rank_results:
 
             print()
-            print("Getting low rank only results...")
+            print("Getting low rank results...")
 
-            final_low_rank_only_results = config.FinalCompResults()
+            final_low_rank_results = config.FinalCompResults()
             rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
             num_union_bounds = len(rank_combs)
             print(f"{rank_combs=}")
 
-            for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
+            for ranks in rank_combs:
                 print()
                 print(f"{ranks=}")
                 low_rank_results = base_model.get_comp_pacb_results(
@@ -210,57 +271,103 @@ def main():
                     base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
                     C_domain=base_config.data.C_train_domain,
                     C_data=base_config.data.C_train_data,
+
                     ranks=ranks,
+                    codeword_length=None,
+                    exponent_bits=None,
+                    mantissa_bits=None,
                     compress_model_difference=comp_config.compress_model_difference,
                     init_model=init_model,
                 )
-                final_low_rank_only_results.add_result(low_rank_results)
+                final_low_rank_results.add_result(low_rank_results)
                 low_rank_results.log()
-            final_low_rank_only_results.get_best()
-            final_low_rank_only_results.save_to_json(filename=base_config.low_rank_only_metrics_path)
-            best_results["low_rank_only"] = final_low_rank_only_results.best_results.to_dict()
+            final_low_rank_results.get_best()
+            final_low_rank_results.save_to_json(filename=base_config.low_rank_metrics_path)
+            best_results["low_rank"] = final_low_rank_results.best_results.to_dict()
 
-        # Get low rank and quant results
-        if comp_config.get_low_rank_and_quant_results:
+
+        # Low rank and quant k-means results
+        if comp_config.get_low_rank_and_quant_k_means_results:
 
             print()
-            print("Getting low rank and quant results...")
+            print("Getting low rank and quant k-means results...")
 
-            final_low_rank_and_quant_results = config.FinalCompResults()
-            codeword_lengths = base_model.get_sensible_codeword_lengths_low_rank_and_quant(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-            num_union_bounds = 0
-            for ranks, code_lens in codeword_lengths.items():
-                codeword_lengths[ranks] = [length for length in code_lens if length <= comp_config.max_codeword_length]
-                num_union_bounds += len(codeword_lengths[ranks])
-            print(f"{codeword_lengths=}")
+            final_low_rank_and_quant_k_means_results = config.FinalCompResults()
+            sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            sensible_ranks_and_codeword_lengths = [(ranks, code_len) for ranks, code_len in sensible_ranks_and_codeword_lengths if code_len <= comp_config.max_codeword_length]
+            num_union_bounds = len(sensible_ranks_and_codeword_lengths)
+            print(f"{sensible_ranks_and_codeword_lengths=}")
 
-            base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-            for ranks in base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step):
-                for codeword_length in codeword_lengths[ranks]:
-                    print()
-                    print(f"{ranks=}")
-                    print(f"\t{codeword_length=}")
-                    low_rank_and_quant_results = base_model.get_comp_pacb_results(
-                        delta=pacb_config.delta,
-                        num_union_bounds=num_union_bounds,
-                        train_loader=comp_config.train_loader,
-                        test_loader=comp_config.test_loader,
-                        rand_domain_loader=comp_config.rand_domain_loader,
-                        base_logit_train_loader=comp_config.base_logit_train_loader,
-                        base_logit_test_loader=comp_config.base_logit_test_loader,
-                        base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
-                        C_domain=base_config.data.C_train_domain,
-                        C_data=base_config.data.C_train_data,
-                        ranks=ranks,
-                        codeword_length=codeword_length,
-                        compress_model_difference=comp_config.compress_model_difference,
-                        init_model=init_model,
-                    )
-                    final_low_rank_and_quant_results.add_result(low_rank_and_quant_results)
-                    low_rank_and_quant_results.log()
-            final_low_rank_and_quant_results.get_best()
-            final_low_rank_and_quant_results.save_to_json(filename=base_config.low_rank_and_quant_metrics_path)
-            best_results["low_rank_and_quant"] = final_low_rank_and_quant_results.best_results.to_dict()
+            for ranks, codeword_length in sensible_ranks_and_codeword_lengths:
+                print()
+                print(f"{ranks=}, {codeword_length=}")
+                low_rank_and_quant_k_means_results = base_model.get_comp_pacb_results(
+                    delta=pacb_config.delta,
+                    num_union_bounds=num_union_bounds,
+                    train_loader=comp_config.train_loader,
+                    test_loader=comp_config.test_loader,
+                    rand_domain_loader=comp_config.rand_domain_loader,
+                    base_logit_train_loader=comp_config.base_logit_train_loader,
+                    base_logit_test_loader=comp_config.base_logit_test_loader,
+                    base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
+                    C_domain=base_config.data.C_train_domain,
+                    C_data=base_config.data.C_train_data,
+
+                    ranks=ranks,
+                    codeword_length=codeword_length,
+                    exponent_bits=None,
+                    mantissa_bits=None,
+                    compress_model_difference=comp_config.compress_model_difference,
+                    init_model=init_model,
+                )
+                final_low_rank_and_quant_k_means_results.add_result(low_rank_and_quant_k_means_results)
+                low_rank_and_quant_k_means_results.log()
+            final_low_rank_and_quant_k_means_results.get_best()
+            final_low_rank_and_quant_k_means_results.save_to_json(filename=base_config.low_rank_and_quant_k_means_metrics_path)
+            best_results["low_rank_and_quant_k_means"] = final_low_rank_and_quant_k_means_results.best_results.to_dict()
+
+
+        # Low rank and quant truncation results
+        if comp_config.get_low_rank_and_quant_k_means_results:
+
+            print()
+            print("Getting low rank and quant truncation results...")
+
+            final_low_rank_and_quant_trunc_results = config.FinalCompResults()
+            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            num_union_bounds = 8 * 23 * len(rank_combs)  # TODO: Should we really use all possibilities for b_e and b_m?
+
+            for ranks in rank_combs:
+                for b_e in range(9):
+                    for b_m in range(24):
+                        print()
+                        print(f"{ranks=}")
+                        print(f"\{b_e=}, {b_m=}")
+                        low_rank_and_quant_trunc_results = base_model.get_comp_pacb_results(
+                            delta=pacb_config.delta,
+                            num_union_bounds=num_union_bounds,
+                            train_loader=comp_config.train_loader,
+                            test_loader=comp_config.test_loader,
+                            rand_domain_loader=comp_config.rand_domain_loader,
+                            base_logit_train_loader=comp_config.base_logit_train_loader,
+                            base_logit_test_loader=comp_config.base_logit_test_loader,
+                            base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
+                            C_domain=base_config.data.C_train_domain,
+                            C_data=base_config.data.C_train_data,
+
+                            ranks=ranks,
+                            codeword_length=codeword_length,
+                            exponent_bits=None,
+                            mantissa_bits=None,
+                            compress_model_difference=comp_config.compress_model_difference,
+                            init_model=init_model,
+                        )
+                        final_low_rank_and_quant_trunc_results.add_result(low_rank_and_quant_trunc_results)
+                        low_rank_and_quant_trunc_results.log()
+            final_low_rank_and_quant_trunc_results.get_best()
+            final_low_rank_and_quant_trunc_results.save_to_json(filename=base_config.low_rank_and_quant_trunc_metrics_path)
+            best_results["low_rank_and_quant_trunc"] = final_low_rank_and_quant_trunc_results.best_results.to_dict()
+
 
     log_and_save_metrics(
         run_id=run.id,
@@ -268,9 +375,9 @@ def main():
         pacb_config=pacb_config,
         comp_config=comp_config,
         base_metrics=base_metrics,
-        final_low_rank_only_results=final_low_rank_only_results,
-        final_quant_only_results=final_quant_only_results,
-        final_low_rank_and_quant_results=final_low_rank_and_quant_results,
+        final_low_rank_results=final_low_rank_results,
+        final_quant_k_means_results=final_quant_k_means_results,
+        final_low_rank_and_quant_k_means_results=final_low_rank_and_quant_k_means_results,
     )
 
     with open(base_config.best_comp_metrics_path, "w") as f:

@@ -220,25 +220,36 @@ class BaseConfig:
             self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
 
             self.no_comp_metrics_dir = f"{self.model_root_dir}/no_comp_metrics"
-            self.low_rank_only_metrics_dir = f"{self.model_root_dir}/low_rank_only_metrics"
-            self.quant_only_metrics_dir = f"{self.model_root_dir}/quant_only_metrics"
-            self.low_rank_and_quant_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_metrics"
+            self.quant_k_means_metrics_dir = f"{self.model_root_dir}/quant_k_means_metrics"
+            self.quant_trunc_metrics_dir = f"{self.model_root_dir}/quant_trunc_metrics"
+            
+            self.low_rank_metrics_dir = f"{self.model_root_dir}/low_rank_metrics"
+            self.low_rank_and_quant_k_means_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_k_means_metrics"
+            self.low_rank_and_quant_trunc_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_trunc_metrics"
+            
             self.best_comp_metrics_dir = f"{self.model_root_dir}/best_comp_metrics"
             
             os.makedirs(self.quant_metrics_dir, exist_ok=True)
             
             os.makedirs(self.no_comp_metrics_dir, exist_ok=True)
-            os.makedirs(self.low_rank_only_metrics_dir, exist_ok=True)
-            os.makedirs(self.quant_only_metrics_dir, exist_ok=True)
-            os.makedirs(self.low_rank_and_quant_metrics_dir, exist_ok=True)
+            os.makedirs(self.quant_k_means_metrics_dir, exist_ok=True)
+            os.makedirs(self.quant_trunc_metrics_dir, exist_ok=True)
+            
+            os.makedirs(self.low_rank_metrics_dir, exist_ok=True)
+            os.makedirs(self.low_rank_and_quant_k_means_metrics_dir, exist_ok=True)
+            os.makedirs(self.low_rank_and_quant_trunc_metrics_dir, exist_ok=True)
+            
             os.makedirs(self.best_comp_metrics_dir, exist_ok=True)
 
             self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the below paths because you're actually saving things twice.
             
             self.no_comp_metrics_path = f"{self.no_comp_metrics_dir}/{self.hyperparams.run_name}.json"
-            self.low_rank_only_metrics_path = f"{self.low_rank_only_metrics_dir}/{self.hyperparams.run_name}.json"
-            self.quant_only_metrics_path = f"{self.quant_only_metrics_dir}/{self.hyperparams.run_name}.json"
-            self.low_rank_and_quant_metrics_path = f"{self.low_rank_and_quant_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.quant_k_means_metrics_path = f"{self.quant_k_means_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.quant_trunc_metrics_path = f"{self.quant_trunc_metrics_dir}/{self.hyperparams.run_name}.json"
+            
+            self.low_rank_metrics_path = f"{self.low_rank_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.low_rank_and_quant_k_means_metrics_path = f"{self.low_rank_and_quant_k_means_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.low_rank_and_quant_trunc_metrics_path = f"{self.low_rank_and_quant_trunc_metrics_dir}/{self.hyperparams.run_name}.json"
             self.best_comp_metrics_path = f"{self.best_comp_metrics_dir}/{self.hyperparams.run_name}.json"
         else:
             raise ValueError(f"Invalid experiment type: {self.experiment_type}. Must be 'distillation' or 'quantization'.")
@@ -613,9 +624,15 @@ class CompConfig:
     min_rank: int = 1
     rank_step: int = 1
     max_codeword_length: int = 10
-    get_low_rank_only_results: bool = True
-    get_quant_only_results: bool = True
-    get_low_rank_and_quant_results: bool = True
+
+    get_no_comp_results: bool = True
+    get_quant_k_means_results: bool = True
+    get_quant_trunc_results: bool = True
+    
+    get_low_rank_results: bool = True
+    get_low_rank_and_quant_k_means_results: bool = True
+    get_low_rank_and_quant_trunc_results: bool = True
+    
     compress_model_difference: bool = True
 
     use_whole_dataset: bool = True  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
@@ -677,9 +694,14 @@ class CompConfig:
             "Comp Min Rank": self.min_rank,
             "Comp Rank Step": self.rank_step,
             "Comp Max Codeword Length": self.max_codeword_length,
-            "Comp Get Low Rank Only Results": self.get_low_rank_only_results,
-            "Comp Get Quant Only Results": self.get_quant_only_results,
-            "Comp Get Low Rank and Quant Results": self.get_low_rank_and_quant_results,
+
+            "Comp Get No Comp Results": self.get_no_comp_results,
+            "Comp Get Quant k-Means Results": self.get_quant_k_means_results,
+            "Comp Get Quant Trunc Results": self.get_quant_trunc_results,
+            "Comp Get Low Rank Results": self.get_low_rank_results,
+            "Comp Get Low Rank and Quant k-Means Results": self.get_low_rank_and_quant_k_means_results,
+            "Comp Get Low Rank and Quant Trunc Results": self.get_low_rank_and_quant_trunc_results,
+            
             "Comp Compress Model Difference": self.compress_model_difference,
         }
 
