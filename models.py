@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Optional
+from typing import Optional, Union
 from copy import deepcopy
 from itertools import product
 import matplotlib.pyplot as plt
@@ -16,6 +16,7 @@ from sklearn.cluster import KMeans
 
 from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
 from kl_utils import distillation_loss, kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
+from truncation_utils import truncate
 
 
 class MLP(nn.Module):
@@ -54,8 +55,6 @@ class MLP(nn.Module):
         self.Ss = None
         self.Vts = None
         self.svds_computed = False
-
-        self.codeword_length = None
 
     def forward(self, x):
         logits = self.network(x)
@@ -631,7 +630,7 @@ class MLP(nn.Module):
         dist_config: DistConfig,
         dist_dims: list[int],
     ) -> tuple[bool, Optional[MLP]]:
-            # N.B. self is interpreted as the base model for this method
+        # N.B. self is interpreted as the base model for this method
         dist_model = MLP(
             dimensions=dist_dims,
             activation_name=dist_config.hyperparams.activation_name,
@@ -871,7 +870,6 @@ class MLP(nn.Module):
         else:
             raise ValueError("Invalid activation function")
 
-    # TODO: Pass a ranks tuple to this. If no ranks passed, concatenate the weights. If ranks passed, concatenate the U_truncs and V_truncs
     def get_concatenated_weights(self) -> torch.Tensor:
         """Returns the concatenated weights of the model as a single (num_weights, 1) tensor"""
         weights = [layer.weight.detach().clone().view(-1, 1) for layer in self.linear_layers]
@@ -888,14 +886,118 @@ class MLP(nn.Module):
             layer.weight.copy_(concatenated_weights[i:i+num_weights].view(layer.weight.shape))
             i += num_weights
 
-    def get_quantized_model(self, codeword_length: int) -> MLP:
+    @staticmethod
+    def check_comp_arguments(
+            codeword_length: Optional[int],
+            exponent_bits: Optional[int],
+            mantissa_bits: Optional[int],
+        ) -> None:
+        if (exponent_bits is not None) and (mantissa_bits is not None):
+            trunc = True
+        elif (exponent_bits is None) and (mantissa_bits is None):
+            trunc = False
+        else:
+            raise ValueError(f"Both {exponent_bits=} and {mantissa_bits=} must be None or both must be set.")
+        if codeword_length is not None and trunc:
+            raise ValueError(f"Cannot both quantize with {codeword_length=} and truncate with {exponent_bits=}, {mantissa_bits=}")
+
+    def get_comp_model(
+            self,
+            ranks: Optional[tuple[int]],
+            codeword_length: Optional[int],
+            exponent_bits: Optional[int],
+            mantissa_bits: Optional[int],
+        ) -> Union[MLP, LowRankMLP]:
+        """Returns a compressed model. If ranks is not None, returns a low-rank model."""
+        # Check arguments
+        self.check_comp_arguments(
+            codeword_length=codeword_length,
+            exponent_bits=exponent_bits,
+            mantissa_bits=mantissa_bits,
+        )
+        quant = codeword_length is not None
+        trunc = exponent_bits is not None and mantissa_bits is not None
+        # Construct compressed model
+        if ranks is not None:
+            comp_model = self.get_low_rank_model(ranks=ranks)
+        else:
+            comp_model = deepcopy(self)
+        if quant:
+            comp_model = comp_model.get_quant_k_means_model(codeword_length=codeword_length)
+        if trunc:
+            comp_model = comp_model.get_quant_trunc_model(exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+        comp_model.eval()
+        return comp_model
+
+    # TODO: Should this go somewhere else?
+    def get_num_UV_truncs(self, ranks: tuple[int]) -> int:
+        """Returns the number of U_truncs and V_truncs in the low-rank model."""
+        num_UV_truncs = 0
+        for i in range(1, len(self.dimensions)):
+            num_UV_truncs += ranks[i-1] * (self.dimensions[i-1] + self.dimensions[i])
+        return num_UV_truncs
+
+    def get_comp_model_size_in_bits(
+            self,
+            ranks: Optional[tuple[int]],
+            codeword_length: Optional[int],
+            exponent_bits: Optional[int],
+            mantissa_bits: Optional[int]
+        ) -> int:
+        """Returns the number of bits required to specify the compressed model, without actually creating the compressed model."""
+        MLP.check_comp_arguments(
+            codeword_length=codeword_length,
+            exponent_bits=exponent_bits,
+            mantissa_bits=mantissa_bits,
+        )
+        low_rank = ranks is not None
+        quant = codeword_length is not None
+        trunc = exponent_bits is not None and mantissa_bits is not None
+        if not low_rank:
+            if not quant and not trunc:
+                return 32 * self.num_weights + 32 * self.num_biases
+            if quant and not trunc:
+                return codeword_length * self.num_weights + 32 * self.num_biases + 32 * 2 ** codeword_length
+            elif trunc and not quant:
+                return (1 + exponent_bits + mantissa_bits) * self.num_weights + 32 * self.num_biases
+            else:
+                raise ValueError(f"Cannot both quantize with {codeword_length=} and truncate with {exponent_bits=}, {mantissa_bits=}")
+        else:
+            if not quant and not trunc:
+                return 32 * self.get_num_UV_truncs(ranks=ranks) + 32 * sum(ranks) + 32 * self.num_biases
+            if quant and not trunc:
+                return codeword_length * self.get_num_UV_truncs(ranks=ranks) + 32 * sum(ranks) + 32 * self.num_biases + 32 * 2 ** codeword_length
+            elif trunc and not quant:
+                return (1 + exponent_bits + mantissa_bits) * self.get_num_UV_truncs(ranks=ranks) + 32 * sum(ranks) + 32 * self.num_biases
+            else:
+                raise ValueError(f"Cannot both quantize with {codeword_length=} and truncate with {exponent_bits=}, {mantissa_bits=}")
+
+    def get_KL_of_comp_model(
+            self,
+            ranks: Optional[tuple[int]],
+            codeword_length: Optional[int],
+            exponent_bits: Optional[int],
+            mantissa_bits: Optional[int]
+        ) -> torch.Tensor:
+        return self.get_comp_model_size_in_bits(
+            ranks=ranks,
+            codeword_length=codeword_length,
+            exponent_bits=exponent_bits,
+            mantissa_bits=mantissa_bits
+        ) + torch.log(torch.tensor(2))
+
+    def get_low_rank_model(self: MLP, ranks: tuple[int]) -> LowRankMLP:
+        """Creates a low-rank version of the MLP by truncating the SVDs of the weight matrices."""
+        return LowRankMLP(self, ranks)
+
+    def get_quant_k_means_model(self, codeword_length: int) -> MLP:
         """Returns a new, quantized model by applying k-means clustering to the weights.
         k-means takes a very long time for large values of k, for long codewords (and
         therefore large values of k) we just use the initialization of k-means."""
         if codeword_length not in range(1, 33):
             raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
         if codeword_length == 32:
-            quantized_model = deepcopy(self)
+            quant_k_means_model = deepcopy(self)
         else:
             num_codewords = 2 ** codeword_length
             concatenated_weights = self.get_concatenated_weights()
@@ -904,33 +1006,49 @@ class MLP(nn.Module):
             # plt.hist(concatenated_weights.cpu().numpy(), bins=1000)
             # plt.vlines(kmeans.cluster_centers_, ymin=0, ymax=3000, color='r')
             # plt.show()
-            quantized_weights = kmeans.cluster_centers_[kmeans.labels_]
-            quantized_model = deepcopy(self)
-            quantized_model.set_from_concatenated_weights(torch.tensor(quantized_weights, device=self.device))
-        quantized_model.codeword_length = codeword_length
-        quantized_model.eval()
-        return quantized_model
+            quant_k_means_weights = kmeans.cluster_centers_[kmeans.labels_]
+            quant_k_means_model = deepcopy(self)
+            quant_k_means_model.set_from_concatenated_weights(torch.tensor(quant_k_means_weights, device=self.device))
+        quant_k_means_model.eval()
+        return quant_k_means_model
 
-    # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
-    # If ranks passed, return the size of the quantized U_truncs and V_truncs.
-    def quantized_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
-        """"Returns the number of bits required to specify the quantized model, including the codebook"""
-        if codeword_length is None:
-            codeword_length = 32
-            codebook_size = 0
-        else:
-            codebook_size = 2 ** codeword_length * 32
-        weights_size = self.num_weights * codeword_length
-        biases_size = self.num_biases * 32
-        return weights_size + biases_size + codebook_size
+    def get_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> MLP:
+        """Returns a new model with the weights truncated to the given number of bits."""
+        quant_trunc_model = deepcopy(self)
+        concatenated_weights = quant_trunc_model.get_concatenated_weights()
+        quant_trunc_weights = truncate(x=concatenated_weights, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+        quant_trunc_model.set_from_concatenated_weights(quant_trunc_weights)
+        quant_trunc_model.eval()
+        return quant_trunc_model
 
-    def get_KL_of_quantized_model(self) -> torch.Tensor:
-        """The KL between a point mass on the compressed representation of the model, with bit length
-        b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
-        This assumes that the codeword_length is fixed. A union bound should later account
-        for any choice made over the codeword_length. Note there's no sigma as the posterior
-        is a point mass on the final classifier."""
-        return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
+    # # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
+    # # If ranks passed, return the size of the quantized U_truncs and V_truncs.
+    # def quant_k_means_size_in_bits(self, codeword_length: int) -> int:
+    #     """"Returns the number of bits required to specify the quantized model, including the codebook"""
+    #     if codeword_length == 32:
+    #         num_codewords = 0  # no quantization
+    #     else:
+    #         num_codewords = 2 ** codeword_length
+    #     # Only the weights are quantized, not the biases
+    #     weights_size = self.num_weights * codeword_length
+    #     biases_size = self.num_biases * 32
+    #     codebook_size = num_codewords * 32
+    #     return weights_size + biases_size + codebook_size
+
+    # def get_KL_of_quant_k_means_model(self, codeword_length: int) -> torch.Tensor:
+    #     """The KL between a point mass on the compressed representation of the model, with bit length
+    #     b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
+    #     This assumes that the codeword_length is fixed. A union bound should later account
+    #     for any choice made over the codeword_length. Note there's no sigma as the posterior
+    #     is a point mass on the final classifier."""
+    #     return self.quant_k_means_size_in_bits(codeword_length=codeword_length) + torch.log(torch.tensor(2))
+
+    # def quant_trunc_size_in_bits(self, exponent_bits: int, mantissa_bits: int) -> int:
+    #     """Returns the number of bits required to specify the truncated model."""
+    #     return (1 + exponent_bits + mantissa_bits) * self.num_weights + 32 * self.num_biases
+
+    # def get_KL_of_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> torch.Tensor:
+    #     return self.quant_trunc_size_in_bits(exponent_bits=exponent_bits, mantissa_bits=mantissa_bits) + torch.log(torch.tensor(2))
 
     def get_comp_pacb_results(
             self: MLP,
@@ -974,7 +1092,7 @@ class MLP(nn.Module):
         # Construct quantized model if necessary
         if codeword_length is not None:
             print("Constructing quantized model")
-            comp_diff_model = comp_diff_model.get_quantized_model(codeword_length=codeword_length)
+            comp_diff_model = comp_diff_model.get_quant_k_means_model(codeword_length=codeword_length)
         
         # Reconstruct the compressed model for evaluation by adding init_model back in if necessary
         if compress_model_difference:
@@ -983,7 +1101,7 @@ class MLP(nn.Module):
             comp_model = deepcopy(comp_diff_model)
         
         # Get the KL of the compressed form (of base_model - init_model if compress_difference is True)
-        diff_KL = comp_diff_model.get_KL_of_quantized_model()
+        diff_KL = comp_diff_model.get_KL_of_quant_k_means_model()
 
         # Get spectral and empirical l2 bounds
         print("Getting spectral and empirical l2 bounds")
@@ -1074,7 +1192,6 @@ class MLP(nn.Module):
         )
         return comp_results
 
-
     def compute_svd(self):
         """Compute SVD for each layer and store the results"""
         if not self.svds_computed:
@@ -1106,15 +1223,15 @@ class MLP(nn.Module):
         max_sensible_ranks = []
         for layer in self.linear_layers:
             m, n = layer.weight.shape
-            max_rank = (m * n) // (m + n)
+            max_rank = (m * n) // (m + 1 + n)
             max_sensible_ranks.append(max_rank)
         sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r in max_sensible_ranks]))
         return sensible_ranks
 
     def get_sensible_codeword_lengths_quant_only(self) -> list[int]:
         sensible_lengths = []
-        for codeword_length in range(1, 33):
-            if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+        for codeword_length in range(1, 32):
+            if self.quant_k_means_size_in_bits(codeword_length=codeword_length) <= self.quant_k_means_size_in_bits(codeword_length=32):  # Quantization should lead to a reduction in storage size
                 if 2 ** codeword_length <= self.num_weights:  # Should not have more codewords than weights
                     sensible_lengths.append(codeword_length)
         return sensible_lengths
@@ -1126,10 +1243,6 @@ class MLP(nn.Module):
             low_rank_model = self.get_low_rank_model(ranks=ranks)
             sensible_lengths[tuple(ranks)] = low_rank_model.get_sensible_codeword_lengths()
         return sensible_lengths
-
-    def get_low_rank_model(self: MLP, ranks: tuple[int]) -> LowRankMLP:
-        """Creates a low-rank version of the MLP by truncating the SVDs of the weight matrices."""
-        return LowRankMLP(self, ranks)
 
     def get_model_difference(self: MLP, other: MLP) -> MLP:
         """Returns the MLP with weights and biases equal to self - other."""
@@ -1177,8 +1290,6 @@ class LowRankMLP(MLP):
         self.Vt_truncs = []
         self.ranks = ranks
 
-        self.codeword_length = None
-
         for i, layer in enumerate(self.linear_layers):
             U = original_mlp.U(i)
             S = original_mlp.S(i)
@@ -1200,8 +1311,8 @@ class LowRankMLP(MLP):
 
     def get_sensible_codeword_lengths(self) -> list[int]:
         codeword_lengths = []
-        for codeword_length in range(1, 33):
-            if self.quantized_size_in_bits(codeword_length) <= self.quantized_size_in_bits(32):  # Quantization should lead to a reduction in storage size
+        for codeword_length in range(1, 32):
+            if self.quant_k_means_size_in_bits(codeword_length=codeword_length) <= self.quant_k_means_size_in_bits(codeword_length=32):  # Quantization should lead to a reduction in storage size
                 if 2 ** codeword_length <= self.num_UV_trunc_vals:  # Should not have more codewords than weights
                     codeword_lengths.append(codeword_length)
         return codeword_lengths
@@ -1237,41 +1348,61 @@ class LowRankMLP(MLP):
         if i != len(concatenated_UV_truncs):
             raise ValueError(f"Expected {len(concatenated_UV_truncs)} values but got {i}.")
     
-    def get_quantized_model(self, codeword_length: int):
+    def get_quant_k_means_model(self, codeword_length: int) -> LowRankMLP:
         """Returns a new, quantized model by applying k-means clustering to the U_truncs
         and V_truncs. Note the S_truncs are not quantized. Overwrites same named method in MLP."""
         if codeword_length not in range(1, 33):
             raise ValueError(f"Codeword length must be in range [1, ..., 32] but received {codeword_length=}")
         if codeword_length == 32:
-            quantized_model = deepcopy(self)
+            quant_k_means_model = deepcopy(self)
         else:
             num_codewords = 2 ** codeword_length
             concatenated_UV_truncs = self.get_concatenated_UV_truncs()
             kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_UV_truncs.cpu().numpy())
-            quantized_UV_truncs = kmeans.cluster_centers_[kmeans.labels_]
-            quantized_model = deepcopy(self)
-            quantized_model.set_from_concatenated_UV_truncs(torch.tensor(quantized_UV_truncs, device=self.device))
-            quantized_model.update_weights()
-        quantized_model.codeword_length = codeword_length
-        quantized_model.eval()
-        return quantized_model
+            quant_k_means_UV_truncs = kmeans.cluster_centers_[kmeans.labels_]
+            quant_k_means_model = deepcopy(self)
+            quant_k_means_model.set_from_concatenated_UV_truncs(torch.tensor(quant_k_means_UV_truncs, device=self.device))
+            quant_k_means_model.update_weights()
+        quant_k_means_model.eval()
+        return quant_k_means_model
 
-    def quantized_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
+    def quant_k_means_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
         """"Returns the number of bits required to specify the quantized model, including the codebook"""
-        if codeword_length is None:
-            codeword_length = 32
-            codebook_size = 0
+        if codeword_length == 32:
+            num_codewords = 0  # no quantization
         else:
-            codebook_size = 2 ** codeword_length * 32
-        UV_truncs_sizes = self.num_UV_trunc_vals * codeword_length
-        S_truncs_sizes = self.num_S_trunc_vals * 32
-        biases_sizes = self.num_biases * 32
+            num_codewords = 2 ** codeword_length
+        # Only the UV_truncs are quantized, not the biases
+        UV_truncs_sizes = codeword_length * self.num_UV_trunc_vals
+        S_truncs_sizes = 32 * self.num_S_trunc_vals
+        biases_sizes = 32 * self.num_biases
+        codebook_size = 32 * num_codewords
         return UV_truncs_sizes + S_truncs_sizes + biases_sizes + codebook_size
 
-    def get_KL_of_quantized_model(self):
+    def get_KL_of_quant_k_means_model(self, codeword_length: int) -> torch.Tensor:
         """The KL between a point mass on the compressed representation of the model, with bit length
         b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
         This assumes that the ranks and codeword_length are fixed. A union bound should later account
         for any choice made over the ranks and codeword_length. Note there's no sigma as the posterior
         is a point mass on the final classifier."""
-        return self.quantized_size_in_bits(codeword_length=self.codeword_length) * torch.log(torch.tensor(2))
+        return self.quant_k_means_size_in_bits(codeword_length=codeword_length) + torch.log(torch.tensor(2))
+
+    def get_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> MLP:
+        """Returns a new model with the weights truncated to the given number of bits."""
+        quant_trunc_model = deepcopy(self)
+        concatenated_UV_truncs = self.get_concatenated_UV_truncs()
+        quant_trunc_UV_truncs = truncate(x=concatenated_UV_truncs, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+        quant_trunc_model.set_from_concatenated_UV_truncs(quant_trunc_UV_truncs)
+        quant_trunc_model.eval()
+        return quant_trunc_model
+
+    # TODO: Delete these as it's now taken care of in the parent MLP class
+    # def quant_trunc_size_in_bits(self, exponent_bits: int, mantissa_bits: int) -> int:
+    #     """Returns the number of bits required to specify the truncated model."""
+    #     UV_truncs_sizes = (1 + exponent_bits + mantissa_bits) * self.num_UV_trunc_vals
+    #     S_truncs_sizes = 32 * self.num_S_trunc_vals
+    #     biases_sizes = 32 * self.num_biases
+    #     return UV_truncs_sizes + S_truncs_sizes + biases_sizes
+
+    # def get_KL_of_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> torch.Tensor:
+    #     return self.quant_trunc_size_in_bits(exponent_bits=exponent_bits, mantissa_bits=mantissa_bits) + torch.log(torch.tensor(2))
