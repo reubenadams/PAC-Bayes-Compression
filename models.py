@@ -299,13 +299,13 @@ class MLP(nn.Module):
         for x, _ in domain_dataloader:
             x = x.to(self.device)
             x = x.view(x.size(0), -1)
-            student_log_probs = F.log_softmax(self(x), dim=-1)
-            student_probs = torch.exp(student_log_probs)
+            teacher_probs = F.softmax(base_model(x), dim=-1)
             teacher_log_probs = F.log_softmax(base_model(x), dim=-1)
+            student_log_probs = F.log_softmax(self(x), dim=-1)
             total_dist_kl_loss += distillation_loss(
-                student_probs=student_probs,
-                student_log_probs=student_log_probs,
+                teacher_probs=teacher_probs,
                 teacher_log_probs=teacher_log_probs,
+                student_log_probs=student_log_probs,
             ) * x.size(0)
         return total_dist_kl_loss / len(domain_dataloader.dataset)
 
@@ -315,12 +315,13 @@ class MLP(nn.Module):
         for x, targets, base_logits, base_log_probs, base_probs in logit_loader:
             x = x.to(self.device)
             x = x.view(x.size(0), -1)
+            teacher_probs = base_probs
+            teacher_log_probs = base_log_probs
             student_log_probs = F.log_softmax(self(x), dim=-1)
-            student_probs = torch.exp(student_log_probs)
             total_dist_kl_loss += distillation_loss(
-                student_probs=student_probs,
+                teacher_probs=teacher_probs,
+                teacher_log_probs=teacher_log_probs,
                 student_log_probs=student_log_probs,
-                teacher_log_probs=base_log_probs
             ) * x.size(0)
         return total_dist_kl_loss / len(logit_loader.dataset)
 
@@ -543,12 +544,13 @@ class MLP(nn.Module):
             for x, targets, base_logits, base_log_probs, base_probs in dist_config.data.base_logit_train_loader:
                 x = x.to(self.device)
                 x = x.view(x.size(0), -1)
+                teacher_probs = base_probs
+                teacher_log_probs = base_log_probs
                 student_log_probs = F.log_softmax(self(x), dim=-1)
-                student_probs = torch.exp(student_log_probs)
                 loss = distillation_loss(
-                    student_probs=student_probs,
+                    teacher_probs=teacher_probs,
+                    teacher_log_probs=teacher_log_probs,
                     student_log_probs=student_log_probs,
-                    teacher_log_probs=base_log_probs,
                 )
 
                 # loss = train_loss_fn(dist_logits, base_logits)
@@ -1263,6 +1265,12 @@ class MLP(nn.Module):
         sensible_ranks_and_codeword_lengths = []
         sensible_ranks = self.get_sensible_ranks(min_rank=min_rank, rank_step=rank_step)
         for ranks in sensible_ranks:
+            low_rank_size = self.get_comp_model_size_in_bits(
+                ranks=ranks,
+                codeword_length=None,
+                exponent_bits=None,
+                mantissa_bits=None,
+            )
             for codeword_length in range(1, 33):
                 comp_model_size = self.get_comp_model_size_in_bits(
                     ranks=ranks,
@@ -1270,7 +1278,7 @@ class MLP(nn.Module):
                     exponent_bits=None,
                     mantissa_bits=None,
                 )
-                if comp_model_size < full_model_size:
+                if (comp_model_size < low_rank_size) and (low_rank_size < full_model_size):
                     sensible_ranks_and_codeword_lengths.append((ranks, codeword_length))
         return sensible_ranks_and_codeword_lengths
 

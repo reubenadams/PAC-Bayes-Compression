@@ -33,16 +33,16 @@ def kl_scalars_inverse(q, B, x_tol=2e-12):
 
 
 def distillation_loss(
-        student_probs: torch.Tensor,
-        student_log_probs: torch.Tensor,
+        teacher_probs: torch.Tensor,
         teacher_log_probs: torch.Tensor,
+        student_log_probs: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute the knowledge distillation loss between student and teacher, averaged over the batch."""
-    if not (student_probs.shape == student_log_probs.shape == teacher_log_probs.shape):
+    """Compute the knowledge distillation loss between teacher and student, averaged over the batch. Equals KL(teacher || student)."""
+    if not (teacher_probs.shape == student_log_probs.shape == teacher_log_probs.shape):
         raise ValueError("All input tensors must have the same shape.")
-    if student_probs.min() < 0 or student_probs.max() > 1:
+    if teacher_probs.min() < 0 or teacher_probs.max() > 1:
         raise ValueError("Student probabilities must be in the range [0, 1].")
-    kls = student_probs * (student_log_probs - teacher_log_probs)
+    kls = teacher_probs * (teacher_log_probs - student_log_probs)
     return kls.sum(dim=-1).mean()
 
 

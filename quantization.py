@@ -176,11 +176,11 @@ def main():
             print("Getting quant k-means results...")
 
             final_quant_k_means_results = config.FinalCompResults()
-            sensible_ranks_and_codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths()]
-            num_union_bounds = len(sensible_ranks_and_codeword_lengths)
-            print(f"{sensible_ranks_and_codeword_lengths=}")
+            sensible_codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths()]
+            num_union_bounds = len(sensible_codeword_lengths)
+            print(f"{sensible_codeword_lengths=}")
 
-            for codeword_length in sensible_ranks_and_codeword_lengths:
+            for codeword_length in sensible_codeword_lengths:
                 print(f"\t{codeword_length=}")
                 quant_k_means_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
