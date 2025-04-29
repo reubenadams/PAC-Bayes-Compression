@@ -157,10 +157,13 @@ def main():
             print()
             print("Getting quant k-means results...")
 
-            final_quant_k_means_results = config.FinalCompResults(compression_scheme="quant_k_means")
             sensible_codeword_lengths = [length for length in range(1, comp_config.max_codeword_length + 1) if length in base_model.get_sensible_codeword_lengths()]
             num_union_bounds = len(sensible_codeword_lengths)
             print(f"{sensible_codeword_lengths=}")
+            final_quant_k_means_results = config.FinalCompResults(
+                compression_scheme="quant_k_means",
+                num_union_bounds=num_union_bounds,
+            )
 
             for codeword_length in sensible_codeword_lengths:
                 print(f"\t{codeword_length=}")
@@ -196,10 +199,12 @@ def main():
             print()
             print("Getting quant truncation results...")
             
-            final_quant_trunc_results = config.FinalCompResults(compression_scheme="quant_trunc")
             num_union_bounds = 8 * 23  # 8 bits for exponent, 23 bits for mantissa
+            final_quant_trunc_results = config.FinalCompResults(
+                compression_scheme="quant_trunc",
+                num_union_bounds=num_union_bounds,
+            )
 
-            # TODO: Surely we don't want to cover *all* values of b_e and b_m?
             for b_e in range(9):
                 for b_m in range(24):
                     print(f"\t{b_e=}, {b_m=}")
@@ -235,10 +240,13 @@ def main():
             print()
             print("Getting low rank results...")
 
-            final_low_rank_results = config.FinalCompResults(compression_scheme="low_rank")
             rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
             num_union_bounds = len(rank_combs)
             print(f"{rank_combs=}")
+            final_low_rank_results = config.FinalCompResults(
+                compression_scheme="low_rank",
+                num_union_bounds=num_union_bounds,
+            )
 
             for ranks in rank_combs:
                 print(f"\t{ranks=}")
@@ -274,11 +282,14 @@ def main():
             print()
             print("Getting low rank and quant k-means results...")
 
-            final_low_rank_and_quant_k_means_results = config.FinalCompResults(compression_scheme="low_rank_and_quant_k_means")
             sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
             sensible_ranks_and_codeword_lengths = [(ranks, code_len) for ranks, code_len in sensible_ranks_and_codeword_lengths if code_len <= comp_config.max_codeword_length]
             num_union_bounds = len(sensible_ranks_and_codeword_lengths)
             print(f"{sensible_ranks_and_codeword_lengths=}")
+            final_low_rank_and_quant_k_means_results = config.FinalCompResults(
+                compression_scheme="low_rank_and_quant_k_means",
+                num_union_bounds=num_union_bounds,
+            )
 
             for ranks, codeword_length in sensible_ranks_and_codeword_lengths:
                 print(f"\t{ranks=}, {codeword_length=}")
@@ -314,9 +325,12 @@ def main():
             print()
             print("Getting low rank and quant truncation results...")
 
-            final_low_rank_and_quant_trunc_results = config.FinalCompResults(compression_scheme="low_rank_and_quant_trunc")
             rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
-            num_union_bounds = 8 * 23 * len(rank_combs)  # TODO: Should we really use all possibilities for b_e and b_m?
+            num_union_bounds = 8 * 23 * len(rank_combs)
+            final_low_rank_and_quant_trunc_results = config.FinalCompResults(
+                compression_scheme="low_rank_and_quant_trunc",
+                num_union_bounds=num_union_bounds,
+            )
 
             for ranks in rank_combs:
                 print(f"\t{ranks=}")
