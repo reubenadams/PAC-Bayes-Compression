@@ -119,8 +119,11 @@ def main():
             print()
             print("Getting results without any compression...")
 
-            final_no_comp_results = config.FinalCompResults(compression_scheme="no_comp")
             num_union_bounds = 1
+            final_no_comp_results = config.FinalCompResults(
+                compression_scheme="no_comp",
+                num_union_bounds=num_union_bounds,
+            )
 
             no_comp_results = base_model.get_comp_pacb_results(
                 delta=pacb_config.delta,

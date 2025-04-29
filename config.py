@@ -623,7 +623,7 @@ class CompConfig:
 
     delta: float = 0.05
     min_rank: int = 1
-    rank_step: int = 1
+    rank_step: int = 3
     max_codeword_length: int = 10
 
     get_no_comp_results: bool = True
@@ -877,6 +877,7 @@ class CompResults:
 class FinalCompResults:
     """Stores multiple CompResults objects as a list, and provides methods to find the best results."""
     compression_scheme: str
+    num_union_bounds: int
     all_results: list[CompResults] = field(default_factory=list)
     best_results: Optional[CompResults] = None
 
@@ -911,6 +912,8 @@ class FinalCompResults:
 
     def save_to_json(self, filename: str):
         data = {
+            "compression_scheme": self.compression_scheme,
+            "num_union_bounds": self.num_union_bounds,
             "all_results": [asdict(result) for result in self.all_results],
             "best_results": asdict(self.best_results),
         }
@@ -921,17 +924,13 @@ class FinalCompResults:
     def load_from_json(cls, filename: str):
         with open(filename, "r") as f:
             data = json.load(f)
-        
-        experiment = cls()
-        for results in data["all_results"]:
-            experiment.all_results.append(CompResults(**results))
-        experiment.best_results = CompResults(**data["best_results"])
+        experiment = cls(
+            compression_scheme=data["compression_scheme"],
+            num_union_bounds=data["num_union_bounds"],
+            all_results=data["all_results"],
+            best_results=data["best_results"],
+        )
         return experiment
-
-    def to_dataframe(self) -> pd.DataFrame:
-        """Converts the results to a pandas DataFrame."""
-        if self.best_results is None and len(self.all_results) > 0:
-            self.get_best_results()
 
 
 def check_comp_arguments(

@@ -1169,13 +1169,16 @@ class MLP(nn.Module):
         return self.Vts[layer_idx]
 
     def get_sensible_ranks(self, min_rank: int, rank_step: int) -> list[tuple[int]]:
-        """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
+        """Returns the rank combinations that reduce (or do not change) the storage size for every layer.
+        The rank increases by rank_step for each layer, starting from min_rank, except for the last layer
+        which always increases its rank by 1."""
+        ranks_steps = [rank_step] * (len(self.linear_layers) - 1) + [1]
         max_sensible_ranks = []
         for layer in self.linear_layers:
             m, n = layer.weight.shape
             max_rank = (m * n) // (m + 1 + n)
             max_sensible_ranks.append(max_rank)
-        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r in max_sensible_ranks]))
+        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r, rank_step in zip(max_sensible_ranks, ranks_steps)]))
         return sensible_ranks
 
     def get_sensible_codeword_lengths(self) -> list[int]:
