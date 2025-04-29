@@ -139,7 +139,7 @@ class BaseStoppingConfig:
         return cls(
             max_epochs=100,
             use_early_stopping=True,
-            target_full_train_loss=1.5,
+            target_full_train_loss=2.0,
             patience=1
         )
     

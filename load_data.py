@@ -111,15 +111,34 @@ def get_logit_dataset(model, dataset: Union[Dataset, CustomDataset, RandomDomain
     
 
 # TODO: This is no longer needed because we can just pass batch_size=len(dataset) to the DataLoader.
-# class FakeDataLoader:
-#     """Fake DataLoader that returns the whole dataset in one batch."""
-#     def __init__(self, data, targets):
-#         self.data = data
-#         self.targets = targets
-#         self.dataset = data  # This is a fictional attribute so we can call len(dataloader.dataset)
+# No! That doesn't work, because under the hood the dataloader will still call __getitem__ on the
+# dataset, which will return a single sample. So we need to create a fake dataloader that returns
+# the whole dataset in one batch.
+class FakeDataLoader:
+    """Fake DataLoader that returns the whole dataset in one batch. This saves multiple calls
+    to __getitem__ incurred by the DataLoader if batch_size=len(dataset)."""
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+        self.dataset = data  # This is a fictional attribute so we can call len(dataloader.dataset)
 
-#     def __iter__(self):
-#         return iter([(self.data, self.targets)])
+    def __iter__(self):
+        return iter([(self.data, self.targets)])
+
+
+class FakeLogitLoader:
+    """Same as FakeDataLoader, but for LogitDataset."""
+    def __init__(self, dataset: LogitDataset):
+        self.dataset = dataset
+    
+    def __iter__(self):
+        return iter([(
+            self.dataset.data,
+            self.dataset.targets,
+            self.dataset.logits,
+            self.dataset.log_probs,
+            self.dataset.probs,
+        )])
 
 
 def get_rand_domain_dataset_and_loader(
@@ -140,7 +159,8 @@ def get_rand_domain_dataset_and_loader(
         device=device,
     )
 
-    batch_size = update_batch_size(use_whole_dataset, batch_size, dataset)
+    if use_whole_dataset:
+        return dataset, FakeDataLoader(dataset.data, dataset.targets)
     return dataset, DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False)
 
 
@@ -150,36 +170,10 @@ def get_logit_loader(
         use_whole_dataset: bool,
         batch_size: Optional[int],
     ) -> DataLoader:
-    batch_size = update_batch_size(use_whole_dataset, batch_size, dataset)
-    dist_datset = get_logit_dataset(model, dataset)
-    return DataLoader(dist_datset, batch_size=batch_size, shuffle=True)
-
-
-# def get_logits_loader(model, dataset: Union[Dataset, CustomDataset, RandomDomainDataset], use_whole_dataset, batch_size) -> Union[DataLoader, FakeDataLoader]:
-    
-#     assert not model.training, "Model must be in eval mode to get logits."
-    
-#     if use_whole_dataset and batch_size is None:
-#         x = dataset.data.to(model.device)
-#         with torch.no_grad():
-#             x = x.view(x.size(0), -1)
-#             logits = model(x)
-#         return FakeDataLoader(x, logits)
-    
-#     if not use_whole_dataset and batch_size is not None:
-#         # Create a DataLoader for the dataset
-#         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-#         logits_list = []
-#         with torch.no_grad():
-#             for x, _ in dataloader:
-#                 x = x.view(x.size(0), -1).to(model.device)
-#                 batch_logits = model(x)
-#                 logits_list.append(batch_logits.cpu())
-#         logits = torch.cat(logits_list, dim=0)
-#         return DataLoader(x, logits)
-
-#     else:
-#         raise ValueError("Either use_whole_dataset must be True or batch_size must be specified.")
+    dist_dataset = get_logit_dataset(model, dataset)
+    if use_whole_dataset:
+        return FakeLogitLoader(dist_dataset)
+    return DataLoader(dist_dataset, batch_size=batch_size, shuffle=True)
 
 
 def get_datasets(
@@ -409,10 +403,12 @@ def get_dataloaders(
     test_dataset.data = test_dataset.data.to(device)
     test_dataset.targets = test_dataset.targets.to(device)    
 
-    train_batch_size = update_batch_size(use_whole_dataset, batch_size, train_dataset)
-    test_batch_size = update_batch_size(use_whole_dataset, batch_size, test_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False)
+    if use_whole_dataset:
+        train_loader = FakeDataLoader(train_dataset.data, train_dataset.targets)
+        test_loader = FakeDataLoader(test_dataset.data, test_dataset.targets)
+    else:
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     return train_loader, test_loader, data_filepath
 
 
@@ -423,23 +419,6 @@ def get_max_l2_norm_data(dataloader: DataLoader):
         l2_norms = torch.linalg.norm(x, ord=2, dim=1)
         max_l2_norm = max(max_l2_norm, l2_norms.max())
     return max_l2_norm
-
-
-def update_batch_size(
-        use_whole_dataset: bool,
-        batch_size: Optional[int],
-        dataset: Dataset,
-    ) -> int:
-    """Update the batch size to len(dataset) if use_whole_dataset is True. Raise error if incompatible arguments."""
-    if use_whole_dataset:
-        if batch_size is None:
-            return len(dataset)
-        else:
-            raise ValueError("batch_size must be None when use_whole_dataset is True.")
-    else:
-        if batch_size is None:
-            raise ValueError("batch_size must be specified when use_whole_dataset is False.")
-        return batch_size
 
 
 if __name__ == "__main__":
