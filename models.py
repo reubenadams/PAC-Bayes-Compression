@@ -655,22 +655,6 @@ class MLP(nn.Module):
 
         return False, None
 
-    # def get_dist_dims(self, dim_skip):
-
-    #     input_dim, hidden_dims, output_dim = (
-    #         self.dimensions[0],
-    #         self.dimensions[1:-1],
-    #         self.dimensions[-1],
-    #     )
-
-    #     dist_hidden_dims = product(
-    #         *[list(range(1, dim + 1, dim_skip)) for dim in hidden_dims]
-    #     )
-    #     dist_dims = [
-    #         [input_dim] + list(h_dims) + [output_dim] for h_dims in dist_hidden_dims
-    #     ]
-    #     return dist_dims
-
     def get_dist_complexity(
         self,
         dist_config: DistConfig,
@@ -971,7 +955,7 @@ class MLP(nn.Module):
             codeword_length=codeword_length,
             exponent_bits=exponent_bits,
             mantissa_bits=mantissa_bits
-        ) + torch.log(torch.tensor(2))
+        ) * torch.log(torch.tensor(2))
 
     def get_low_rank_model(self: MLP, ranks: tuple[int]) -> LowRankMLP:
         """Creates a low-rank version of the MLP by truncating the SVDs of the weight matrices."""
@@ -1007,35 +991,6 @@ class MLP(nn.Module):
         quant_trunc_model.set_from_concatenated_weights(quant_trunc_weights)
         quant_trunc_model.eval()
         return quant_trunc_model
-
-    # # TODO: Pass a ranks tuple to this. If no ranks passed, return the size of the quantized weights.
-    # # If ranks passed, return the size of the quantized U_truncs and V_truncs.
-    # def quant_k_means_size_in_bits(self, codeword_length: int) -> int:
-    #     """"Returns the number of bits required to specify the quantized model, including the codebook"""
-    #     if codeword_length == 32:
-    #         num_codewords = 0  # no quantization
-    #     else:
-    #         num_codewords = 2 ** codeword_length
-    #     # Only the weights are quantized, not the biases
-    #     weights_size = self.num_weights * codeword_length
-    #     biases_size = self.num_biases * 32
-    #     codebook_size = num_codewords * 32
-    #     return weights_size + biases_size + codebook_size
-
-    # def get_KL_of_quant_k_means_model(self, codeword_length: int) -> torch.Tensor:
-    #     """The KL between a point mass on the compressed representation of the model, with bit length
-    #     b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
-    #     This assumes that the codeword_length is fixed. A union bound should later account
-    #     for any choice made over the codeword_length. Note there's no sigma as the posterior
-    #     is a point mass on the final classifier."""
-    #     return self.quant_k_means_size_in_bits(codeword_length=codeword_length) + torch.log(torch.tensor(2))
-
-    # def quant_trunc_size_in_bits(self, exponent_bits: int, mantissa_bits: int) -> int:
-    #     """Returns the number of bits required to specify the truncated model."""
-    #     return (1 + exponent_bits + mantissa_bits) * self.num_weights + 32 * self.num_biases
-
-    # def get_KL_of_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> torch.Tensor:
-    #     return self.quant_trunc_size_in_bits(exponent_bits=exponent_bits, mantissa_bits=mantissa_bits) + torch.log(torch.tensor(2))
 
     def get_comp_pacb_results(
             self: MLP,
@@ -1334,14 +1289,6 @@ class LowRankMLP(MLP):
         self.num_UV_trunc_vals = sum([U_trunc.numel() + Vt_trunc.numel() for U_trunc, Vt_trunc in zip(self.U_truncs, self.Vt_truncs)])
         self.num_S_trunc_vals = sum([S_trunc.numel() for S_trunc in self.S_truncs])
 
-    # def get_sensible_codeword_lengths(self) -> list[int]:
-    #     codeword_lengths = []
-    #     for codeword_length in range(1, 33):
-    #         if self.quant_k_means_size_in_bits(codeword_length=codeword_length) <= self.quant_k_means_size_in_bits(codeword_length=32):  # Quantization should lead to a reduction in storage size
-    #             if 2 ** codeword_length <= self.num_UV_trunc_vals:  # Should not have more codewords than weights
-    #                 codeword_lengths.append(codeword_length)
-    #     return codeword_lengths
-
     @torch.no_grad()
     def update_weights(self) -> None:
         for layer_idx, layer in enumerate(self.linear_layers):
@@ -1391,29 +1338,6 @@ class LowRankMLP(MLP):
         quant_k_means_model.eval()
         return quant_k_means_model
 
-    # TODO: Delete this as it's now taken care of in the parent MLP class
-    # def quant_k_means_size_in_bits(self, codeword_length: Optional[int]=None) -> int:
-    #     """"Returns the number of bits required to specify the quantized model, including the codebook"""
-    #     if codeword_length == 32:
-    #         num_codewords = 0  # no quantization
-    #     else:
-    #         num_codewords = 2 ** codeword_length
-    #     # Only the UV_truncs are quantized, not the biases
-    #     UV_truncs_sizes = codeword_length * self.num_UV_trunc_vals
-    #     S_truncs_sizes = 32 * self.num_S_trunc_vals
-    #     biases_sizes = 32 * self.num_biases
-    #     codebook_size = 32 * num_codewords
-    #     return UV_truncs_sizes + S_truncs_sizes + biases_sizes + codebook_size
-
-    # TODO: Delte this as it's now taken care of in the parent MLP class
-    # def get_KL_of_quant_k_means_model(self, codeword_length: int) -> torch.Tensor:
-    #     """The KL between a point mass on the compressed representation of the model, with bit length
-    #     b = self.quantized_size_in_bits(), against a uniform prior over the 2**b possible bit strings.
-    #     This assumes that the ranks and codeword_length are fixed. A union bound should later account
-    #     for any choice made over the ranks and codeword_length. Note there's no sigma as the posterior
-    #     is a point mass on the final classifier."""
-    #     return self.quant_k_means_size_in_bits(codeword_length=codeword_length) + torch.log(torch.tensor(2))
-
     def get_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> MLP:
         """Returns a new model with the weights truncated to the given number of bits."""
         quant_trunc_model = deepcopy(self)
@@ -1422,14 +1346,3 @@ class LowRankMLP(MLP):
         quant_trunc_model.set_from_concatenated_UV_truncs(quant_trunc_UV_truncs)
         quant_trunc_model.eval()
         return quant_trunc_model
-
-    # TODO: Delete this as it's now taken care of in the parent MLP class
-    # def quant_trunc_size_in_bits(self, exponent_bits: int, mantissa_bits: int) -> int:
-    #     """Returns the number of bits required to specify the truncated model."""
-    #     UV_truncs_sizes = (1 + exponent_bits + mantissa_bits) * self.num_UV_trunc_vals
-    #     S_truncs_sizes = 32 * self.num_S_trunc_vals
-    #     biases_sizes = 32 * self.num_biases
-    #     return UV_truncs_sizes + S_truncs_sizes + biases_sizes
-
-    # def get_KL_of_quant_trunc_model(self, exponent_bits: int, mantissa_bits: int) -> torch.Tensor:
-    #     return self.quant_trunc_size_in_bits(exponent_bits=exponent_bits, mantissa_bits=mantissa_bits) + torch.log(torch.tensor(2))
