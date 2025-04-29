@@ -14,7 +14,7 @@ import math
 import wandb
 from sklearn.cluster import KMeans
 
-from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults
+from config import BaseConfig, BaseResults, DistConfig, DistAttemptResults, DistFinalResults, CompResults, check_comp_arguments
 from kl_utils import distillation_loss, kl_scalars_inverse, pacb_kl_bound, pacb_error_bound_inverse_kl, pacb_error_bound_pinsker
 from truncation_utils import truncate
 
@@ -888,21 +888,6 @@ class MLP(nn.Module):
             layer.weight.copy_(concatenated_weights[i:i+num_weights].view(layer.weight.shape))
             i += num_weights
 
-    @staticmethod
-    def check_comp_arguments(
-            codeword_length: Optional[int],
-            exponent_bits: Optional[int],
-            mantissa_bits: Optional[int],
-        ) -> None:
-        if (exponent_bits is not None) and (mantissa_bits is not None):
-            trunc = True
-        elif (exponent_bits is None) and (mantissa_bits is None):
-            trunc = False
-        else:
-            raise ValueError(f"Both {exponent_bits=} and {mantissa_bits=} must be None or both must be set.")
-        if codeword_length is not None and trunc:
-            raise ValueError(f"Cannot both quantize with {codeword_length=} and truncate with {exponent_bits=}, {mantissa_bits=}")
-
     def get_comp_model(
             self,
             ranks: Optional[tuple[int]],
@@ -912,7 +897,7 @@ class MLP(nn.Module):
         ) -> Union[MLP, LowRankMLP]:
         """Returns a compressed model. If ranks is not None, returns a low-rank model."""
         # Check arguments
-        self.check_comp_arguments(
+        check_comp_arguments(
             codeword_length=codeword_length,
             exponent_bits=exponent_bits,
             mantissa_bits=mantissa_bits,
@@ -947,7 +932,7 @@ class MLP(nn.Module):
             mantissa_bits: Optional[int]
         ) -> int:
         """Returns the number of bits required to specify the compressed model, without actually creating the compressed model."""
-        MLP.check_comp_arguments(
+        check_comp_arguments(
             codeword_length=codeword_length,
             exponent_bits=exponent_bits,
             mantissa_bits=mantissa_bits,
@@ -1158,6 +1143,8 @@ class MLP(nn.Module):
         comp_results = CompResults(
             ranks=ranks,
             codeword_length=codeword_length,
+            exponent_bits=exponent_bits,
+            mantissa_bits=mantissa_bits,
 
             C_domain=C_domain.item(),
             C_data=C_data.item(),

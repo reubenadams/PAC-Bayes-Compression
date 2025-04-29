@@ -1,6 +1,7 @@
 from __future__ import annotations
 import inspect
 import os
+import pandas as pd
 import json
 from dataclasses import dataclass, asdict, field
 from typing import Optional
@@ -217,7 +218,7 @@ class BaseConfig:
             os.makedirs(self.dist_metrics_dir, exist_ok=True)
             self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
         elif self.experiment_type == "quantization":
-            self.quant_metrics_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
+            self.comp_setup_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
 
             self.no_comp_metrics_dir = f"{self.model_root_dir}/no_comp_metrics"
             self.quant_k_means_metrics_dir = f"{self.model_root_dir}/quant_k_means_metrics"
@@ -229,7 +230,7 @@ class BaseConfig:
             
             self.best_comp_metrics_dir = f"{self.model_root_dir}/best_comp_metrics"
             
-            os.makedirs(self.quant_metrics_dir, exist_ok=True)
+            os.makedirs(self.comp_setup_dir, exist_ok=True)
             
             os.makedirs(self.no_comp_metrics_dir, exist_ok=True)
             os.makedirs(self.quant_k_means_metrics_dir, exist_ok=True)
@@ -241,7 +242,7 @@ class BaseConfig:
             
             os.makedirs(self.best_comp_metrics_dir, exist_ok=True)
 
-            self.quant_metrics_path = f"{self.quant_metrics_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the below paths because you're actually saving things twice.
+            self.comp_setup_path = f"{self.comp_setup_dir}/{self.hyperparams.run_name}.csv"  # This is here in addition to the below paths because you're actually saving things twice.
             
             self.no_comp_metrics_path = f"{self.no_comp_metrics_dir}/{self.hyperparams.run_name}.json"
             self.quant_k_means_metrics_path = f"{self.quant_k_means_metrics_dir}/{self.hyperparams.run_name}.json"
@@ -751,6 +752,8 @@ class CompResults:
 
     ranks: Optional[tuple[int]]
     codeword_length: Optional[int]
+    exponent_bits: Optional[int]
+    mantissa_bits: Optional[int]
     
     C_domain: float
     C_data: float
@@ -791,12 +794,21 @@ class CompResults:
     error_bound_pinsker_empirical_train_data: float
     error_bound_pinsker_empirical_test_data: float
 
+    def __post_init__(self):
+        check_comp_arguments(
+            codeword_length=self.codeword_length,
+            exponent_bits=self.exponent_bits,
+            mantissa_bits=self.mantissa_bits,
+        )
+
     def to_dict(self):
         """Returns a dictionary with formatted keys for wandb logging"""
         return {
             "Comp Ranks": self.ranks,
             "Comp Codeword Length": self.codeword_length,
-            
+            "Comp Exponent Bits": self.exponent_bits,
+            "Comp Mantissa Bits": self.mantissa_bits,
+
             "Comp C Domain": self.C_domain,  # Stays fixed
             "Comp C Data": self.C_data,  # Stays fixed
 
@@ -843,7 +855,7 @@ class CompResults:
         wandb.log(wandb_metrics)
 
     @classmethod 
-    def get_extreme_vals(cls):
+    def get_extreme_initialization(cls):
         """Returns an instance of CompResults with ranks and codeword_length set to None, train
         and test accuracy set to float('-inf'), and all other float fields set to float('inf')."""
 
@@ -851,7 +863,7 @@ class CompResults:
         field_values = dict()
 
         for field_name in field_names:
-            if field_name in {'ranks', 'codeword_length'}:
+            if field_name in {'ranks', 'codeword_length', "exponent_bits", 'mantissa_bits'}:
                 field_values[field_name] = None
             elif field_name in {'train_accuracy', 'test_accuracy'}:
                 field_values[field_name] = float('-inf')
@@ -863,34 +875,32 @@ class CompResults:
 
 @dataclass
 class FinalCompResults:
-    # Hierarchical structure: first by ranks, then by codeword_length
-    results: dict[tuple[int], dict[int, CompResults]] = field(default_factory=dict)
-    
-    def get_best(self) -> None:
-        """Returns a new CompResults object where each field is the best across all ranks and codeword lengths.
-        For most fields, 'best' means lowest value. For train_accuracy and test_accuracy, 'best' means highest value."""
-        if not self.results:
+    """Stores multiple CompResults objects as a list, and provides methods to find the best results."""
+    compression_scheme: str
+    all_results: list[CompResults] = field(default_factory=list)
+    best_results: Optional[CompResults] = None
+
+    def add_results(self, results: CompResults):
+        self.all_results.append(results)
+
+    def get_best_results(self) -> None:
+        """Returns the best results for each compression scheme."""
+        if len(self.all_results) == 0:
             raise ValueError("No results available to find best from")
         
         field_names = inspect.signature(CompResults).parameters
-        best_values = asdict(CompResults.get_extreme_vals())
+        best_values = asdict(CompResults.get_extreme_initialization())
 
         for field_name in field_names:
-            for ranks, rank_dict in self.results.items():
-                for codeword_length, result in rank_dict.items():
-                    value = getattr(result, field_name)
-                    if field_name in {'ranks', 'codeword_length'}:
-                        continue
-                    if field_name in ['train_accuracy', 'test_accuracy']:
-                        best_values[field_name] = max(best_values[field_name], value)
-                    else:
-                        best_values[field_name] = min(best_values[field_name], value)
-        best_results = CompResults(**best_values)
-
-        # Add the best results to the results dictionary with a special key
-        self.results["best"] = dict()
-        self.results["best"]["best"] = best_results
-        self.best_results = best_results
+            for results in self.all_results:
+                value = getattr(results, field_name)
+                if field_name in {'ranks', 'codeword_length', 'exponent_bits', 'mantissa_bits'}:
+                    best_values[field_name] = None
+                elif field_name in ['train_accuracy', 'test_accuracy']:
+                    best_values[field_name] = max(best_values[field_name], value)
+                else:
+                    best_values[field_name] = min(best_values[field_name], value)
+        self.best_results = CompResults(**best_values)  # This will have None for all compression parameters.
 
     def to_dict(self):
         return self.best_results.to_dict()
@@ -899,131 +909,41 @@ class FinalCompResults:
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
-    def add_result(self, result: CompResults):
-        # Initialize the inner dictionary if needed
-        if result.ranks not in self.results:
-            self.results[result.ranks] = dict()
-        self.results[result.ranks][result.codeword_length] = result
-    
     def save_to_json(self, filename: str):
-        # Convert to dict with string keys for JSON compatibility
         data = {
-                # Convert ranks tuple to comma-separated string
-                self.str_ranks(ranks): {
-                    str(codeword_length): asdict(rank_codeword_length_results)
-                    for codeword_length, rank_codeword_length_results in rank_results.items()
-                    }
-                for ranks, rank_results in self.results.items()
-            }
+            "all_results": [asdict(result) for result in self.all_results],
+            "best_results": asdict(self.best_results),
+        }
         with open(filename, "w") as f:
             json.dump(data, f, indent=2)
-    
+
     @classmethod
     def load_from_json(cls, filename: str):
         with open(filename, "r") as f:
             data = json.load(f)
         
         experiment = cls()
-        for ranks_str, rank_results_dict in data.items():
-            ranks = tuple(int(r) for r in ranks_str.split(","))
-            experiment.results[ranks] = dict()
-            
-            for codeword_length_str, rank_codeword_length_results_dict in rank_results_dict.items():
-                codeword_length = int(codeword_length_str)
-                if "ranks" in rank_codeword_length_results_dict and isinstance(rank_codeword_length_results_dict["ranks"], list):
-                    rank_codeword_length_results_dict["ranks"] = tuple(rank_codeword_length_results_dict["ranks"])
-                experiment.results[ranks][codeword_length] = CompResults(**rank_codeword_length_results_dict)
-                
+        for results in data["all_results"]:
+            experiment.all_results.append(CompResults(**results))
+        experiment.best_results = CompResults(**data["best_results"])
         return experiment
-    
-    def get_result(self, ranks: Optional[tuple[int]], codeword_length: int) -> CompResults:
-        """Get results for a specific rank and codeword_length combination"""
-        if ranks in self.results and codeword_length in self.results[ranks]:
-            return self.results[ranks][codeword_length]
-        else:
-            raise ValueError(f"No results for {ranks=} and {codeword_length=}")
 
-    @staticmethod
-    def str_ranks(ranks):
-        """Convert ranks tuple to a string (or None) for JSON compatibility"""
-        if ranks is None or isinstance(ranks, str):
-            return ranks
-        if isinstance(ranks, tuple):
-            return ",".join(map(str, ranks))
-        raise ValueError(f"Invalid ranks type: {type(ranks)}. Expected tuple, None, or str.")
+    def to_dataframe(self) -> pd.DataFrame:
+        """Converts the results to a pandas DataFrame."""
+        if self.best_results is None and len(self.all_results) > 0:
+            self.get_best_results()
 
 
-# TODO: This really shouldn't include batchsize and lr, but the name depends on them. Maybe just pass the name?
-@dataclass
-class ExperimentConfig:
-    experiment: str  # "low_rank", "hypernet", "distillation"
-    model_type: str  # e.g. base, hyper_scaled, hyper_binary, low_rank, full, base, dist
-    model_dims: list[int] = None
-    optimizer_name: str = "adam"
-    lr: float = 0.01
-    batch_size: int = 64
-    dropout_prob: float = 0.0
-    weight_decay: float = 0.0
-
-    dataset_name: str = "MNIST"
-    new_data_shape: Optional[tuple[int, int]] = None
-    model_act: str = "relu"
-    model_name: Optional[str] = None
-
-    def __post_init__(self):
-
-        valid_experiments = {"low_rank", "hypernet", "distillation"}
-        if self.experiment not in valid_experiments:
-            raise ValueError(
-                f"Invalid experiment: {self.experiment}. Must be one of {valid_experiments}"
-            )
-
-        valid_datasets = {"MNIST", "CIFAR10", "MNIST1D"}
-        if self.dataset_name not in valid_datasets:
-            raise ValueError(
-                f"Invalid dataset: {self.dataset_name}. Must be one of {valid_datasets}"
-            )
-
-        valid_activations = {"relu", "sigmoid", "tanh"}
-        if self.model_act not in valid_activations:
-            raise ValueError(
-                f"Invalid activation: {self.model_act}. Must be one of {valid_activations}"
-            )
-
-        if self.new_data_shape is not None and self.dataset_name == "MNIST1D":
-            raise ValueError(f"MNIST1D does not support resizing.")
-
-        if self.new_data_shape is None:
-            if self.dataset_name == "MNIST":
-                self.new_data_shape = (28, 28)
-            elif self.dataset_name == "CIFAR10":
-                self.new_data_shape = (32, 32)
-            elif self.dataset_name == "MNIST1D":
-                self.new_data_shape = (40,)
-
-        if not (
-            self.experiment == "hypernet"
-            and self.model_type in {"hyper_scaled", "hyper_binary"}
-        ):  # Dimension check for hypernetworks will have to occur elsewhere.
-            data_input_dims = prod(self.new_data_shape)
-            num_channels = 3 if self.dataset_name == "CIFAR10" else 1
-            data_input_dims *= num_channels
-            if data_input_dims != self.model_dims[0]:
-                raise ValueError(
-                    f"Data input dims {data_input_dims} does not match model input size {self.model_dims[0]}"
-                )
-
-        self.new_data_shape_str = "x".join(map(str, self.new_data_shape))
-        self.model_dims_str = "x".join(map(str, self.model_dims))
-
-        self.model_root_dir = f"trained_models/{self.experiment}/{self.dataset_name}/{self.new_data_shape_str}"
-        self.model_init_dir = f"{self.model_root_dir}/init"
-        self.model_trained_dir = f"{self.model_root_dir}/{self.model_type}"
-        self.metrics_dir = f"{self.model_root_dir}/metrics"
-        if self.model_name is None:
-            self.model_name = (
-                f"{self.model_dims_str}_lr{self.lr}_bs{self.batch_size}_dp{self.dropout_prob}_wd{self.weight_decay}.t"
-            )
-        self.model_init_path = f"{self.model_init_dir}/{self.model_name}"
-        self.model_trained_path = f"{self.model_trained_dir}/{self.model_name}"
-        self.model_metrics_path = f"{self.metrics_dir}/{self.model_name}.csv"
+def check_comp_arguments(
+        codeword_length: Optional[int],
+        exponent_bits: Optional[int],
+        mantissa_bits: Optional[int],
+    ) -> None:
+    if (exponent_bits is not None) and (mantissa_bits is not None):
+        trunc = True
+    elif (exponent_bits is None) and (mantissa_bits is None):
+        trunc = False
+    else:
+        raise ValueError(f"Both {exponent_bits=} and {mantissa_bits=} must be None or both must be set.")
+    if codeword_length is not None and trunc:
+        raise ValueError(f"Cannot both quantize with {codeword_length=} and truncate with {exponent_bits=}, {mantissa_bits=}")
