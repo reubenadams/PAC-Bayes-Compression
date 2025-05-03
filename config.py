@@ -623,7 +623,7 @@ class CompConfig:
 
     delta: float = 0.05
     min_rank: int = 1
-    rank_step: int = 3
+    rank_step: int = 5
     max_codeword_length: int = 10
 
     get_no_comp_results: bool = True

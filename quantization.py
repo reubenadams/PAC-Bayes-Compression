@@ -65,7 +65,7 @@ def main():
 
     quick_test = False
     device = "cpu"
-    dataset_name = "MNIST1D"
+    dataset_name = "MNIST"
     seed = 0
     best_results = dict()
 

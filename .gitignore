@@ -166,6 +166,7 @@ models/
 trained_models/
 quantization/
 quantization/quant_results
+results_from_cluster
 wandb/
 data/
 wandb_api_key.txt
