@@ -65,7 +65,7 @@ def main():
 
     quick_test = False
     device = "cpu"
-    dataset_name = "MNIST"
+    dataset_name = "MNIST1D"
     seed = 0
     best_results = dict()
 
@@ -147,7 +147,7 @@ def main():
             final_no_comp_results.add_results(no_comp_results)
             no_comp_results.log()
             final_no_comp_results.get_best_results()
-            final_no_comp_results.save_to_json(filename=base_config.no_comp_metrics_path)
+            final_no_comp_results.save_to_json(filepath=base_config.no_comp_metrics_path)
             best_results["no_comp"] = final_no_comp_results.best_results.to_dict()
 
 
@@ -189,7 +189,7 @@ def main():
                 final_quant_k_means_results.add_results(quant_k_means_results)
                 quant_k_means_results.log()
             final_quant_k_means_results.get_best_results()
-            final_quant_k_means_results.save_to_json(filename=base_config.quant_k_means_metrics_path)
+            final_quant_k_means_results.save_to_json(filepath=base_config.quant_k_means_metrics_path)
             best_results["quant_k_means"] = final_quant_k_means_results.best_results.to_dict()
 
 
@@ -230,7 +230,7 @@ def main():
                     final_quant_trunc_results.add_results(quant_trunc_results)
                     quant_trunc_results.log()
             final_quant_trunc_results.get_best_results()
-            final_quant_trunc_results.save_to_json(filename=base_config.quant_trunc_metrics_path)
+            final_quant_trunc_results.save_to_json(filepath=base_config.quant_trunc_metrics_path)
             best_results["quant_trunc"] = final_quant_trunc_results.best_results.to_dict()
 
 
@@ -272,7 +272,7 @@ def main():
                 final_low_rank_results.add_results(low_rank_results)
                 low_rank_results.log()
             final_low_rank_results.get_best_results()
-            final_low_rank_results.save_to_json(filename=base_config.low_rank_metrics_path)
+            final_low_rank_results.save_to_json(filepath=base_config.low_rank_metrics_path)
             best_results["low_rank"] = final_low_rank_results.best_results.to_dict()
 
 
@@ -315,7 +315,7 @@ def main():
                 final_low_rank_and_quant_k_means_results.add_results(low_rank_and_quant_k_means_results)
                 low_rank_and_quant_k_means_results.log()
             final_low_rank_and_quant_k_means_results.get_best_results()
-            final_low_rank_and_quant_k_means_results.save_to_json(filename=base_config.low_rank_and_quant_k_means_metrics_path)
+            final_low_rank_and_quant_k_means_results.save_to_json(filepath=base_config.low_rank_and_quant_k_means_metrics_path)
             best_results["low_rank_and_quant_k_means"] = final_low_rank_and_quant_k_means_results.best_results.to_dict()
 
 
@@ -359,7 +359,7 @@ def main():
                         final_low_rank_and_quant_trunc_results.add_results(low_rank_and_quant_trunc_results)
                         low_rank_and_quant_trunc_results.log()
             final_low_rank_and_quant_trunc_results.get_best_results()
-            final_low_rank_and_quant_trunc_results.save_to_json(filename=base_config.low_rank_and_quant_trunc_metrics_path)
+            final_low_rank_and_quant_trunc_results.save_to_json(filepath=base_config.low_rank_and_quant_trunc_metrics_path)
             best_results["low_rank_and_quant_trunc"] = final_low_rank_and_quant_trunc_results.best_results.to_dict()
 
 

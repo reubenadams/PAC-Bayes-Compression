@@ -624,7 +624,7 @@ class CompConfig:
     delta: float = 0.05
     min_rank: int = 1
     rank_step: int = 5
-    max_codeword_length: int = 10
+    max_codeword_length: int = 13
 
     get_no_comp_results: bool = True
     get_quant_k_means_results: bool = True
@@ -885,7 +885,7 @@ class FinalCompResults:
         self.all_results.append(results)
 
     def get_best_results(self) -> None:
-        """Returns the best results for each compression scheme."""
+        """Populates the best_results field with the best results for each compression scheme."""
         if len(self.all_results) == 0:
             raise ValueError("No results available to find best from")
         
@@ -903,6 +903,28 @@ class FinalCompResults:
                     best_values[field_name] = min(best_values[field_name], value)
         self.best_results = CompResults(**best_values)  # This will have None for all compression parameters.
 
+    @property
+    def best_inverse_kl_results(self) -> tuple[CompResults, bool]:
+        """Returns the results with the lowest inverse kl bound."""
+        if len(self.all_results) == 0:
+            raise ValueError("No results available to find best from")
+        
+        inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in self.all_results]
+        all_equal = len(set(inverse_kl_bounds)) == 1
+        index_of_best = inverse_kl_bounds.index(min(inverse_kl_bounds))
+        return self.all_results[index_of_best], all_equal
+
+    @property
+    def best_pinsker_results(self) -> tuple[CompResults, bool]:
+        """Returns the results with the lowest pinsker bound."""
+        if len(self.all_results) == 0:
+            raise ValueError("No results available to find best from")
+        
+        pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in self.all_results]
+        all_equal = len(set(pinsker_bounds)) == 1
+        index_of_best = pinsker_bounds.index(min(pinsker_bounds))
+        return self.all_results[index_of_best], all_equal
+
     def to_dict(self):
         return self.best_results.to_dict()
     
@@ -910,25 +932,25 @@ class FinalCompResults:
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
-    def save_to_json(self, filename: str):
+    def save_to_json(self, filepath: str):
         data = {
             "compression_scheme": self.compression_scheme,
             "num_union_bounds": self.num_union_bounds,
             "all_results": [asdict(result) for result in self.all_results],
             "best_results": asdict(self.best_results),
         }
-        with open(filename, "w") as f:
+        with open(filepath, "w") as f:
             json.dump(data, f, indent=2)
 
     @classmethod
-    def load_from_json(cls, filename: str):
-        with open(filename, "r") as f:
+    def load_from_json(cls, filepath: str):
+        with open(filepath, "r") as f:
             data = json.load(f)
         experiment = cls(
             compression_scheme=data["compression_scheme"],
             num_union_bounds=data["num_union_bounds"],
-            all_results=data["all_results"],
-            best_results=data["best_results"],
+            all_results=[CompResults(**result) for result in data["all_results"]],
+            best_results=CompResults(**data["best_results"]),
         )
         return experiment
 
