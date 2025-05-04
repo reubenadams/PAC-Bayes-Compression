@@ -1,6 +1,5 @@
 import os
 from config import FinalCompResults
-from pprint import pprint
 from math import sqrt
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +8,7 @@ import numpy as np
 # nums = [0, 0.15, 0.29, 0.42, 0.54, 0.65, 0.75, 0.84, 0.92, 1]
 # colors = plt.cm.viridis(nums)
 
-colors = plt.cm.viridis(np.linspace(0, 1, 9))
+exponent_colors = plt.cm.viridis(np.linspace(0, 1, 9))
 
 
 comp_schemes = {
@@ -47,8 +46,12 @@ def plot_trunc_results(
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
     comp_filepath = get_filepath(dataset_name, hw, nl, "quant_trunc")
 
-    no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
-    all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    try:
+        no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
+        all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    except FileNotFoundError:
+        print(f"File not found: {no_comp_filepath} or {comp_filepath}. Skipping.")
+        return
 
     no_comp_error = 1 - no_comp_results.train_accuracy
     no_comp_string_length = no_comp_results.KL / sqrt(2)
@@ -65,7 +68,7 @@ def plot_trunc_results(
     for exponent_bits in exponent_range:
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
         comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.exponent_bits == exponent_bits]
-        axes[0, 0].plot(comp_string_lengths, comp_train_errors, color=colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
+        axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
     axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
     axes[0, 0].set_ylabel("Error on train set")
@@ -75,7 +78,7 @@ def plot_trunc_results(
     for exponent_bits in exponent_range:
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
         comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-        axes[0, 1].plot(comp_string_lengths, comp_margin_losses, color=colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
+        axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
     axes[0, 1].set_ylabel("Margin loss on train set")
     axes[0, 1].set_ylim(0.25, 1.05)
@@ -84,21 +87,23 @@ def plot_trunc_results(
     for exponent_bits in exponent_range:
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
         comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-        axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, color=colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
+        axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
     axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
     axes[1, 0].set_xlabel("String length")
     axes[1, 0].set_ylabel("Error bound, inverse kl")
+    axes[1, 0].set_ylim(0.8625, 1.0125)
 
     # Plot 4: Pinsker Bounds (bottom-right)
     for exponent_bits in exponent_range:
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
         comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-        axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, color=colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
+        axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
     axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
     axes[1, 1].set_xlabel("String length")
     axes[1, 1].set_ylabel("Error bound, Pinsker")
+    axes[1, 1].set_ylim(0.85, 1.85)
 
     # Add a single legend for all subplots
     handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -110,57 +115,168 @@ def plot_trunc_results(
 
     plot_path = comp_filepath[:-5] + ".png"
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.show()
-
-
-    # Individual plots
-    # # Plot comp train errors
-    # for exponent_bits in range(3, 9):
-    #     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     plt.plot(comp_string_lengths, comp_train_errors, color=colors[exponent_bits], label=f"{exponent_bits} Exponent Bits")
-    # plt.axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
-    # plt.axvline(x=no_comp_string_length, color='k', linestyle='--')
-    # plt.xlabel("String Length |s|")
-    # plt.ylabel("Train Error")
-    # plt.legend()
+    plt.close(fig)
     # plt.show()
 
-    # # Plot comp margin losses
-    # for exponent_bits in range(3, 9):
-    #     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     plt.plot(comp_string_lengths, comp_margin_losses, color=colors[exponent_bits], label=f"{exponent_bits} Exponent Bits")
-    # plt.axvline(x=no_comp_string_length, color='k', linestyle='--')
-    # plt.xlabel("String Length |s|")
-    # plt.ylabel("Train Margin Loss")
-    # plt.legend()
+
+def plot_k_means_results(
+        dataset_name: str,
+        hw: int,
+        nl: int,
+):
+    no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
+    comp_filepath = get_filepath(dataset_name, hw, nl, "quant_k_means")
+
+    try:
+        no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
+        all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    except FileNotFoundError:
+        print(f"File not found: {no_comp_filepath} or {comp_filepath}. Skipping.")
+        return
+
+    no_comp_error = 1 - no_comp_results.train_accuracy
+    no_comp_string_length = no_comp_results.KL / sqrt(2)
+    no_comp_inverse_kl_bound = no_comp_results.error_bound_inverse_kl_spectral_domain
+    no_comp_pinsker_bound = no_comp_results.error_bound_pinsker_spectral_domain
+
+    # Create a 2x2 subplot figure with shared x-axis
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
+    plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+
+    # Plot 1: Train Errors (top-left)
+    comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
+    comp_train_errors = [1 - results.train_accuracy for results in all_comp_results]
+    axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=exponent_colors[4], label="K-Means")
+    axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
+    axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 0].set_ylabel("Error on train set")
+    axes[0, 0].set_ylim(0.25, 1.05)
+
+    # Plot 2: Margin Losses (top-right)
+    comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
+    comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results]
+    axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=exponent_colors[4])
+    axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 1].set_ylabel("Margin loss on train set")
+    axes[0, 1].set_ylim(0.25, 1.05)
+
+    # Plot 3: Inverse KL Bounds (bottom-left)
+    comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
+    comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results]
+    axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=exponent_colors[4])
+    axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
+    axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 0].set_xlabel("String length")
+    axes[1, 0].set_ylabel("Error bound, inverse kl")
+    axes[1, 0].set_ylim(0.8625, 1.0125)
+
+    # Plot 4: Pinsker Bounds (bottom-right)
+    comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
+    comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results]
+    axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=exponent_colors[4])
+    axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
+    axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 1].set_xlabel("String length")
+    axes[1, 1].set_ylabel("Error bound, Pinsker")
+    axes[1, 1].set_ylim(0.85, 1.85)
+
+    # Add a single legend for all subplots
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05), 
+            ncol=2, fancybox=True, shadow=True)
+
+    # Adjust layout to make space for the legend
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    plot_path = comp_filepath[:-5] + ".png"
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
     # plt.show()
 
-    # # Plot comp inverse KL bounds
-    # for exponent_bits in range(3, 9):
-    #     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     plt.plot(comp_string_lengths, comp_inverse_kl_bounds, color=colors[exponent_bits], label=f"{exponent_bits} Exponent Bits")
-    # plt.axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--', label="No Compression")
-    # plt.axvline(x=no_comp_string_length, color='k', linestyle='--')
-    # plt.xlabel("String Length |s|")
-    # plt.ylabel("Inverse KL Bound")
-    # plt.legend()
-    # plt.show()
 
-    # # Plot comp Pinsker bounds
-    # for exponent_bits in range(3, 9):
-    #     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
-    #     plt.plot(comp_string_lengths, comp_pinsker_bounds, color=colors[exponent_bits], label=f"{exponent_bits} Exponent Bits")
-    # plt.axhline(y=no_comp_pinsker_bound, color='k', linestyle='--', label="No Compression")
-    # plt.axvline(x=no_comp_string_length, color='k', linestyle='--')
-    # plt.xlabel("String Length |s|")
-    # plt.ylabel("Pinsker Bound")
-    # plt.legend()
-    # plt.show()
+def plot_low_rank_results(
+        dataset_name: str,
+        hw: int,
+        nl: int,
+):
+    
+    assert nl == 2, "Plot looks best for 2 hidden layers"
 
+    no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
+    comp_filepath = get_filepath(dataset_name, hw, nl, "low_rank")
+
+    try:
+        no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
+        all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    except FileNotFoundError:
+        print(f"File not found: {no_comp_filepath} or {comp_filepath}. Skipping.")
+        return
+
+    no_comp_error = 1 - no_comp_results.train_accuracy
+    no_comp_string_length = no_comp_results.KL / sqrt(2)
+    no_comp_inverse_kl_bound = no_comp_results.error_bound_inverse_kl_spectral_domain
+    no_comp_pinsker_bound = no_comp_results.error_bound_pinsker_spectral_domain
+
+    r1_vals = sorted(list(set(results.ranks[0] for results in all_comp_results)))
+    r1_colors = plt.cm.viridis(np.linspace(0, 1, len(r1_vals)))
+
+    # Create a 2x2 subplot figure with shared x-axis
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
+    plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+
+    # Plot 1: Train Errors (top-left)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.ranks[0] == r1]
+        axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
+    axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 0].set_ylabel("Error on train set")
+    axes[0, 0].set_ylim(0.25, 1.05)
+
+    # Plot 2: Margin Losses (top-right)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 1].set_ylabel("Margin loss on train set")
+    axes[0, 1].set_ylim(0.25, 1.05)
+
+    # Plot 3: Inverse KL Bounds (bottom-left)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
+    axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 0].set_xlabel("String length")
+    axes[1, 0].set_ylabel("Error bound, inverse kl")
+    axes[1, 0].set_ylim(0.8625, 1.0125)
+
+    # Plot 4: Pinsker Bounds (bottom-right)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
+    axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 1].set_xlabel("String length")
+    axes[1, 1].set_ylabel("Error bound, Pinsker")
+    axes[1, 1].set_ylim(0.85, 1.85)
+
+    # Add a single legend for all subplots
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05), 
+            ncol=len(r1_vals) + 1, fancybox=True, shadow=True)
+
+    # Adjust layout to make space for the legend
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    plot_path = comp_filepath[:-5] + ".png"
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    # plt.show()
 
 
 def collect_quant_results(
@@ -237,33 +353,26 @@ def collect_quant_results(
 
 if __name__ == "__main__":
 
-    # for hw in [32]:
-    #     for nl in [1, 2]:
-    #         print(f"HW: {hw}, NL: {nl}")
-    #         try:
-    #             for comp_scheme in comp_schemes:
-    #                 summary = collect_quant_results(
-    #                     dataset_name="MNIST1D",
-    #                     hw=hw,
-    #                     nl=nl,
-    #                     comp_scheme=comp_scheme,
-    #                     # bound_type="Inverse KL"
-    #                     bound_type="Pinsker",
-    #                 )
-    #                 pprint(summary)
-    #                 print()
-    #             print()
-    #             print()
-    #         except FileNotFoundError as e:
-    #             print(f"File not found: {e}")
-    #             print()
-    #             print()
-    #             continue
+    # for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
+    for hw in [32]:
+        # for nl in [1, 2, 3, 4]:
+        for nl in [2]:
 
-    for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
-        for nl in [1, 2, 3, 4]:
             plot_trunc_results(
                 dataset_name="MNIST1D",
                 hw=hw,
                 nl=nl,
             )
+
+            plot_k_means_results(
+                dataset_name="MNIST1D",
+                hw=hw,
+                nl=nl,
+            )
+
+            if nl == 2:
+                plot_low_rank_results(
+                    dataset_name="MNIST1D",
+                    hw=hw,
+                    nl=nl,
+                )
