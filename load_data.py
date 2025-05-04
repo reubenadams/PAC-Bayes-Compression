@@ -381,11 +381,11 @@ def get_dataloaders(
     train_size: Optional[int],
     test_size: Optional[int],
     new_input_shape: Optional[tuple[int, int]],
+    batch_size: Optional[int],
     train_dataset: Optional[CustomDataset] = None,
     test_dataset: Optional[CustomDataset] = None,
     data_filepath: Optional[str] = None,
     use_whole_dataset: bool = False,
-    batch_size: int = None,
     device: str = "cpu",
     ) -> tuple[DataLoader, DataLoader, str]:
 

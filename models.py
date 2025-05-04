@@ -3,7 +3,6 @@ import os
 from typing import Optional, Union
 from copy import deepcopy
 from itertools import product
-import matplotlib.pyplot as plt
 
 import torch
 from torch.utils.data import Dataset, RandomSampler, DataLoader
@@ -974,9 +973,6 @@ class MLP(nn.Module):
             concatenated_weights = self.get_concatenated_weights()
             kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
             print(f"Num iterations: {kmeans.n_iter_}")
-            # plt.hist(concatenated_weights.cpu().numpy(), bins=1000)
-            # plt.vlines(kmeans.cluster_centers_, ymin=0, ymax=3000, color='r')
-            # plt.show()
             quant_k_means_weights = kmeans.cluster_centers_[kmeans.labels_]
             quant_k_means_model = deepcopy(self)
             quant_k_means_model.set_from_concatenated_weights(torch.tensor(quant_k_means_weights, device=self.device))
@@ -1168,17 +1164,19 @@ class MLP(nn.Module):
         self.compute_svd()
         return self.Vts[layer_idx]
 
-    def get_sensible_ranks(self, min_rank: int, rank_step: int) -> list[tuple[int]]:
-        """Returns the rank combinations that reduce (or do not change) the storage size for every layer.
-        The rank increases by rank_step for each layer, starting from min_rank, except for the last layer
-        which always increases its rank by 1."""
-        ranks_steps = [rank_step] * (len(self.linear_layers) - 1) + [1]
+    def get_sensible_ranks(self, min_rank: int) -> list[tuple[int]]:
+        """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
         max_sensible_ranks = []
+        rank_steps = []
         for layer in self.linear_layers:
             m, n = layer.weight.shape
             max_rank = (m * n) // (m + 1 + n)
+            rank_step = max(1, max_rank // 10)
             max_sensible_ranks.append(max_rank)
-        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r, rank_step in zip(max_sensible_ranks, ranks_steps)]))
+            rank_steps.append(rank_step)
+        print(f"{max_sensible_ranks=}")
+        print(f"{rank_steps=}")
+        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r, rank_step in zip(max_sensible_ranks, rank_steps)]))
         return sensible_ranks
 
     def get_sensible_codeword_lengths(self) -> list[int]:
@@ -1200,7 +1198,7 @@ class MLP(nn.Module):
                 sensible_codeword_lengths.append(codeword_length)
         return sensible_codeword_lengths
 
-    def get_sensible_ranks_and_codeword_lengths(self, min_rank: int, rank_step: int) -> list[tuple[tuple[int], int]]:
+    def get_sensible_ranks_and_codeword_lengths(self, min_rank: int) -> list[tuple[tuple[int], int]]:
         full_model_size = self.get_comp_model_size_in_bits(
             ranks=None,
             codeword_length=None,
@@ -1208,7 +1206,7 @@ class MLP(nn.Module):
             mantissa_bits=None,            
         )
         sensible_ranks_and_codeword_lengths = []
-        sensible_ranks = self.get_sensible_ranks(min_rank=min_rank, rank_step=rank_step)
+        sensible_ranks = self.get_sensible_ranks(min_rank=min_rank)
         for ranks in sensible_ranks:
             low_rank_size = self.get_comp_model_size_in_bits(
                 ranks=ranks,

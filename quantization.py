@@ -82,6 +82,15 @@ def main():
     pacb_config = get_pacb_config(quick_test=quick_test)
     comp_config = get_comp_config(quick_test=quick_test, base_config=base_config)
 
+    comp_config.get_no_comp_results = True
+    comp_config.get_quant_k_means_results = True
+    comp_config.get_quant_trunc_results = False
+    comp_config.get_low_rank_results = False
+    comp_config.get_low_rank_and_quant_k_means_results = False
+    comp_config.get_low_rank_and_quant_trunc_results = False
+
+
+
     run.name = base_config.run_name
     run.save()
 
@@ -240,7 +249,7 @@ def main():
             print()
             print("Getting low rank results...")
 
-            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank)
             num_union_bounds = len(rank_combs)
             print(f"{rank_combs=}")
             final_low_rank_results = config.FinalCompResults(
@@ -282,7 +291,7 @@ def main():
             print()
             print("Getting low rank and quant k-means results...")
 
-            sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank)
             sensible_ranks_and_codeword_lengths = [(ranks, code_len) for ranks, code_len in sensible_ranks_and_codeword_lengths if code_len <= comp_config.max_codeword_length]
             num_union_bounds = len(sensible_ranks_and_codeword_lengths)
             print(f"{sensible_ranks_and_codeword_lengths=}")
@@ -325,7 +334,7 @@ def main():
             print()
             print("Getting low rank and quant truncation results...")
 
-            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, rank_step=comp_config.rank_step)
+            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank)
             num_union_bounds = 8 * 23 * len(rank_combs)
             final_low_rank_and_quant_trunc_results = config.FinalCompResults(
                 compression_scheme="low_rank_and_quant_trunc",

@@ -5,8 +5,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-# nums = [0, 0.15, 0.29, 0.42, 0.54, 0.65, 0.75, 0.84, 0.92, 1]
-# colors = plt.cm.viridis(nums)
+# Set global font sizes
+plt.rcParams.update({
+    'font.size': 12,             # Base font size
+    'axes.titlesize': 16,        # Title font size
+    'axes.labelsize': 14,        # X and Y labels font size
+    'xtick.labelsize': 10,       # X tick labels size
+    'ytick.labelsize': 10,       # Y tick labels size
+    'legend.fontsize': 12,       # Legend font size
+    'figure.titlesize': 18       # Figure title size
+})
+
 
 exponent_colors = plt.cm.viridis(np.linspace(0, 1, 9))
 
@@ -116,7 +125,7 @@ def plot_trunc_results(
     plot_path = comp_filepath[:-5] + ".png"
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    # plt.show()
+    plt.show()
 
 
 def plot_k_means_results(
@@ -191,7 +200,7 @@ def plot_k_means_results(
     plot_path = comp_filepath[:-5] + ".png"
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    # plt.show()
+    plt.show()
 
 
 def plot_low_rank_results(
@@ -200,7 +209,7 @@ def plot_low_rank_results(
         nl: int,
 ):
     
-    assert nl == 2, "Plot looks best for 2 hidden layers"
+    assert nl == 1, "Plot looks best for 1 hidden layers"
 
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
     comp_filepath = get_filepath(dataset_name, hw, nl, "low_rank")
@@ -276,7 +285,7 @@ def plot_low_rank_results(
     plot_path = comp_filepath[:-5] + ".png"
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    # plt.show()
+    plt.show()
 
 
 def collect_quant_results(
@@ -356,23 +365,32 @@ if __name__ == "__main__":
     # for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
     for hw in [32]:
         # for nl in [1, 2, 3, 4]:
-        for nl in [2]:
+        for nl in [1]:
 
-            plot_trunc_results(
+            # plot_trunc_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            # )
+
+            # plot_k_means_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            # )
+
+            # if nl == 2:
+            plot_low_rank_results(
                 dataset_name="MNIST1D",
                 hw=hw,
                 nl=nl,
             )
-
-            plot_k_means_results(
-                dataset_name="MNIST1D",
-                hw=hw,
-                nl=nl,
-            )
-
-            if nl == 2:
-                plot_low_rank_results(
-                    dataset_name="MNIST1D",
-                    hw=hw,
-                    nl=nl,
-                )
+            
+            # summary = collect_quant_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            #     comp_scheme="quant_trunc",
+            #     bound_type="Inverse KL",
+            # )
+            # print(summary)

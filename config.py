@@ -623,8 +623,7 @@ class CompConfig:
 
     delta: float = 0.05
     min_rank: int = 1
-    rank_step: int = 5
-    max_codeword_length: int = 13
+    max_codeword_length: int = 15
 
     get_no_comp_results: bool = True
     get_quant_k_means_results: bool = True
@@ -636,7 +635,7 @@ class CompConfig:
     
     compress_model_difference: bool = True
 
-    use_whole_dataset: bool = True  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
+    use_whole_dataset: bool = False  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
     rand_domain_loader_batch_size: Optional[int] = None
     rand_domain_loader_sample_size: int = 10**6
     dist_min: Optional[float] = None
@@ -679,7 +678,6 @@ class CompConfig:
                 new_input_shape=new_input_shape,
                 max_codeword_length=4,
                 min_rank=3,
-                rank_step=10**10,  # Large rank_step ensures only one low rank model is built
                 rand_domain_loader_sample_size=10**3
             )
         else:
@@ -693,7 +691,6 @@ class CompConfig:
         return {
             "Comp Delta": self.delta,
             "Comp Min Rank": self.min_rank,
-            "Comp Rank Step": self.rank_step,
             "Comp Max Codeword Length": self.max_codeword_length,
 
             "Comp Get No Comp Results": self.get_no_comp_results,
@@ -709,7 +706,7 @@ class CompConfig:
     def add_dataloaders(self, train_dataset, test_dataset, data_filepath):
         self.train_loader, self.test_loader, self.data_filepath = get_dataloaders(
             dataset_name=self.dataset_name,
-            batch_size=None,
+            batch_size=128,
             train_size=None,
             test_size=None,
             new_input_shape=None,
@@ -725,7 +722,7 @@ class CompConfig:
             base_model,
             train_dataset,
             test_dataset,
-            batch_size=None
+            batch_size=128,
         ):
         self.base_logit_train_loader = get_logit_loader(
             model=base_model,
