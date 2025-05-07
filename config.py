@@ -590,6 +590,47 @@ class PACBConfig:
 
 
 @dataclass
+class ComplexityMeasures:
+    """Collection of complexity measures for a model."""
+
+    # Confidence measures
+    inverse_margin_tenth_percentile: float
+    train_loss: float
+    output_entropy: float
+    
+    # Norm measure
+    product_weight_fro_norms: float
+
+    # Sharpness measure
+    sigma_ten_percent_increase: float
+    
+    # PAC-Bayes measures
+    kl_bound_sigma_ten_percent_increase: float
+    error_bound_min_over_sigma_inverse_kl: float
+    error_bound_min_over_sigma_pinsker: float
+
+    # Distillation complexity
+    min_hidden_width: int
+
+    def to_dict(self):
+        return {
+            "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
+            "Train Loss": self.train_loss,
+            "Output Entropy": self.output_entropy,
+            "Product Weight Fro Norms": self.product_weight_fro_norms,
+            "Sigma Ten Percent Increase": self.sigma_ten_percent_increase,
+            "KL Bound Sigma Ten Percent Increase": self.kl_bound_sigma_ten_percent_increase,
+            "Error Bound Min Over Sigma Inverse KL": self.error_bound_min_over_sigma_inverse_kl,
+            "Error Bound Min Over Sigma Pinsker": self.error_bound_min_over_sigma_pinsker,
+            "Min Hidden Width": self.min_hidden_width,
+        }
+
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
+        wandb.log(wandb_metrics)
+
+
+@dataclass
 class PACBResults:
     sigma: float
     noisy_error: float
@@ -623,7 +664,9 @@ class CompConfig:
 
     delta: float = 0.05
     min_rank: int = 1
-    max_codeword_length: int = 15
+    min_num_rank_values: int = 8
+    max_codeword_length: int = 20
+    max_codeword_length_for_low_rank: int = 10
 
     get_no_comp_results: bool = True
     get_quant_k_means_results: bool = True
@@ -635,9 +678,11 @@ class CompConfig:
     
     compress_model_difference: bool = True
 
-    use_whole_dataset: bool = False  # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
+    # Note this will be used for all six dataloaders: train_loader, test_loader, rand_domain_loader, base_logit_train_loader, base_logit_test_loader, and base_logit_rand_domain_loader
+    use_whole_dataset: bool = None
+      
     rand_domain_loader_batch_size: Optional[int] = None
-    rand_domain_loader_sample_size: int = 10**6
+    rand_domain_loader_sample_size: int = 10**1  # TODO: Set this in a more sensible way. Currently set to 10 because it's not actually used.
     dist_min: Optional[float] = None
     dist_max: Optional[float] = None
 
@@ -645,10 +690,14 @@ class CompConfig:
         if self.dataset_name == "MNIST1D":
             self.dist_min = -4.0
             self.dist_max = 4.0
+            if self.use_whole_dataset is None:
+                self.use_whole_dataset = True
         # TODO: This depends on the normalization done in load_data.py, so the normalization values should be passed to this config
         elif self.dataset_name in {"MNIST", "CIFAR10"}:
             self.dist_min = -1.0
             self.dist_max = 1.0
+            if self.use_whole_dataset is None:
+                self.use_whole_dataset = False
         else:
             raise ValueError(f"Invalid dataset name: {self.dataset_name}. Must be 'MNIST1D', 'MNIST', or 'CIFAR10'.")
 
@@ -756,40 +805,43 @@ class CompResults:
     C_data: float
     
     spectral_l2_bound_domain: float
-    spectral_l2_bound_data: float
-    empirical_l2_bound_domain: float
-    empirical_l2_bound_train_data: float
-    empirical_l2_bound_test_data: float
-    
     margin_spectral_domain: float
-    margin_spectral_data: float
-    margin_empirical_domain: float
-    margin_empirical_train_data: float
-    margin_empirical_test_data: float
-    
+    train_margin_loss_spectral_domain: float
+    error_bound_inverse_kl_spectral_domain: float
+    error_bound_pinsker_spectral_domain: float
+
     train_accuracy: float
     test_accuracy: float
-    
-    train_margin_loss_spectral_domain: float
-    train_margin_loss_spectral_data: float
-    train_margin_loss_empirical_domain: float
-    train_margin_loss_empirical_train_data: float
-    train_margin_loss_empirical_test_data: float
-    
+
     KL: float
     kl_bound: float
-    
-    error_bound_inverse_kl_spectral_domain: float
-    error_bound_inverse_kl_spectral_data: float
-    error_bound_inverse_kl_empirical_domain: float
-    error_bound_inverse_kl_empirical_train_data: float
-    error_bound_inverse_kl_empirical_test_data: float
 
-    error_bound_pinsker_spectral_domain: float
-    error_bound_pinsker_spectral_data: float
-    error_bound_pinsker_empirical_domain: float
-    error_bound_pinsker_empirical_train_data: float
-    error_bound_pinsker_empirical_test_data: float
+    spectral_l2_bound_data: float = None
+    empirical_l2_bound_domain: float = None
+    empirical_l2_bound_train_data: float = None
+    empirical_l2_bound_test_data: float = None
+    
+    margin_spectral_data: float = None
+    margin_empirical_domain: float = None
+    margin_empirical_train_data: float = None
+    margin_empirical_test_data: float = None
+    
+    
+    train_margin_loss_spectral_data: float = None
+    train_margin_loss_empirical_domain: float = None
+    train_margin_loss_empirical_train_data: float = None
+    train_margin_loss_empirical_test_data: float = None
+    
+    
+    error_bound_inverse_kl_spectral_data: float = None
+    error_bound_inverse_kl_empirical_domain: float = None
+    error_bound_inverse_kl_empirical_train_data: float = None
+    error_bound_inverse_kl_empirical_test_data: float = None
+
+    error_bound_pinsker_spectral_data: float = None
+    error_bound_pinsker_empirical_domain: float = None
+    error_bound_pinsker_empirical_train_data: float = None
+    error_bound_pinsker_empirical_test_data: float = None
 
     def __post_init__(self):
         check_comp_arguments(
@@ -890,14 +942,19 @@ class FinalCompResults:
         best_values = asdict(CompResults.get_extreme_initialization())
 
         for field_name in field_names:
-            for results in self.all_results:
-                value = getattr(results, field_name)
-                if field_name in {'ranks', 'codeword_length', 'exponent_bits', 'mantissa_bits'}:
-                    best_values[field_name] = None
-                elif field_name in ['train_accuracy', 'test_accuracy']:
-                    best_values[field_name] = max(best_values[field_name], value)
-                else:
-                    best_values[field_name] = min(best_values[field_name], value)
+            all_vals_are_none = all([getattr(results, field_name) is None for results in self.all_results])
+            if all_vals_are_none:
+                best_values[field_name] = None
+            else:
+                for results in self.all_results:
+                    value = getattr(results, field_name)
+                    if field_name in {'ranks', 'codeword_length', 'exponent_bits', 'mantissa_bits'}:
+                        best_values[field_name] = None
+                    elif field_name in ['train_accuracy', 'test_accuracy']:
+                        best_values[field_name] = max(best_values[field_name], value)
+                    else:
+                        if value is not None:
+                            best_values[field_name] = min(best_values[field_name], value)
         self.best_results = CompResults(**best_values)  # This will have None for all compression parameters.
 
     @property

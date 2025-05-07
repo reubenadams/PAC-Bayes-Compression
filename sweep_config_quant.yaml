@@ -3,11 +3,11 @@ method: grid
 parameters:
 
   hidden_layer_width:
-    # values: [16, 32, 64, 128, 256, 512]
-    values: [512]
+    # values: [16, 32, 64, 128, 256, 512, 1024]
+    values: [128]
   num_hidden_layers:
     # values: [1, 2, 3, 4]
-    values: [1]
+    values: [2]
   optimizer_name:
     values: ['adam']
   batch_size:

@@ -272,6 +272,29 @@ class MLP(nn.Module):
             else:
                 sigma_max = sigma_new      
 
+    def get_sigma_ten_percent_increase(self, dataloader: DataLoader, base_error: torch.Tensor) -> torch.Tensor:
+        """Returns the sigma such that the noisy accuracy is 10% larger than the base_error"""
+        assert not self.training, "Model should be in eval mode."
+        sigma_min = torch.tensor(0.0, device=self.device)
+        sigma_max = torch.tensor(1.0, device=self.device)
+        target_error = base_error * 1.1
+        while True:
+            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_max.item())
+            if noisy_error >= target_error:
+                break
+            sigma_max *= 2
+        
+        while True:
+            sigma_new = (sigma_max + sigma_min) / 2
+            print(f"Evaluating model with sigma={sigma_new.item()}")
+            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_new.item())
+            if abs(sigma_max - sigma_min) < 1e-6:
+                return sigma_new
+            if noisy_error < target_error:
+                sigma_min = sigma_new
+            else:
+                sigma_max = sigma_new
+
     def get_generalization_gap(self, train_loader, test_loader):
         full_train_01_error = 1 - self.get_full_accuracy(train_loader)
         full_test_01_error = 1 - self.get_full_accuracy(test_loader)
@@ -287,10 +310,42 @@ class MLP(nn.Module):
             if take_softmax:
                 outputs = nn.functional.softmax(outputs, dim=-1)
             target_values = outputs[torch.arange(outputs.size(0)), labels]
-            outputs[torch.arange(outputs.size(0)), labels] = -torch.inf
+            outputs[torch.arange(outputs.size(0)), labels] = -torch.inf  # Set the logits for the correct classifications to -inf so we can get the max of the rest
             max_non_target_values, _ = outputs.max(dim=-1)
             total_margin_loss += (target_values <= margin + max_non_target_values).sum()
         return total_margin_loss / len(dataloader.dataset)
+
+    def get_inverse_margin_tenth_percentile(self, dataloader, take_softmax=False):
+        assert not self.training, "Model should be in eval mode."
+        all_margins = []
+        for x, labels in dataloader:
+            x, labels = x.to(self.device), labels.to(self.device)
+            x = x.view(x.size(0), -1)
+            outputs = self(x)
+            if take_softmax:
+                outputs = nn.functional.softmax(outputs, dim=-1)
+            
+            batch_size = outputs.size(0)
+            target_values = outputs[torch.arange(batch_size), labels]
+            outputs[torch.arange(batch_size), labels] = -torch.inf  # Set the logits for the correct classifications to -inf so we can get the max of the rest
+            max_non_target_values, _ = outputs.max(dim=-1)
+            margins = target_values - max_non_target_values
+            all_margins.append(margins.cpu())
+        all_margins = torch.cat(all_margins)
+        return torch.quantile(all_margins, q=0.1)
+
+    def get_avg_output_entropy(self, dataloader):
+        assert not self.training, "Model should be in eval mode."
+        total_entropy = torch.tensor(0.0, device=self.device)
+        for x, _ in dataloader:
+            x = x.to(self.device)
+            x = x.view(x.size(0), -1)
+            outputs = self(x)
+            probs = nn.functional.softmax(outputs, dim=-1)
+            epsilon = 1e-10
+            entropy = -torch.sum(probs * torch.log(probs + epsilon), dim=-1)
+            total_entropy += entropy.sum()
+        return total_entropy / len(dataloader.dataset)
 
     def get_full_kl_loss(self, base_model: MLP, domain_dataloader: DataLoader):
         assert not self.training, "Model should be in eval mode."
@@ -842,6 +897,12 @@ class MLP(nn.Module):
         layer_other = other.linear_layers[layer_idx]
         return torch.linalg.norm(layer_self.weight - layer_other.weight, ord=2)
 
+    def prod_of_weight_fro_norms(self: MLP) -> torch.Tensor:
+        fro_norms = torch.tensor([torch.linalg.norm(layer.weight, ord="fro") ** 2 for layer in self.linear_layers])
+        prod_fro_norms = torch.prod(fro_norms)
+        d = len(self.linear_layers)
+        return d * prod_fro_norms ** (1 / d)
+
     @staticmethod
     def get_act(act: str):
         if act == "relu":
@@ -949,12 +1010,14 @@ class MLP(nn.Module):
             exponent_bits: Optional[int],
             mantissa_bits: Optional[int]
         ) -> torch.Tensor:
-        return self.get_comp_model_size_in_bits(
+        model_size = self.get_comp_model_size_in_bits(
             ranks=ranks,
             codeword_length=codeword_length,
             exponent_bits=exponent_bits,
             mantissa_bits=mantissa_bits
-        ) * torch.log(torch.tensor(2))
+        )
+        margin_size = 32  # A single float is required to store the margin gamma*
+        return (model_size + margin_size) * torch.log(torch.tensor(2))
 
     def get_low_rank_model(self: MLP, ranks: tuple[int]) -> LowRankMLP:
         """Creates a low-rank version of the MLP by truncating the SVDs of the weight matrices."""
@@ -971,7 +1034,8 @@ class MLP(nn.Module):
         else:
             num_codewords = 2 ** codeword_length
             concatenated_weights = self.get_concatenated_weights()
-            kmeans = KMeans(n_clusters=num_codewords, random_state=0).fit(concatenated_weights.cpu().numpy())
+            max_iter = 50 if codeword_length <= 12 else 1
+            kmeans = KMeans(n_clusters=num_codewords, max_iter=max_iter, random_state=0).fit(concatenated_weights.cpu().numpy())
             print(f"Num iterations: {kmeans.n_iter_}")
             quant_k_means_weights = kmeans.cluster_centers_[kmeans.labels_]
             quant_k_means_model = deepcopy(self)
@@ -1050,18 +1114,18 @@ class MLP(nn.Module):
         # Get spectral and empirical l2 bounds
         # print("Getting spectral and empirical l2 bounds")
         spectral_l2_bound_domain = self.get_spectral_l2_bound(other=comp_model, C=C_domain)
-        spectral_l2_bound_data = self.get_spectral_l2_bound(other=comp_model, C=C_data)
-        empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader, base_logit_loader=base_logit_rand_domain_loader)
-        empirical_l2_bound_train_data = self.get_empirical_l2_bound(other=comp_model, dataloader=train_loader, base_logit_loader=base_logit_train_loader)
-        empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader, base_logit_loader=base_logit_test_loader)
+        # spectral_l2_bound_data = self.get_spectral_l2_bound(other=comp_model, C=C_data)
+        # empirical_l2_bound_domain = self.get_empirical_l2_bound(other=comp_model, dataloader=rand_domain_loader, base_logit_loader=base_logit_rand_domain_loader)
+        # empirical_l2_bound_train_data = self.get_empirical_l2_bound(other=comp_model, dataloader=train_loader, base_logit_loader=base_logit_train_loader)
+        # empirical_l2_bound_test_data = self.get_empirical_l2_bound(other=comp_model, dataloader=test_loader, base_logit_loader=base_logit_test_loader)
 
         # Get spectral and empirical margins
         # print("Getting spectral and empirical margins")
         margin_domain = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_domain
-        margin_data = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_data
-        margin_empirical_domain = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_domain
-        margin_empirical_train_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_train_data
-        margin_empirical_test_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_test_data
+        # margin_data = torch.sqrt(torch.tensor(2)) * spectral_l2_bound_data
+        # margin_empirical_domain = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_domain
+        # margin_empirical_train_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_train_data
+        # margin_empirical_test_data = torch.sqrt(torch.tensor(2)) * empirical_l2_bound_test_data
 
         # Get empirical errors
         # print("Getting empirical errors")
@@ -1071,24 +1135,24 @@ class MLP(nn.Module):
         # Get the empirical margin losses. Note these are *all* calculated on the train data, because it is only the margin they use that changes. More precisely, the bound we prove requires a margin which can be calculated in different ways, but you always measure the margin loss on the train data.
         # print("Getting empirical margin losses")
         comp_train_margin_loss_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
-        comp_train_margin_loss_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
-        comp_train_margin_loss_empirical_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
-        comp_train_margin_loss_empirical_train_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_train_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
-        comp_train_margin_loss_empirical_test_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_test_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        # comp_train_margin_loss_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        # comp_train_margin_loss_empirical_domain = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_domain)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        # comp_train_margin_loss_empirical_train_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_train_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
+        # comp_train_margin_loss_empirical_test_data = comp_model.get_full_margin_loss(dataloader=train_loader, margin=margin_empirical_test_data)  # TODO: You're leaving the default argument take_softmax=False. Is this a good idea? You can actually try both ways, I think?
 
         # Get pacb bounds
         # print("Getting PAC-B bounds")
         comp_kl_bound = pacb_kl_bound(KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_inverse_kl_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_inverse_kl_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
         comp_error_bound_pinsker_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_inverse_kl_empirical_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_inverse_kl_empirical_train_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_inverse_kl_empirical_test_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_pinsker_empirical_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_pinsker_empirical_train_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
-        comp_error_bound_pinsker_empirical_test_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_pinsker_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_inverse_kl_empirical_domain = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_inverse_kl_empirical_train_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_inverse_kl_empirical_test_data = pacb_error_bound_inverse_kl(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_pinsker_empirical_domain = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_domain, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_pinsker_empirical_train_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_train_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
+        # comp_error_bound_pinsker_empirical_test_data = pacb_error_bound_pinsker(empirical_error=comp_train_margin_loss_empirical_test_data, KL=diff_KL, n=len(train_loader.dataset), delta=delta)
 
         # Collect results together and return
         comp_results = CompResults(
@@ -1101,40 +1165,40 @@ class MLP(nn.Module):
             C_data=C_data.item(),
             
             spectral_l2_bound_domain=spectral_l2_bound_domain.item(),
-            spectral_l2_bound_data=spectral_l2_bound_data.item(),
-            empirical_l2_bound_domain=empirical_l2_bound_domain.item(),
-            empirical_l2_bound_train_data=empirical_l2_bound_train_data.item(),
-            empirical_l2_bound_test_data=empirical_l2_bound_test_data.item(),
+            # spectral_l2_bound_data=spectral_l2_bound_data.item(),
+            # empirical_l2_bound_domain=empirical_l2_bound_domain.item(),
+            # empirical_l2_bound_train_data=empirical_l2_bound_train_data.item(),
+            # empirical_l2_bound_test_data=empirical_l2_bound_test_data.item(),
             
             margin_spectral_domain=margin_domain.item(),
-            margin_spectral_data=margin_data.item(),
-            margin_empirical_domain=margin_empirical_domain.item(),
-            margin_empirical_train_data=margin_empirical_train_data.item(),
-            margin_empirical_test_data=margin_empirical_test_data.item(),
+            # margin_spectral_data=margin_data.item(),
+            # margin_empirical_domain=margin_empirical_domain.item(),
+            # margin_empirical_train_data=margin_empirical_train_data.item(),
+            # margin_empirical_test_data=margin_empirical_test_data.item(),
             
             train_accuracy=comp_train_accuracy.item(),
             test_accuracy=comp_test_accuracy.item(),
             
             train_margin_loss_spectral_domain=comp_train_margin_loss_domain.item(),
-            train_margin_loss_spectral_data=comp_train_margin_loss_data.item(),
-            train_margin_loss_empirical_domain=comp_train_margin_loss_empirical_domain.item(),
-            train_margin_loss_empirical_train_data=comp_train_margin_loss_empirical_train_data.item(),
-            train_margin_loss_empirical_test_data=comp_train_margin_loss_empirical_test_data.item(),
+            # train_margin_loss_spectral_data=comp_train_margin_loss_data.item(),
+            # train_margin_loss_empirical_domain=comp_train_margin_loss_empirical_domain.item(),
+            # train_margin_loss_empirical_train_data=comp_train_margin_loss_empirical_train_data.item(),
+            # train_margin_loss_empirical_test_data=comp_train_margin_loss_empirical_test_data.item(),
             
             KL=diff_KL.item(),
             kl_bound=comp_kl_bound.item(),
             
             error_bound_inverse_kl_spectral_domain=comp_error_bound_inverse_kl_domain.item(),
-            error_bound_inverse_kl_spectral_data=comp_error_bound_inverse_kl_data.item(),
-            error_bound_inverse_kl_empirical_domain=comp_error_bound_inverse_kl_empirical_domain.item(),
-            error_bound_inverse_kl_empirical_train_data=comp_error_bound_inverse_kl_empirical_train_data.item(),
-            error_bound_inverse_kl_empirical_test_data=comp_error_bound_inverse_kl_empirical_test_data.item(),
+            # error_bound_inverse_kl_spectral_data=comp_error_bound_inverse_kl_data.item(),
+            # error_bound_inverse_kl_empirical_domain=comp_error_bound_inverse_kl_empirical_domain.item(),
+            # error_bound_inverse_kl_empirical_train_data=comp_error_bound_inverse_kl_empirical_train_data.item(),
+            # error_bound_inverse_kl_empirical_test_data=comp_error_bound_inverse_kl_empirical_test_data.item(),
 
             error_bound_pinsker_spectral_domain=comp_error_bound_pinsker_domain.item(),
-            error_bound_pinsker_spectral_data=comp_error_bound_pinsker_data.item(),            
-            error_bound_pinsker_empirical_domain=comp_error_bound_pinsker_empirical_domain.item(),
-            error_bound_pinsker_empirical_train_data=comp_error_bound_pinsker_empirical_train_data.item(),
-            error_bound_pinsker_empirical_test_data=comp_error_bound_pinsker_empirical_test_data.item(),
+            # error_bound_pinsker_spectral_data=comp_error_bound_pinsker_data.item(),            
+            # error_bound_pinsker_empirical_domain=comp_error_bound_pinsker_empirical_domain.item(),
+            # error_bound_pinsker_empirical_train_data=comp_error_bound_pinsker_empirical_train_data.item(),
+            # error_bound_pinsker_empirical_test_data=comp_error_bound_pinsker_empirical_test_data.item(),
         )
         return comp_results
 
@@ -1164,14 +1228,14 @@ class MLP(nn.Module):
         self.compute_svd()
         return self.Vts[layer_idx]
 
-    def get_sensible_ranks(self, min_rank: int) -> list[tuple[int]]:
+    def get_sensible_ranks(self, min_rank: int, min_num_rank_values: int) -> list[tuple[int]]:
         """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
         max_sensible_ranks = []
         rank_steps = []
         for layer in self.linear_layers:
             m, n = layer.weight.shape
             max_rank = (m * n) // (m + 1 + n)
-            rank_step = max(1, max_rank // 10)
+            rank_step = max(1, max_rank // min_num_rank_values)
             max_sensible_ranks.append(max_rank)
             rank_steps.append(rank_step)
         print(f"{max_sensible_ranks=}")
@@ -1198,7 +1262,7 @@ class MLP(nn.Module):
                 sensible_codeword_lengths.append(codeword_length)
         return sensible_codeword_lengths
 
-    def get_sensible_ranks_and_codeword_lengths(self, min_rank: int) -> list[tuple[tuple[int], int]]:
+    def get_sensible_ranks_and_codeword_lengths(self, min_rank: int, min_num_rank_values: int) -> list[tuple[tuple[int], int]]:
         full_model_size = self.get_comp_model_size_in_bits(
             ranks=None,
             codeword_length=None,
@@ -1206,7 +1270,7 @@ class MLP(nn.Module):
             mantissa_bits=None,            
         )
         sensible_ranks_and_codeword_lengths = []
-        sensible_ranks = self.get_sensible_ranks(min_rank=min_rank)
+        sensible_ranks = self.get_sensible_ranks(min_rank=min_rank, min_num_rank_values=min_num_rank_values)
         for ranks in sensible_ranks:
             low_rank_size = self.get_comp_model_size_in_bits(
                 ranks=ranks,

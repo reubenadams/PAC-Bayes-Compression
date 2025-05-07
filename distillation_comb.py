@@ -150,6 +150,53 @@ def get_pac_bound(
     return pacb_metrics
 
 
+def get_complexity_measures(
+        init_model: MLP,
+        base_model: MLP,
+        base_config: config.BaseConfig,
+        pacb_config: config.PACBConfig,
+        base_metrics: config.BaseResults,
+        dist_metrics: config.DistFinalResults,
+        pacb_metrics: config.PACBResults,
+):
+    inverse_margin_tenth_percentile = base_model.get_inverse_margin_tenth_percentile(dataloader=base_config.data.train_loader)
+    train_loss = base_metrics.final_train_loss
+    output_entropy = base_model.get_avg_output_entropy(dataloader=base_config.data.train_loader)
+
+    product_weight_fro_norms = base_model.get_product_weight_fro_norms()
+    sigma_ten_percent_increase = base_model.get_sigma_ten_percent_increase(
+        dataloader=base_config.data.train_loader,
+        base_error=1 - base_metrics.final_train_accuracy,
+    )
+
+    kl_bound_sigma_ten_percent_increase = base_model.pacb_kl_bound(
+        prior=init_model,
+        sigma=sigma_ten_percent_increase,
+        n=len(base_config.data.train_loader.dataset),
+        delta=pacb_config.delta,
+        num_union_bounds=1,
+    )
+
+    error_bound_min_over_sigma_inverse_kl = pacb_metrics.pac_bound_inverse_kl
+    error_bound_min_over_sigma_pinsker = pacb_metrics.pac_bound_pinsker
+
+    min_hidden_width = dist_metrics.complexity
+
+    complexity_measures = config.ComplexityMeasures(
+        inverse_margin_tenth_percentile=inverse_margin_tenth_percentile,
+        train_loss=train_loss,
+        output_entropy=output_entropy,
+        product_weight_fro_norms=product_weight_fro_norms,
+        sigma_ten_percent_increase=sigma_ten_percent_increase,
+        kl_bound_sigma_ten_percent_increase=kl_bound_sigma_ten_percent_increase,
+        error_bound_min_over_sigma_inverse_kl=error_bound_min_over_sigma_inverse_kl,
+        error_bound_min_over_sigma_pinsker=error_bound_min_over_sigma_pinsker,
+        min_hidden_width=min_hidden_width,
+    )
+    
+    return complexity_measures
+
+
 def log_and_save_metrics(
         run_id: str,
         base_config: config.BaseConfig,
@@ -158,7 +205,8 @@ def log_and_save_metrics(
         base_metrics: config.BaseResults = None,
         dist_metrics: config.DistFinalResults = None, 
         pacb_metrics: config.PACBResults = None,
-    ):
+        complexity_measures: config.ComplexityMeasures = None,
+) -> None:
     all_configs = {"Run ID": run_id, "Run Name": base_config.run_name} | base_config.to_dict()
     if dist_config is not None:
         all_configs |= dist_config.to_dict()
@@ -173,6 +221,9 @@ def log_and_save_metrics(
     if pacb_metrics is not None:
         pacb_metrics.log()
         all_metrics |= pacb_metrics.to_dict()
+    if complexity_measures is not None:
+        complexity_measures.log()
+        all_metrics |= complexity_measures.to_dict()
 
     df = pd.DataFrame([all_configs | all_metrics])
     df.to_csv(base_config.dist_metrics_path, index=False)
@@ -242,6 +293,17 @@ def main():
             base_config=base_config,
             pacb_config=pacb_config,
     )
+
+    complexity_measures = get_complexity_measures(
+        init_model=init_model,
+        base_model=base_model,
+        base_config=base_config,
+        pacb_config=pacb_config,
+        base_metrics=base_metrics,
+        dist_metrics=dist_metrics,
+        pacb_metrics=pacb_metrics,
+    )
+
     log_and_save_metrics(
         run_id=run.id,
         base_config=base_config,
