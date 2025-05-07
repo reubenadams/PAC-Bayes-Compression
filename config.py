@@ -405,7 +405,7 @@ class DistStoppingConfig:
             max_epochs=10000,
             use_early_stopping=True,
             target_kl_on_train=0.1,
-            patience=2,
+            patience=100,
             num_attempts=1,
         )
     
@@ -599,10 +599,10 @@ class ComplexityMeasures:
     output_entropy: float
     
     # Norm measure
-    product_weight_fro_norms: float
+    product_of_weight_fro_norms: float
 
     # Sharpness measure
-    sigma_ten_percent_increase: float
+    inverse_squared_sigma_ten_percent_increase: float
     
     # PAC-Bayes measures
     kl_bound_sigma_ten_percent_increase: float
@@ -617,12 +617,12 @@ class ComplexityMeasures:
             "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
             "Train Loss": self.train_loss,
             "Output Entropy": self.output_entropy,
-            "Product Weight Fro Norms": self.product_weight_fro_norms,
-            "Sigma Ten Percent Increase": self.sigma_ten_percent_increase,
+            "Product Weight Of Fro Norms": self.product_of_weight_fro_norms,
+            "Inverse Squared Sigma Ten Percent Increase": self.inverse_squared_sigma_ten_percent_increase,
             "KL Bound Sigma Ten Percent Increase": self.kl_bound_sigma_ten_percent_increase,
             "Error Bound Min Over Sigma Inverse KL": self.error_bound_min_over_sigma_inverse_kl,
             "Error Bound Min Over Sigma Pinsker": self.error_bound_min_over_sigma_pinsker,
-            "Min Hidden Width": self.min_hidden_width,
+            "Dist Complexity": self.min_hidden_width,
         }
 
     def log(self):

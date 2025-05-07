@@ -164,6 +164,7 @@ cython_debug/
 
 models/
 trained_models/
+distillation/
 quantization/
 quantization/quant_results
 results_from_cluster

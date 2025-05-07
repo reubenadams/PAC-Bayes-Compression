@@ -1,13 +1,24 @@
+from typing import Optional
+
 import torch
 from scipy import stats
 import numpy as np
 from yaml import safe_load
-import wandb
 from itertools import product
 import pandas as pd
 
 
-# Keep this
+base_hyp_full_names = {
+    "hidden_layer_width": "Base Hidden Layer Width",
+    "num_hidden_layers": "Base Num Hidden Layers",
+    "optimizer_name": "Base Optimizer",
+    "batch_size": "Base Batch Size",
+    "lr": "Base Learning Rate",
+    "dropout_prob": "Base Dropout Prob",
+    "weight_decay": "Base Weight Decay",
+}
+
+
 def get_hyp_vals(sweep_config_path: str) -> dict:
     hyp_vals = dict()
     with open(sweep_config_path, "r") as file:
@@ -19,22 +30,26 @@ def get_hyp_vals(sweep_config_path: str) -> dict:
     return hyp_vals
 
 
-# TODO: We need to deal with the missing row caused by wandb bug.
-def get_sweep_results(hyp_vals: dict, df: pd.DataFrame) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+# TODO: It should take the name of a complexity measure.
+def get_sweep_results(hyp_vals: dict, df: pd.DataFrame, complexity_name: Optional[str]) -> tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
 
     hyp_names = sorted(list(hyp_vals.keys()))  # TODO: Make sure we're always sorting.
     
-    results_shape = tuple(len(hyp_vals[name]) for name in hyp_names)
+    results_shape = tuple(len(hyp_vals[name]) for name in hyp_names)  # Number of values for each hyperparameter
     successes = torch.full(results_shape, False)  # To track which runs actually ran and actually met target loss
-    complexities = torch.zeros(results_shape)
+    if complexity_name is None:
+        complexities = None
+    else:
+        complexities = torch.zeros(results_shape)
     gen_gaps = torch.zeros(results_shape)
 
     for _, row in df.iterrows():
-        run_config = [(name, row[name]) for name in hyp_names]
+        run_config = [(name, row[base_hyp_full_names[name]]) for name in hyp_names]
         index = tuple(hyp_vals[name].index(val) for name, val in run_config)
-        if row["Reached Target Base"]:
-            complexities[index] = row["Complexity"]
-            gen_gaps[index] = row["Generalization Gap"]
+        if row["Base Reached Target"]:
+            if complexity_name is not None:
+                complexities[index] = row[complexity_name]
+            gen_gaps[index] = row["Base Generalization Gap"]
             successes[index] = True
         else:
             print(f"Run {row["run_name"]} with index {index} did not reach target")
@@ -55,6 +70,24 @@ def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torc
     gen_gaps = gen_gaps[successes].flatten()
     undefined = ((complexities == complexities[0]).all()) or ((gen_gaps == gen_gaps[0]).all())  # KRCC is undefined
     return stats.kendalltau(complexities, gen_gaps).statistic, undefined
+
+
+def get_oracle_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
+    Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
+    assert successes.shape == gen_gaps.shape
+    num_krccs = 0
+    total_krcc = 0
+    for _ in range(num_oracle_samples):
+        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+        oracle_krcc, undefined = get_krcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+        if undefined:
+            continue
+        assert not np.isnan(oracle_krcc)
+        num_krccs += 1
+        total_krcc += oracle_krcc
+    assert num_krccs > 0
+    return total_krcc / num_krccs
 
 
 def get_granulated_krcc_components(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> list[float]:
@@ -79,13 +112,24 @@ def get_granulated_krcc_components(successes: torch.Tensor, complexities: torch.
             total_krcc += krcc
             krccs_for_dim.append(krcc)
         assert num_krccs > 0
-        granulated_krccs.append(total_krcc.item() / num_krccs)
+        granulated_krccs.append(total_krcc / num_krccs)
     return granulated_krccs
 
 
 def get_granulated_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
     components = get_granulated_krcc_components(successes, complexities, gen_gaps)
     return torch.tensor(components).mean().item()
+
+
+def get_oracle_granulated_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average *granulated*
+    Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
+    assert successes.shape == gen_gaps.shape
+    total_gkrcc = 0
+    for _ in range(num_oracle_samples):
+        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+        total_gkrcc += get_granulated_krcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+    return total_gkrcc / num_oracle_samples
 
 
 def flatten_except_dim(tensor: torch.Tensor, dim: int) -> torch.Tensor:
@@ -203,9 +247,7 @@ def get_normalized_conditional_entropies(successes: torch.Tensor, complexities: 
     num_hyp_dims = successes.ndim
     normed_cond_entropies = []
     for hyp_dim1 in range(num_hyp_dims):
-        print(f"{hyp_dim1=}")
         for hyp_dim2 in range(hyp_dim1 + 1, num_hyp_dims):
-            print(f"{hyp_dim2=}")
             pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US(successes, complexities, gen_gaps, hyp_dim1, hyp_dim2)
             pmf_joint_Vg_US = pmf_joint_triple_Vmu_Vg_US.sum(dim=0)
             cond_mut_inf = conditional_mutual_inf(pmf_joint_triple=pmf_joint_triple_Vmu_Vg_US)
@@ -222,16 +264,49 @@ def CIT_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.T
 
 if __name__ == "__main__":
 
-    hyp_vals = get_hyp_vals("sweep_config_distillation_base.yaml")
-    print(hyp_vals)
-    combined_df = pd.read_csv("sweep_results_2187_big_comb.csv")
-    successes, complexities, gen_gaps = get_sweep_results(hyp_vals, combined_df)
-    print(f"{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")
-    print(f"Num successes = {(successes == True).sum()}")
-    print(f"Num failures = {(successes == False).sum()}")
+    complexity_measures = [
+        "Inverse Margin Tenth Percentile",
+        "Train Loss",
+        "Output Entropy",
+        "Product Weight Of Fro Norms",
+        "Inverse Squared Sigma Ten Percent Increase",
+        "KL Bound Sigma Ten Percent Increase",
+        "Error Bound Min Over Sigma Inverse KL",
+        "Error Bound Min Over Sigma Pinsker",
+        "Dist Complexity",
+    ]
 
-    # granulated_krccs = get_granulated_krcc_components(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps)
-    # print(granulated_krccs)
-    # granulated_krcc = get_granulated_krcc(successes, complexities=gen_gaps, gen_gaps=gen_gaps)
-    # print(granulated_krcc)
-    print(CIT_K(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps))
+    oracle_epsilons = [0.02, 0.05]  # Values used in the Fantastic Generalization Measures paper
+
+    hyp_vals = get_hyp_vals("sweep_config_comb_toy.yaml")
+    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\dist_metrics\combined.csv")
+
+    # for complexity_measure in complexity_measures:
+    #     print(complexity_measure)
+
+    #     successes, complexities, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=complexity_measure)
+    #     print(f"\t{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")
+    #     print(f"\tNum successes = {(successes == True).sum()}")
+    #     print(f"\tNum failures = {(successes == False).sum()}")
+
+    #     krcc = get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    #     print(f"\tKRCC: {krcc}")
+
+    #     # granulated_krccs = get_granulated_krcc_components(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps)
+    #     # print(granulated_krccs)
+    #     # granulated_krcc = get_granulated_krcc(successes, complexities=gen_gaps, gen_gaps=gen_gaps)
+    #     # print(granulated_krcc)
+    #     print(CIT_K(successes=successes, complexities=gen_gaps, gen_gaps=gen_gaps))
+    #     print()
+    
+    for epsilon in oracle_epsilons:
+        successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
+        print(f"\t{successes.shape=}, {gen_gaps.shape=}")
+        print(f"\tNum successes = {(successes == True).sum()}")
+        print(f"\tNum failures = {(successes == False).sum()}")
+        oracle_krcc = get_oracle_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=10000)
+        print(f"\tOracle KRCC: {oracle_krcc}")
+
+        oracle_granulated_krcc = get_oracle_granulated_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=10000)
+        print(f"\tOracle Granulated KRCC: {oracle_granulated_krcc}")
+

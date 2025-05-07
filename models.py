@@ -224,7 +224,7 @@ class MLP(nn.Module):
         )
         return final_dist_metrics
 
-    def monte_carlo_01_error(self, dataset: Dataset, sigma: float, num_mc_samples: int=10**4, new_noise_every: int=32):
+    def monte_carlo_01_error(self, dataset: Dataset, sigma: float, num_mc_samples: int=10**5, new_noise_every: int=32):
         assert not self.training, "Model should be in eval mode."
         sampler = RandomSampler(dataset, replacement=True, num_samples=num_mc_samples)
         # New weights are drawn for every batch, but not for every sample
@@ -897,7 +897,7 @@ class MLP(nn.Module):
         layer_other = other.linear_layers[layer_idx]
         return torch.linalg.norm(layer_self.weight - layer_other.weight, ord=2)
 
-    def prod_of_weight_fro_norms(self: MLP) -> torch.Tensor:
+    def get_product_of_weight_fro_norms(self: MLP) -> torch.Tensor:
         fro_norms = torch.tensor([torch.linalg.norm(layer.weight, ord="fro") ** 2 for layer in self.linear_layers])
         prod_fro_norms = torch.prod(fro_norms)
         d = len(self.linear_layers)
