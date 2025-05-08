@@ -55,7 +55,7 @@ def test__entropy__uniform_with_zeros():
         pmf = torch.randint(0, 2, (n,))
     k = pmf.sum()
     pmf = pmf / k
-    assert pmf.sum() == 1
+    assert pmf.sum() == 1, f"pmf.sum()={pmf.sum()}"
     expected = torch.log(k)
     result = entropy(pmf)
     assert torch.isclose(result, expected)
@@ -222,16 +222,15 @@ def test__get_joint_probs():
 
 if __name__ == "__main__":
     for _ in range(10):
-        # test__get_differences()
-        # test__get_signs()
+        test__get_differences()
+        test__get_signs()
         test__get_joint_probs()
-        pass
-        # test__get_granulated_krccs__2x3()
-        # test__get_granulated_krccs__2x3x4()
-    # test__entropy_uniform()
-    # test__entropy__uniform_with_zeros()
-    # test__mutual_inf__2x2()
-    # test__mutual_inf__big()
-    # test__mutual_inf__big__with_zeros()
-    # test__conditional_entropy()
-    # test__conditional_mutual_inf()
+        test__get_granulated_krccs__2x3()
+        test__get_granulated_krccs__2x3x4()
+    test__entropy__uniform()
+    test__entropy__uniform_with_zeros()
+    test__mutual_inf__2x2()
+    test__mutual_inf__big()
+    test__mutual_inf__big__with_zeros()
+    test__conditional_entropy()
+    test__conditional_mutual_inf()

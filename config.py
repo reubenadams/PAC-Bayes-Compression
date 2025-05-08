@@ -592,14 +592,26 @@ class PACBConfig:
 @dataclass
 class ComplexityMeasures:
     """Collection of complexity measures for a model."""
-
     # Confidence measures
     inverse_margin_tenth_percentile: float
     train_loss: float
     output_entropy: float
     
-    # Norm measure
-    product_of_weight_fro_norms: float
+    # Norm measures, all parameters
+    l1_norm: float
+    l2_norm: float
+    l1_norm_from_init: float
+    l2_norm_from_init: float
+
+    # Norm measures, weights only
+    spectral_sum: float
+    spectral_product: float
+    frobenius_sum: float
+    frobenius_product: float
+    spectral_sum_from_init: float
+    spectral_product_from_init: float
+    frobenius_sum_from_init: float
+    frobenius_product_from_init: float
 
     # Sharpness measure
     inverse_squared_sigma_ten_percent_increase: float
@@ -617,11 +629,26 @@ class ComplexityMeasures:
             "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
             "Train Loss": self.train_loss,
             "Output Entropy": self.output_entropy,
-            "Product Weight Of Fro Norms": self.product_of_weight_fro_norms,
+            
+            "L1 Norm": self.l1_norm,
+            "L2 Norm": self.l2_norm,
+            "L1 Norm From Init": self.l1_norm_from_init,
+            "L2 Norm From Init": self.l2_norm_from_init,
+            "Spectral Sum": self.spectral_sum,
+            "Spectral Product": self.spectral_product,
+            "Frobenius Sum": self.frobenius_sum,
+            "Frobenius Product": self.frobenius_product,
+            "Spectral Sum From Init": self.spectral_sum_from_init,
+            "Spectral Product From Init": self.spectral_product_from_init,
+            "Frobenius Sum From Init": self.frobenius_sum_from_init,
+            "Frobenius Product From Init": self.frobenius_product_from_init,
+
             "Inverse Squared Sigma Ten Percent Increase": self.inverse_squared_sigma_ten_percent_increase,
+            
             "KL Bound Sigma Ten Percent Increase": self.kl_bound_sigma_ten_percent_increase,
             "Error Bound Min Over Sigma Inverse KL": self.error_bound_min_over_sigma_inverse_kl,
             "Error Bound Min Over Sigma Pinsker": self.error_bound_min_over_sigma_pinsker,
+            
             "Dist Complexity": self.min_hidden_width,
         }
 

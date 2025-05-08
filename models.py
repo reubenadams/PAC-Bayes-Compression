@@ -903,6 +903,74 @@ class MLP(nn.Module):
         d = len(self.linear_layers)
         return d * prod_fro_norms ** (1 / d)
 
+    # Norm-based complexity measures, all params
+    def mu_l1_norm(self: MLP) -> torch.Tensor:
+        """Collects all weights and biases into a single vector and computes the l1 norm."""
+        all_params = torch.cat([param.view(-1) for param in self.parameters()])
+        return torch.linalg.vector_norm(all_params, ord=1)
+
+    def mu_l2_norm(self: MLP) -> torch.Tensor:
+        """Collects all weights and biases into a single vector and computes the l2 norm."""
+        all_params = torch.cat([param.view(-1) for param in self.parameters()])
+        return torch.linalg.vector_norm(all_params, ord=2)
+
+    def mu_l1_norm_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        all_params_self = torch.cat([param.view(-1) for param in self.parameters()])
+        all_params_other = torch.cat([param.view(-1) for param in other.parameters()])
+        difference = all_params_self - all_params_other
+        return torch.linalg.vector_norm(difference, ord=1)
+
+    def mu_l2_norm_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        all_params_self = torch.cat([param.view(-1) for param in self.parameters()])
+        all_params_other = torch.cat([param.view(-1) for param in other.parameters()])
+        difference = all_params_self - all_params_other
+        return torch.linalg.vector_norm(difference, ord=2)
+
+    # Norm-based complexity measures, weights only
+    def mu_spectral_sum(self: MLP) -> torch.Tensor:
+        """Computes the sum of the spectral norms of the weights."""
+        spectral_norms = torch.tensor([torch.linalg.matrix_norm(layer.weight, ord=2) for layer in self.linear_layers])
+        return torch.sum(spectral_norms)
+    
+    def mu_spectral_product(self: MLP) -> torch.Tensor:
+        """Computes the product of the spectral norms of the weights."""
+        spectral_norms = torch.tensor([torch.linalg.matrix_norm(layer.weight, ord=2) for layer in self.linear_layers])
+        return torch.prod(spectral_norms)
+
+    def mu_frobenius_sum(self: MLP) -> torch.Tensor:
+        """Computes the sum of the Frobenius norms of the weights."""
+        frobenius_norms = torch.tensor([torch.linalg.matrix_norm(layer.weight, ord="fro") for layer in self.linear_layers])
+        return torch.sum(frobenius_norms)
+
+    def mu_frobenius_product(self: MLP) -> torch.Tensor:
+        """Computes the product of the Frobenius norms of the weights."""
+        frobenius_norms = torch.tensor([torch.linalg.matrix_norm(layer.weight, ord="fro") for layer in self.linear_layers])
+        return torch.prod(frobenius_norms)
+    
+    def mu_spectral_sum_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        """Computes the sum of the spectral norms of the weights."""
+        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        spectral_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord=2) for weight_diff in weight_diffs])
+        return torch.sum(spectral_norms)
+    
+    def mu_spectral_product_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        """Computes the product of the spectral norms of the weights."""
+        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        spectral_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord=2) for weight_diff in weight_diffs])
+        return torch.prod(spectral_norms)
+
+    def mu_frobenius_sum_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        """Computes the sum of the Frobenius norms of the weights."""
+        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        frobenius_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord="fro") for weight_diff in weight_diffs])
+        return torch.sum(frobenius_norms)
+
+    def mu_frobenius_product_from_init(self: MLP, other: MLP) -> torch.Tensor:
+        """Computes the sum of the Frobenius norms of the weights."""
+        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        frobenius_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord="fro") for weight_diff in weight_diffs])
+        return torch.prod(frobenius_norms)
+
     @staticmethod
     def get_act(act: str):
         if act == "relu":
