@@ -595,6 +595,7 @@ class ComplexityMeasures:
     # Confidence measures
     inverse_margin_tenth_percentile: float
     train_loss: float
+    train_error: float
     output_entropy: float
     
     # Norm measures, all parameters
@@ -628,16 +629,19 @@ class ComplexityMeasures:
         return {
             "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
             "Train Loss": self.train_loss,
+            "Train Error": self.train_error,
             "Output Entropy": self.output_entropy,
             
             "L1 Norm": self.l1_norm,
             "L2 Norm": self.l2_norm,
             "L1 Norm From Init": self.l1_norm_from_init,
             "L2 Norm From Init": self.l2_norm_from_init,
+
             "Spectral Sum": self.spectral_sum,
             "Spectral Product": self.spectral_product,
             "Frobenius Sum": self.frobenius_sum,
             "Frobenius Product": self.frobenius_product,
+
             "Spectral Sum From Init": self.spectral_sum_from_init,
             "Spectral Product From Init": self.spectral_product_from_init,
             "Frobenius Sum From Init": self.frobenius_sum_from_init,
@@ -655,6 +659,57 @@ class ComplexityMeasures:
     def log(self):
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
+    
+    @classmethod
+    def matplotlib_name(cls, name):
+        if name == "Inverse Margin Tenth Percentile":
+            return r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$"
+        elif name == "Train Loss":
+            return r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$"
+        elif name == "Train Error":
+            return r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$"
+        elif name == "Output Entropy":
+            return r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$"
+        
+        elif name == "L1 Norm":
+            return r"$\mu_{\text{l1}} = \|w\|_1$"
+        elif name == "L2 Norm":
+            return r"$\mu_{\text{l2}} = \|w\|_2$"
+        elif name == "L1 Norm From Init":
+            return r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$"
+        elif name == "L2 Norm From Init":
+            return r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$"
+        
+        elif name == "Spectral Sum":
+            return r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$"
+        elif name == "Spectral Product":
+            return r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$"
+        elif name == "Frobenius Sum":
+            return r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$"
+        elif name == "Frobenius Product":
+            return r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$"
+        
+        elif name == "Spectral Sum From Init":
+            return r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$"
+        elif name == "Spectral Product From Init":
+            return r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$"
+        elif name == "Frobenius Sum From Init":
+            return r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$"
+        elif name == "Frobenius Product From Init":
+            return r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$"
+        
+        elif name == "Inverse Squared Sigma Ten Percent Increase":
+            return r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$"
+        
+        elif name == "KL Bound Sigma Ten Percent Increase":
+            return r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$"
+        elif name == "Error Bound Min Over Sigma Inverse KL":
+            return r"$\mu_{\text{pacb-error-bound-inverse-kl}}"
+        elif name == "Error Bound Min Over Sigma Pinsker":
+            return r"$\mu_{\text{pacb-error-bound-pinsker}}$"
+        
+        elif name == "Dist Complexity":
+            return r"$\mu_{\text{dist-complexity}}$"
 
 
 @dataclass

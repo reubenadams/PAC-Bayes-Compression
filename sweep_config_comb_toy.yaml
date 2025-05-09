@@ -3,16 +3,16 @@ method: grid
 parameters:
 
   hidden_layer_width:
-    values: [512, 1024, 2048]
+    values: [1024, 2048]
   num_hidden_layers:
-    values: [2, 3, 4]
-  # optimizer_name:
-  #   values: ['adam']
+    values: [3, 4]
+  optimizer_name:
+    values: ['adam']
   batch_size:
-    values: [32, 64, 128]
-  # lr:
-  #   values: [0.003, 0.001, 0.0003]
-  # dropout_prob:
-  #   values: [0]
-  # weight_decay:
-  #   values: [0]
+    values: [64, 128]
+  lr:
+    values: [0.003]
+  dropout_prob:
+    values: [0]
+  weight_decay:
+    values: [0]

@@ -1,7 +1,7 @@
 import torch
 from scipy import stats
 
-from evaluation_criteria import get_granulated_krcc_components, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf, get_differences, get_signs, get_joint_probs, get_joint_probs
+from evaluation_criteria import get_granulated_krcc_components, entropy, conditional_entropy, mutual_inf, conditional_mutual_inf, get_differences, get_signs, get_joint_probs_two_hyp_dims, get_joint_probs_two_hyp_dims
 
 
 
@@ -183,7 +183,7 @@ def test__get_joint_probs():
     prob_pn = 3/8
     prob_pp = 1/8
     expected = tuple(p * prob_hyp1_hyp2 for p in [prob_nn, prob_np, prob_pn, prob_pp])
-    result = get_joint_probs(complexities_signs, gen_gaps_signs, prob_hyp1_hyp2)
+    result = get_joint_probs_two_hyp_dims(complexities_signs, gen_gaps_signs, prob_hyp1_hyp2)
     assert result == expected, f"{result=}, {expected=}"
 
 
@@ -211,7 +211,7 @@ def test__get_joint_probs():
     count_pp = 2 / 12
     
     expected = tuple(p * prob_hyp1_hyp2 for p in [count_nn, count_np, count_pn, count_pp])
-    result = get_joint_probs(successes, complexities, gen_gaps, slices, prob_hyp1_hyp2)
+    result = get_joint_probs_two_hyp_dims(successes, complexities, gen_gaps, slices, prob_hyp1_hyp2)
     assert result == expected
     
 

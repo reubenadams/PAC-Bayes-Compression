@@ -187,6 +187,7 @@ def get_complexity_measures(
     complexity_measures = config.ComplexityMeasures(
         inverse_margin_tenth_percentile=inverse_margin_tenth_percentile,
         train_loss=train_loss,
+        train_error=1 - base_metrics.final_train_accuracy,
         output_entropy=output_entropy,
         l1_norm=base_model.mu_l1_norm().item(),
         l2_norm=base_model.mu_l2_norm().item(),
