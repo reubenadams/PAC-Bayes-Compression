@@ -625,6 +625,41 @@ class ComplexityMeasures:
     # Distillation complexity
     min_hidden_width: int
 
+    # Dictionary mapping ordinary names to matplotlib names
+    _name_mapping = {
+        "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
+        "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
+        "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
+        "Output Entropy": r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
+        
+        "L1 Norm": r"$\mu_{\text{l1}} = \|w\|_1$",
+        "L2 Norm": r"$\mu_{\text{l2}} = \|w\|_2$",
+        "L1 Norm From Init": r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$",
+        "L2 Norm From Init": r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$",
+        
+        "Spectral Sum": r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$",
+        "Spectral Product": r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$",
+        "Frobenius Sum": r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$",
+        "Frobenius Product": r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$",
+        
+        "Spectral Sum From Init": r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$",
+        "Spectral Product From Init": r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$",
+        "Frobenius Sum From Init": r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$",
+        "Frobenius Product From Init": r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$",
+        
+        "Inverse Squared Sigma Ten Percent Increase": r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$",
+        
+        "KL Bound Sigma Ten Percent Increase": r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$",
+        "Error Bound Min Over Sigma Inverse KL": r"$\mu_{\text{pacb-error-bound-inverse-kl}}$",
+        "Error Bound Min Over Sigma Pinsker": r"$\mu_{\text{pacb-error-bound-pinsker}}$",
+        
+        "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
+    }
+
+    @classmethod
+    def get_all_names(cls):
+        return cls._name_mapping.keys()
+
     def to_dict(self):
         return {
             "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
@@ -660,56 +695,93 @@ class ComplexityMeasures:
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
     
-    @classmethod
-    def matplotlib_name(cls, name):
-        if name == "Inverse Margin Tenth Percentile":
-            return r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$"
-        elif name == "Train Loss":
-            return r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$"
-        elif name == "Train Error":
-            return r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$"
-        elif name == "Output Entropy":
-            return r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$"
+    # @classmethod
+    # def matplotlib_name(cls, name):
+    #     if name == "Inverse Margin Tenth Percentile":
+    #         return r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$"
+    #     elif name == "Train Loss":
+    #         return r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$"
+    #     elif name == "Train Error":
+    #         return r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$"
+    #     elif name == "Output Entropy":
+    #         return r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$"
         
-        elif name == "L1 Norm":
-            return r"$\mu_{\text{l1}} = \|w\|_1$"
-        elif name == "L2 Norm":
-            return r"$\mu_{\text{l2}} = \|w\|_2$"
-        elif name == "L1 Norm From Init":
-            return r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$"
-        elif name == "L2 Norm From Init":
-            return r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$"
+    #     elif name == "L1 Norm":
+    #         return r"$\mu_{\text{l1}} = \|w\|_1$"
+    #     elif name == "L2 Norm":
+    #         return r"$\mu_{\text{l2}} = \|w\|_2$"
+    #     elif name == "L1 Norm From Init":
+    #         return r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$"
+    #     elif name == "L2 Norm From Init":
+    #         return r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$"
         
-        elif name == "Spectral Sum":
-            return r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$"
-        elif name == "Spectral Product":
-            return r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$"
-        elif name == "Frobenius Sum":
-            return r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$"
-        elif name == "Frobenius Product":
-            return r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$"
+    #     elif name == "Spectral Sum":
+    #         return r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$"
+    #     elif name == "Spectral Product":
+    #         return r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$"
+    #     elif name == "Frobenius Sum":
+    #         return r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$"
+    #     elif name == "Frobenius Product":
+    #         return r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$"
         
-        elif name == "Spectral Sum From Init":
-            return r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$"
-        elif name == "Spectral Product From Init":
-            return r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$"
-        elif name == "Frobenius Sum From Init":
-            return r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$"
-        elif name == "Frobenius Product From Init":
-            return r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$"
+    #     elif name == "Spectral Sum From Init":
+    #         return r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$"
+    #     elif name == "Spectral Product From Init":
+    #         return r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$"
+    #     elif name == "Frobenius Sum From Init":
+    #         return r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$"
+    #     elif name == "Frobenius Product From Init":
+    #         return r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$"
         
-        elif name == "Inverse Squared Sigma Ten Percent Increase":
-            return r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$"
+    #     elif name == "Inverse Squared Sigma Ten Percent Increase":
+    #         return r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$"
         
-        elif name == "KL Bound Sigma Ten Percent Increase":
-            return r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$"
-        elif name == "Error Bound Min Over Sigma Inverse KL":
-            return r"$\mu_{\text{pacb-error-bound-inverse-kl}}"
-        elif name == "Error Bound Min Over Sigma Pinsker":
-            return r"$\mu_{\text{pacb-error-bound-pinsker}}$"
+    #     elif name == "KL Bound Sigma Ten Percent Increase":
+    #         return r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$"
+    #     elif name == "Error Bound Min Over Sigma Inverse KL":
+    #         return r"$\mu_{\text{pacb-error-bound-inverse-kl}}"
+    #     elif name == "Error Bound Min Over Sigma Pinsker":
+    #         return r"$\mu_{\text{pacb-error-bound-pinsker}}$"
         
-        elif name == "Dist Complexity":
-            return r"$\mu_{\text{dist-complexity}}$"
+    #     elif name == "Dist Complexity":
+    #         return r"$\mu_{\text{dist-complexity}}$"
+        
+    #     else:
+    #         raise ValueError(f"Invalid complexity measure name: {name}.")
+
+
+@dataclass
+class EvaluationMetrics:
+    complexity_measure_name: str
+    rvalue: float
+    r_squared: float
+    pvalue: float
+    krcc: float
+    gkrcc_components: Optional[list[float]]
+    gkrcc: float
+    cit_k_zero_hyp_dims: float
+    cit_k_one_hyp_dim: float
+    cit_k_two_hyp_dims: float
+
+    def __post_init__(self):
+        self.cit_k_at_most_one_hyp_dim = min(self.cit_k_zero_hyp_dims, self.cit_k_one_hyp_dim)
+        self.cit_k_at_most_two_hyp_dims = min(self.cit_k_zero_hyp_dims, self.cit_k_one_hyp_dim, self.cit_k_two_hyp_dims)
+
+    def to_dict(self):
+        return {
+            "Complexity Measure Name": self.complexity_measure_name,
+            "R Value": self.rvalue,
+            "R Squared": self.r_squared,
+            "P Value": self.pvalue,
+            "KRCC": self.krcc,
+            "GKRCC Components": self.gkrcc_components,
+            "GKRCC": self.gkrcc,
+            "CIT Zero Hyp Dims": self.cit_k_zero_hyp_dims,
+            "CIT One Hyp Dim": self.cit_k_one_hyp_dim,
+            "CIT Two Hyp Dims": self.cit_k_two_hyp_dims,
+            "CIT At Most One Hyp Dim": self.cit_k_at_most_one_hyp_dim,
+            "CIT At Most Two Hyp Dims": self.cit_k_at_most_two_hyp_dims,
+        }
 
 
 @dataclass

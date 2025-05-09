@@ -1,14 +1,15 @@
 from typing import Optional
+import json
+from itertools import product
 
 import torch
 from scipy import stats
 import numpy as np
 from yaml import safe_load
-from itertools import product
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from config import ComplexityMeasures
+from config import ComplexityMeasures, EvaluationMetrics
 
 
 base_hyp_full_names = {
@@ -61,11 +62,18 @@ def get_sweep_results(hyp_vals: dict, df: pd.DataFrame, complexity_name: Optiona
     return successes, complexities, gen_gaps
 
 
+def get_oracle_epsilons(successes: torch.Tensor, gen_gaps: torch.Tensor, std_proportions: list[float]) -> torch.Tensor:
+    """Returns proportions of the standard deviation of the generalization gaps"""
+    gen_gaps = gen_gaps[successes].flatten()
+    gen_gap_std = gen_gaps.std()
+    return torch.tensor([gen_gap_std * p for p in std_proportions])
+
+
 def epsilon_oracle(gen_gaps: torch.Tensor, epsilon: float) -> torch.Tensor:
     return gen_gaps + torch.randn(gen_gaps.shape) * epsilon
 
 
-def get_linear_regression(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, complexity_name: str) -> Optional[float]:
+def get_linear_regression(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, complexity_name: Optional[str] = None, make_plot: Optional[bool] = False) -> Optional[float]:
     assert successes.shape == complexities.shape == gen_gaps.shape
 
     complexities = complexities[successes].flatten()
@@ -82,25 +90,46 @@ def get_linear_regression(successes: torch.Tensor, complexities: torch.Tensor, g
     pvalue = res.pvalue
     r_squared = res.rvalue ** 2
 
-    fig, ax = plt.subplots()
-    text_str = "\n".join(
-        [
-            f"Correlation coefficient $r$ = {rvalue:.3f}",
-            f"Explained variance $r^2$ = {r_squared:.3f}",
-            f"$p$-value = {pvalue:.3f}",
-        ]
-    )
-    props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
-    box_x = 0.05 if slope > 0 else 0.95
-    horizontalalignment = "left" if slope > 0 else "right"
-    ax.text(x=box_x, y=0.95, s=text_str, transform=ax.transAxes, fontsize=10,
-            verticalalignment="top", horizontalalignment=horizontalalignment, bbox=props)
-    ax.plot(complexities, gen_gaps, "o")
-    ax.plot(complexities, slope * complexities + intercept, "r-")
-    plt.xlabel(ComplexityMeasures.matplotlib_name(name=complexity_name))
-    plt.ylabel("Generalization Gap")
-    plt.show()
+    if make_plot:
+        fig, ax = plt.subplots()
+        text_str = "\n".join(
+            [
+                f"Correlation coefficient $r$ = {rvalue:.3f}",
+                f"Explained variance $r^2$ = {r_squared:.3f}",
+                f"$p$-value = {pvalue:.3f}",
+            ]
+        )
+        props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
+        box_x = 0.05 if slope > 0 else 0.95
+        horizontalalignment = "left" if slope > 0 else "right"
+        ax.text(x=box_x, y=0.95, s=text_str, transform=ax.transAxes, fontsize=10,
+                verticalalignment="top", horizontalalignment=horizontalalignment, bbox=props)
+        ax.plot(complexities, gen_gaps, "o")
+        ax.plot(complexities, slope * complexities + intercept, "r-")
+        if complexity_name is not None:
+            plt.xlabel(ComplexityMeasures.matplotlib_name(name=complexity_name))
+        plt.ylabel("Generalization Gap")
+        plt.show()
+    return rvalue, r_squared, pvalue
 
+
+def get_oracle_linear_regression(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> tuple[float, float, float]:
+    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
+    linear regression coefficients between complexities and generalization gaps where successes is True"""
+    assert successes.shape == gen_gaps.shape
+    total_rvalue = 0
+    total_r_squared = 0
+    total_pvalue = 0
+    for _ in range(num_oracle_samples):
+        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+        rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+        total_rvalue += rvalue
+        total_r_squared += r_squared
+        total_pvalue += pvalue
+    avg_rvalue = total_rvalue / num_oracle_samples
+    avg_r_squared = total_r_squared / num_oracle_samples
+    avg_pvalue = total_pvalue / num_oracle_samples
+    return avg_rvalue, avg_r_squared, avg_pvalue
 
 
 def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> Optional[float]:
@@ -264,7 +293,7 @@ def get_joint_probs_two_hyp_dims(successes: torch.Tensor, complexities: torch.Te
     return get_joint_probs_from_signs(complexities_signs=complexities_signs, gen_gaps_signs=gen_gaps_signs, prob_hyp_vals=prob_hyp1_hyp2)
 
 
-def get_joint_probs_single_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice], prob_hyp: torch.Tensor):
+def get_joint_probs_one_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice], prob_hyp: torch.Tensor):
     successes_slice = successes[slices].flatten()
     complexities_slice = complexities[slices].flatten()
     gen_gaps_slice = gen_gaps[slices].flatten()
@@ -280,7 +309,7 @@ def get_joint_probs_single_hyp_dim(successes: torch.Tensor, complexities: torch.
     return get_joint_probs_from_signs(complexities_signs=complexities_signs, gen_gaps_signs=gen_gaps_signs, prob_hyp_vals=prob_hyp)
 
 
-def get_joint_probs_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
+def get_joint_probs_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
     successes_slice = successes[slices].flatten()
     complexities_slice = complexities[slices].flatten()
     gen_gaps_slice = gen_gaps[slices].flatten()
@@ -296,7 +325,7 @@ def get_joint_probs_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tens
     return get_joint_probs_from_signs(complexities_signs=complexities_signs, gen_gaps_signs=gen_gaps_signs, prob_hyp_vals=1)
 
 
-def get_joint_probs_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
+def get_joint_probs_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
     successes_slice = successes[slices].flatten()
     complexities_slice = complexities[slices].flatten()
     gen_gaps_slice = gen_gaps[slices].flatten()
@@ -339,7 +368,7 @@ def get_pmf_joint_triple_Vmu_Vg_US_two_hyp_dims(successes: torch.Tensor, complex
     return pmf_joint_triple
 
 
-def get_pmf_joint_triple_Vmu_Vg_US_single_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, hyp_dim: int) -> torch.Tensor:
+def get_pmf_joint_triple_Vmu_Vg_US_one_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, hyp_dim: int) -> torch.Tensor:
     """Returns tensor of shape (2, 2, 3) representing the joint pmf p(Vmu, Vg, US) where US is the value of the hyperparameter"""
     assert successes.shape == complexities.shape == gen_gaps.shape
     num_vals_at_dim = successes.size(hyp_dim)
@@ -353,7 +382,7 @@ def get_pmf_joint_triple_Vmu_Vg_US_single_hyp_dim(successes: torch.Tensor, compl
         slices = [slice(None)] * successes.ndim
         slices[hyp_dim] = idx1
 
-        prob_nn, prob_np, prob_pn, prob_pp = get_joint_probs_single_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps, slices=slices, prob_hyp=prob_hyp)
+        prob_nn, prob_np, prob_pn, prob_pp = get_joint_probs_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps, slices=slices, prob_hyp=prob_hyp)
 
         pmf_joint_triple[0, 0, idx1] = prob_nn
         pmf_joint_triple[0, 1, idx1] = prob_np
@@ -363,14 +392,14 @@ def get_pmf_joint_triple_Vmu_Vg_US_single_hyp_dim(successes: torch.Tensor, compl
     return pmf_joint_triple
 
 
-def get_pmf_joint_triple_Vmu_Vg_US_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+def get_pmf_joint_triple_Vmu_Vg_US_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     assert successes.shape == complexities.shape == gen_gaps.shape
     
     pmf_joint_triple = torch.zeros((2, 2, 1))  # Vmu, Vg \in {-1, 1}, and 1 fictional val for the non-existant conditioned hyperparameter
 
     slices = [slice(None)] * successes.ndim
 
-    prob_nn, prob_np, prob_pn, prob_pp = get_joint_probs_no_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps, slices=slices)
+    prob_nn, prob_np, prob_pn, prob_pp = get_joint_probs_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps, slices=slices)
 
     pmf_joint_triple[0, 0, 0] = prob_nn
     pmf_joint_triple[0, 1, 0] = prob_np
@@ -394,11 +423,11 @@ def get_normalized_conditional_entropies_two_hyp_dims(successes: torch.Tensor, c
     return torch.tensor(normed_cond_entropies)
 
 
-def get_normalized_conditional_entropies_single_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+def get_normalized_conditional_entropies_one_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     num_hyp_dims = successes.ndim
     normed_cond_entropies = []
     for hyp_dim in range(num_hyp_dims):
-        pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US_single_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps, hyp_dim=hyp_dim)
+        pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps, hyp_dim=hyp_dim)
         pmf_joint_Vg_US = pmf_joint_triple_Vmu_Vg_US.sum(dim=0)
         cond_mut_inf = conditional_mutual_inf(pmf_joint_triple=pmf_joint_triple_Vmu_Vg_US)
         cond_entropy = conditional_entropy(pmf_joint=pmf_joint_Vg_US)
@@ -407,10 +436,10 @@ def get_normalized_conditional_entropies_single_hyp_dim(successes: torch.Tensor,
     return torch.tensor(normed_cond_entropies)
 
 
-def get_normalized_conditional_entropies_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+def get_normalized_conditional_entropies_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     normed_cond_entropies = []
 
-    pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US_no_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    pmf_joint_triple_Vmu_Vg_US = get_pmf_joint_triple_Vmu_Vg_US_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
     pmf_joint_Vg_US = pmf_joint_triple_Vmu_Vg_US.sum(dim=0)
     cond_mut_inf = conditional_mutual_inf(pmf_joint_triple=pmf_joint_triple_Vmu_Vg_US)
     cond_entropy = conditional_entropy(pmf_joint=pmf_joint_Vg_US)
@@ -421,28 +450,28 @@ def get_normalized_conditional_entropies_no_hyp_dim(successes: torch.Tensor, com
 
 def CIT_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     cit_k_two_hyp_dims = CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-    cit_k_single_hyp_dim = CIT_K_single_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-    cit_k_no_hyp_dim = CIT_K_no_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-    return min(cit_k_two_hyp_dims, cit_k_single_hyp_dim, cit_k_no_hyp_dim)
+    cit_k_one_hyp_dim = CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    cit_k_zero_hyp_dims = CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    return min(cit_k_two_hyp_dims, cit_k_one_hyp_dim, cit_k_zero_hyp_dims)
 
 
 def CIT_K_two_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
     return get_normalized_conditional_entropies_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
-def CIT_K_single_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
-    return get_normalized_conditional_entropies_single_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
+def CIT_K_one_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    return get_normalized_conditional_entropies_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
-def CIT_K_no_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
-    return get_normalized_conditional_entropies_no_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
+def CIT_K_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    return get_normalized_conditional_entropies_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
 def oracle_CIT_K(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
     oracle_cit_k_two_hyp_dims = oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    oracle_cit_k_single_hyp_dim = oracle_CIT_K_single_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    oracle_cit_k_no_hyp_dim = oracle_CIT_K_no_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    return min(oracle_cit_k_two_hyp_dims, oracle_cit_k_single_hyp_dim, oracle_cit_k_no_hyp_dim)
+    oracle_cit_k_one_hyp_dim = oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+    oracle_cit_k_zero_hyp_dims = oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+    return min(oracle_cit_k_two_hyp_dims, oracle_cit_k_one_hyp_dim, oracle_cit_k_zero_hyp_dims)
 
 
 def oracle_CIT_K_two_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
@@ -454,95 +483,102 @@ def oracle_CIT_K_two_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, e
     return total_cit_k / num_oracle_samples
 
 
-def oracle_CIT_K_single_hyp_dim(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+def oracle_CIT_K_one_hyp_dim(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
     assert successes.shape == gen_gaps.shape
     total_cit_k = 0
     for _ in range(num_oracle_samples):
         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_cit_k += CIT_K_single_hyp_dim(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+        total_cit_k += CIT_K_one_hyp_dim(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
     return total_cit_k / num_oracle_samples
 
 
-def oracle_CIT_K_no_hyp_dim(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+def oracle_CIT_K_zero_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
     assert successes.shape == gen_gaps.shape
     total_cit_k = 0
     for _ in range(num_oracle_samples):
         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_cit_k += CIT_K_no_hyp_dim(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+        total_cit_k += CIT_K_zero_hyp_dims(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
     return total_cit_k / num_oracle_samples
+
+
+def collate_evaluation_metrics(complexity_measure: str, hyp_vals: dict, combined_df: pd.DataFrame) -> EvaluationMetrics:
+    """Collates the evaluation metrics for a given complexity measure.
+
+    Args:
+        complexity_measure (str): The name of the complexity measure.
+        hyp_vals (dict): A dictionary of hyperparameter values used for the sweep.
+        combined_df (pd.DataFrame): The combined DataFrame containing the evaluation metrics.
+
+    Returns:
+        EvaluationMetrics: An object containing the evaluation metrics for the given complexity measure and hyperparameter values.
+    """
+    successes, complexities, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=complexity_measure)
+    rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=complexities, gen_gaps=gen_gaps, complexity_name=complexity_measure)
+    return EvaluationMetrics(
+        complexity_measure_name=complexity_measure,
+        rvalue=rvalue,
+        r_squared=r_squared,
+        pvalue=pvalue,
+        krcc=get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        granulated_krcc_components=get_granulated_krcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        gkrcc=get_granulated_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        cit_k_zero_hyp_dims=CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        cit_k_one_hyp_dim=CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        cit_k_two_hyp_dims=CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+    )
+
+
+def collate_oracle_evaluation_metrics(hyp_vals: dict, combined_df: pd.DataFrame, epsilon: float, num_oracle_samples: int) -> EvaluationMetrics:
+    """Collates the oracle evaluation metrics for a given complexity measure.
+
+    Args:
+        hyp_vals (dict): A dictionary of hyperparameter values used for the sweep.
+        combined_df (pd.DataFrame): The combined DataFrame containing the evaluation metrics.
+        epsilon (float): The noise level for the oracle evaluation.
+
+    Returns:
+        EvaluationMetrics: An object containing the oracle evaluation metrics for the given hyperparameter values.
+    """
+    successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
+    rvalue, r_squared, pvalue = get_oracle_linear_regression(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+    return EvaluationMetrics(
+        complexity_measure_name=f"Oracle {epsilon}",
+        rvalue=rvalue,
+        r_squared=r_squared,
+        pvalue=pvalue,
+        krcc=get_oracle_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        granulated_krcc_components=None,
+        gkrcc=get_oracle_granulated_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        cit_k_zero_hyp_dims=oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        cit_k_one_hyp_dim=oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        cit_k_two_hyp_dims=oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+    )
+
+
+def main():
+
+    complexity_measure_names = ComplexityMeasures.get_all_names()
+    std_proportions = torch.linspace(0.1, 1, 10)
+    hyp_vals = get_hyp_vals("sweep_config_comb_toy.yaml")
+    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\dist_metrics\combined.csv")
+    all_evaluation_metrics = []
+
+    for name in complexity_measure_names:
+        print(name)
+        evaluation_metrics = collate_evaluation_metrics(complexity_measure=name, hyp_vals=hyp_vals, combined_df=combined_df)
+        all_evaluation_metrics.append(evaluation_metrics)
+
+    successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
+    oracle_epsilons = get_oracle_epsilons(successes=successes, gen_gaps=gen_gaps, std_proportions=std_proportions)
+    for std_prop, epsilon in zip(std_proportions, oracle_epsilons):
+        print(f"Std proportion: {std_prop}, Oracle epsilon: {epsilon}")
+        evaluation_metrics = collate_oracle_evaluation_metrics(hyp_vals=hyp_vals, combined_df=combined_df, epsilon=epsilon, num_oracle_samples=100)
+        all_evaluation_metrics.append(evaluation_metrics)
+
+    # Save the evaluation metrics to a JSON file
+    with open("evaluation_metrics.json", "w") as f:
+        json.dump([em.to_dict() for em in all_evaluation_metrics], f, indent=4)
 
 
 if __name__ == "__main__":
-
-    complexity_measures = [
-        # "Inverse Margin Tenth Percentile",
-        "Train Loss",
-        "Train Error",
-        # "Output Entropy",
-        # "Product Weight Of Fro Norms",
-        # "Inverse Squared Sigma Ten Percent Increase",
-        # "KL Bound Sigma Ten Percent Increase",
-        # "Error Bound Min Over Sigma Inverse KL",
-        "Error Bound Min Over Sigma Pinsker",
-        "Dist Complexity",
-    ]
-
-    oracle_epsilons = [0.01, 0.02, 0.05, 0.1]  # Values used in the Fantastic Generalization Measures paper
-
-    hyp_vals = get_hyp_vals("sweep_config_comb_toy.yaml")
-    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\dist_metrics\combined.csv")
-
-    for complexity_measure in complexity_measures:
-        print(complexity_measure)
-        successes, complexities, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=complexity_measure)
-        get_linear_regression(successes=successes, complexities=complexities, gen_gaps=gen_gaps, complexity_name=complexity_measure)
-
-
-    for complexity_measure in complexity_measures:
-        print(complexity_measure)
-
-        successes, complexities, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=complexity_measure)
-        # print(f"\t{successes.shape=}, {complexities.shape=}, {gen_gaps.shape=}")
-        # print(f"\tNum successes = {(successes == True).sum()}")
-        # print(f"\tNum failures = {(successes == False).sum()}")
-
-        krcc = get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tKRCC: {krcc}")
-
-        granulated_krccs = get_granulated_krcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tGKRCCs: {granulated_krccs}")
-        granulated_krcc = get_granulated_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tGKRCC: {granulated_krcc}")
-        cit_k = CIT_K(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tCIT-K: {cit_k}")
-        cit_k_two_hyp_dims = CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tCIT-K two hyp dims: {cit_k_two_hyp_dims}")
-        cit_k_single_hyp_dim = CIT_K_single_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tCIT-K single hyp dim: {cit_k_single_hyp_dim}")
-        cit_k_no_hyp_dim = CIT_K_no_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-        print(f"\tCIT-K no hyp dim: {cit_k_no_hyp_dim}")
-        print()
-    
-
-
-    for epsilon in oracle_epsilons:
-        print(f"Oracle epsilon: {epsilon}")
-        successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
-        # print(f"\t{successes.shape=}, {gen_gaps.shape=}")
-        # print(f"\tNum successes = {(successes == True).sum()}")
-        # print(f"\tNum failures = {(successes == False).sum()}")
-        oracle_krcc = get_oracle_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle KRCC: {oracle_krcc}")
-
-        oracle_granulated_krcc = get_oracle_granulated_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle Granulated KRCC: {oracle_granulated_krcc}")
-
-        oracle_cit_k = oracle_CIT_K(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle CIT-K: {oracle_cit_k}")
-        oracle_cit_k_two_hyp_dims = oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle CIT-K two hyp dims: {oracle_cit_k_two_hyp_dims}")
-        oracle_cit_k_single_hyp_dim = oracle_CIT_K_single_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle CIT-K single hyp dim: {oracle_cit_k_single_hyp_dim}")
-        oracle_cit_k_no_hyp_dim = oracle_CIT_K_no_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=100)
-        print(f"\tOracle CIT-K no hyp dim: {oracle_cit_k_no_hyp_dim}")
-        print()
+    main()
