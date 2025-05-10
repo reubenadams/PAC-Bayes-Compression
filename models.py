@@ -272,14 +272,14 @@ class MLP(nn.Module):
             else:
                 sigma_max = sigma_new      
 
-    def get_sigma_ten_percent_increase(self, dataloader: DataLoader, base_error: torch.Tensor) -> torch.Tensor:
+    def get_sigma_ten_percent_increase(self, dataloader: DataLoader, base_error: torch.Tensor, num_mc_samples: int) -> torch.Tensor:
         """Returns the sigma such that the noisy accuracy is 10% larger than the base_error"""
         assert not self.training, "Model should be in eval mode."
         sigma_min = torch.tensor(0.0, device=self.device)
         sigma_max = torch.tensor(1.0, device=self.device)
         target_error = base_error * 1.1
         while True:
-            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_max.item())
+            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_max.item(), num_mc_samples=num_mc_samples)
             if noisy_error >= target_error:
                 break
             sigma_max *= 2
@@ -287,7 +287,7 @@ class MLP(nn.Module):
         while True:
             sigma_new = (sigma_max + sigma_min) / 2
             print(f"Evaluating model with sigma={sigma_new.item()}")
-            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_new.item())
+            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_new.item(), num_mc_samples=num_mc_samples)
             if abs(sigma_max - sigma_min) < 1e-6:
                 return sigma_new
             if noisy_error < target_error:
@@ -949,25 +949,25 @@ class MLP(nn.Module):
     
     def mu_spectral_sum_from_init(self: MLP, other: MLP) -> torch.Tensor:
         """Computes the sum of the spectral norms of the weights."""
-        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        weight_diffs = [layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)]
         spectral_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord=2) for weight_diff in weight_diffs])
         return torch.sum(spectral_norms)
     
     def mu_spectral_product_from_init(self: MLP, other: MLP) -> torch.Tensor:
         """Computes the product of the spectral norms of the weights."""
-        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        weight_diffs = [layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)]
         spectral_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord=2) for weight_diff in weight_diffs])
         return torch.prod(spectral_norms)
 
     def mu_frobenius_sum_from_init(self: MLP, other: MLP) -> torch.Tensor:
         """Computes the sum of the Frobenius norms of the weights."""
-        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        weight_diffs = [layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)]
         frobenius_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord="fro") for weight_diff in weight_diffs])
         return torch.sum(frobenius_norms)
 
     def mu_frobenius_product_from_init(self: MLP, other: MLP) -> torch.Tensor:
         """Computes the sum of the Frobenius norms of the weights."""
-        weight_diffs = torch.tensor([layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)])
+        weight_diffs = [layer_self.weight - layer_other.weight for layer_self, layer_other in zip(self.linear_layers, other.linear_layers)]
         frobenius_norms = torch.tensor([torch.linalg.matrix_norm(weight_diff, ord="fro") for weight_diff in weight_diffs])
         return torch.prod(frobenius_norms)
 

@@ -162,11 +162,11 @@ def get_oracle_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: fl
     return total_krcc / num_krccs
 
 
-def get_granulated_krcc_components(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> list[float]:
+def get_gkrcc_components(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> list[float]:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the *granulated*
     Kendall rank correlation coefficient*s* between complexities and generalization gaps where successes is True"""
     assert successes.shape == complexities.shape == gen_gaps.shape
-    granulated_krccs = []
+    gkrcc_components = []
     for dim in range(len(successes.shape)):
         successes_flattened = flatten_except_dim(successes, dim)
         complexities_flattened = flatten_except_dim(complexities, dim)
@@ -182,29 +182,29 @@ def get_granulated_krcc_components(successes: torch.Tensor, complexities: torch.
             num_defined_krccs += 1
             total_krcc += krcc
         if num_defined_krccs == 0:
-            granulated_krccs.append(None)
+            gkrcc_components.append(None)
         else:
-            granulated_krccs.append(total_krcc / num_defined_krccs)
-    return granulated_krccs
+            gkrcc_components.append(total_krcc / num_defined_krccs)
+    return gkrcc_components
 
 
-def get_granulated_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
-    components = get_granulated_krcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-    assert len(components) == len(successes.shape)
-    defined_components = [comp for comp in components if comp is not None]
+def get_gkrcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
+    gkrcc_components = get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    assert len(gkrcc_components) == len(successes.shape)
+    defined_components = [comp for comp in gkrcc_components if comp is not None]
     if len(defined_components) == 0:
         return None
     return torch.tensor(defined_components).mean().item()
 
 
-def get_oracle_granulated_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+def get_oracle_gkrcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
     """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average *granulated*
     Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
     assert successes.shape == gen_gaps.shape
     total_gkrcc = 0
     for _ in range(num_oracle_samples):
         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_gkrcc += get_granulated_krcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+        total_gkrcc += get_gkrcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
     return total_gkrcc / num_oracle_samples
 
 
@@ -520,8 +520,8 @@ def collate_evaluation_metrics(complexity_measure: str, hyp_vals: dict, combined
         r_squared=r_squared,
         pvalue=pvalue,
         krcc=get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        granulated_krcc_components=get_granulated_krcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        gkrcc=get_granulated_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        gkrcc_components=get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        gkrcc=get_gkrcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
         cit_k_zero_hyp_dims=CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
         cit_k_one_hyp_dim=CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
         cit_k_two_hyp_dims=CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
@@ -547,8 +547,8 @@ def collate_oracle_evaluation_metrics(hyp_vals: dict, combined_df: pd.DataFrame,
         r_squared=r_squared,
         pvalue=pvalue,
         krcc=get_oracle_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
-        granulated_krcc_components=None,
-        gkrcc=get_oracle_granulated_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        gkrcc_components=None,
+        gkrcc=get_oracle_gkrcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
         cit_k_zero_hyp_dims=oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
         cit_k_one_hyp_dim=oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
         cit_k_two_hyp_dims=oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
@@ -576,7 +576,7 @@ def main():
         all_evaluation_metrics.append(evaluation_metrics)
 
     # Save the evaluation metrics to a JSON file
-    with open("evaluation_metrics.json", "w") as f:
+    with open("dist_evaluation_metrics.json", "w") as f:
         json.dump([em.to_dict() for em in all_evaluation_metrics], f, indent=4)
 
 

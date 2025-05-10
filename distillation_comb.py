@@ -164,10 +164,10 @@ def get_complexity_measures(
     train_loss = base_metrics.final_train_loss
     output_entropy = base_model.get_avg_output_entropy(dataloader=base_config.data.train_loader).item()
 
-    product_of_weight_fro_norms = base_model.get_product_of_weight_fro_norms().item()
     sigma_ten_percent_increase = base_model.get_sigma_ten_percent_increase(
         dataloader=base_config.data.train_loader,
         base_error=1 - base_metrics.final_train_accuracy,
+        num_mc_samples=pacb_config.num_mc_samples_max_sigma,
     ).item()
     inverse_squared_sigma_ten_percent_increase = 1 / (sigma_ten_percent_increase ** 2)
 
@@ -308,6 +308,7 @@ def main():
             pacb_config=pacb_config,
     )
 
+    print("Calculating complexity measures...")
     complexity_measures = get_complexity_measures(
         init_model=init_model,
         base_model=base_model,
@@ -318,6 +319,7 @@ def main():
         pacb_metrics=pacb_metrics,
     )
 
+    print("Logging and saving metrics...")
     log_and_save_metrics(
         run_id=run.id,
         base_config=base_config,
