@@ -422,6 +422,7 @@ class MLP(nn.Module):
         lost_patience = False
         ran_out_of_epochs = False
 
+        batch_num = 0
         for epoch in range(1, base_config.stopping.max_epochs + 1):
             
             self.train()
@@ -438,8 +439,10 @@ class MLP(nn.Module):
                 x = x.view(x.size(0), -1)
                 outputs = self(x)
                 loss = train_loss_fn(outputs, labels)
-                wandb.log({base_config.records.train_loss_name + " (batch)": loss.item()})
-
+                if batch_num % base_config.stopping.log_every == 0:
+                    wandb.log({base_config.records.train_loss_name + " (batch)": loss.item()})
+                batch_num += 1
+                
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -608,8 +611,8 @@ class MLP(nn.Module):
                 )
 
                 # loss = train_loss_fn(dist_logits, base_logits)
-                # wandb.log({train_loss_name: loss.item()})
-                wandb.log({train_loss_name + " (batch)": loss.item()})
+
+                # wandb.log({train_loss_name + " (batch)": loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -653,7 +656,8 @@ class MLP(nn.Module):
                 epoch_log[dist_config.records.test_accuracy_name] = test_accuracy
             ########## Evaluate model ##########
 
-            wandb.log(epoch_log)
+            if epoch % dist_config.stopping.log_every == 1:
+                wandb.log(epoch_log)
 
             # TODO: If successful, you should log one last time
             if dist_config.stopping.target_kl_on_train:

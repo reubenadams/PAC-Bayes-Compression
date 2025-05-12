@@ -128,6 +128,7 @@ class BaseStoppingConfig:
     use_early_stopping: bool
     target_full_train_loss: Optional[float]
     patience: Optional[int]
+    log_every: int = 10
 
     def __post_init__(self):
         if self.use_early_stopping:
@@ -398,6 +399,7 @@ class DistStoppingConfig:
     target_kl_on_train: Optional[float] = None
     patience: Optional[int] = None
     print_every: int = 1000
+    log_every: int = 100
 
     @classmethod
     def quick_test(cls):
@@ -694,60 +696,6 @@ class ComplexityMeasures:
     def log(self):
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
-    
-    # @classmethod
-    # def matplotlib_name(cls, name):
-    #     if name == "Inverse Margin Tenth Percentile":
-    #         return r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$"
-    #     elif name == "Train Loss":
-    #         return r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$"
-    #     elif name == "Train Error":
-    #         return r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$"
-    #     elif name == "Output Entropy":
-    #         return r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$"
-        
-    #     elif name == "L1 Norm":
-    #         return r"$\mu_{\text{l1}} = \|w\|_1$"
-    #     elif name == "L2 Norm":
-    #         return r"$\mu_{\text{l2}} = \|w\|_2$"
-    #     elif name == "L1 Norm From Init":
-    #         return r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$"
-    #     elif name == "L2 Norm From Init":
-    #         return r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$"
-        
-    #     elif name == "Spectral Sum":
-    #         return r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$"
-    #     elif name == "Spectral Product":
-    #         return r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$"
-    #     elif name == "Frobenius Sum":
-    #         return r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$"
-    #     elif name == "Frobenius Product":
-    #         return r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$"
-        
-    #     elif name == "Spectral Sum From Init":
-    #         return r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$"
-    #     elif name == "Spectral Product From Init":
-    #         return r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$"
-    #     elif name == "Frobenius Sum From Init":
-    #         return r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$"
-    #     elif name == "Frobenius Product From Init":
-    #         return r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$"
-        
-    #     elif name == "Inverse Squared Sigma Ten Percent Increase":
-    #         return r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$"
-        
-    #     elif name == "KL Bound Sigma Ten Percent Increase":
-    #         return r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$"
-    #     elif name == "Error Bound Min Over Sigma Inverse KL":
-    #         return r"$\mu_{\text{pacb-error-bound-inverse-kl}}"
-    #     elif name == "Error Bound Min Over Sigma Pinsker":
-    #         return r"$\mu_{\text{pacb-error-bound-pinsker}}$"
-        
-    #     elif name == "Dist Complexity":
-    #         return r"$\mu_{\text{dist-complexity}}$"
-        
-    #     else:
-    #         raise ValueError(f"Invalid complexity measure name: {name}.")
 
 
 @dataclass
