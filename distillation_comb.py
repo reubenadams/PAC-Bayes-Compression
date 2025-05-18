@@ -102,49 +102,54 @@ def train_dist_model(
     return dist_model, dist_metrics
 
 
+# We aren't minimizing over sigma because it's too expensive
 def get_pac_bound(
         init_model: MLP,
         base_model: MLP,
         base_config: config.BaseConfig,
         pacb_config: config.PACBConfig,
+        base_metrics: config.BaseResults,
 ) -> config.PACBResults:
 
     init_model.eval()
     base_model.eval()
 
-    max_sigma, noisy_error, sigmas_tried, errors, total_num_sigmas = base_model.get_max_sigma(
+    sigma_target, noisy_CE_loss = base_model.get_sigma_target_CE_loss(
         dataset=base_config.data.train_loader.dataset,
-        target_error_increase=pacb_config.target_error_increase,
-        num_mc_samples=pacb_config.num_mc_samples_max_sigma,
-        )
-    noise_trials = [{"sigma": sigma, "noisy_error": error} for sigma, error in zip(sigmas_tried, errors)]
+        base_CE_loss=base_metrics.final_train_loss,
+        CE_loss_increase=pacb_config.target_CE_loss_increase,
+        num_mc_samples=pacb_config.num_mc_samples_sigma_target,
+    )
+    sigma_bound = base_model.get_sigma_rounded(sigma=sigma_target, sigma_tol=pacb_config.sigma_tol)
+    if sigma_bound > pacb_config.sigma_max:
+        print(f"Rounded sigma {sigma_bound} is greater than max sigma {pacb_config.sigma_max}.")
+        sigma_bound = pacb_config.sigma_max
+
     pac_bound_inverse_kl = base_model.pacb_error_bound_inverse_kl(
         prior=init_model,
-        sigma=max_sigma,
+        sigma=sigma_bound,
         dataloader=base_config.data.train_loader,
         num_mc_samples=pacb_config.num_mc_samples_pac_bound,
         delta=pacb_config.delta,
-        num_union_bounds=total_num_sigmas,
+        num_union_bounds=pacb_config.num_union_bounds,
         )
     pac_bound_pinsker = base_model.pacb_error_bound_pinsker(
         prior=init_model,
-        sigma=max_sigma,
+        sigma=sigma_bound,
         dataloader=base_config.data.train_loader,
         num_mc_samples=pacb_config.num_mc_samples_pac_bound,
         delta=pacb_config.delta,
-        num_union_bounds=total_num_sigmas
+        num_union_bounds=pacb_config.num_union_bounds,
         )
     
-    print(f"{max_sigma=}, {noisy_error=}, {pac_bound_inverse_kl=}, {pac_bound_pinsker.item()=}")
-    print(f"{total_num_sigmas=}")
+    print(f"{sigma_target=}, {sigma_bound=}, {noisy_CE_loss=}, {pac_bound_inverse_kl=}, {pac_bound_pinsker.item()=}")
 
     pacb_metrics = config.PACBResults(
-        sigma=max_sigma,
-        noisy_error=noisy_error,
-        noise_trials=noise_trials,
-        total_num_sigmas=total_num_sigmas,
-        pac_bound_inverse_kl=pac_bound_inverse_kl.item(),
-        pac_bound_pinsker=pac_bound_pinsker.item(),
+        sigma_target=sigma_target.item(),
+        sigma_bound=sigma_bound.item(),
+        noisy_CE_loss=noisy_CE_loss.item(),
+        error_bound_inverse_kl=pac_bound_inverse_kl.item(),
+        error_bound_pinsker=pac_bound_pinsker.item(),
     )
 
     return pacb_metrics
@@ -155,40 +160,16 @@ def get_complexity_measures(
         init_model: MLP,
         base_model: MLP,
         base_config: config.BaseConfig,
-        pacb_config: config.PACBConfig,
         base_metrics: config.BaseResults,
         dist_metrics: config.DistFinalResults,
         pacb_metrics: config.PACBResults,
 ):
-    inverse_margin_tenth_percentile = base_model.get_inverse_margin_tenth_percentile(dataloader=base_config.data.train_loader).item()
-    train_loss = base_metrics.final_train_loss
-    output_entropy = base_model.get_avg_output_entropy(dataloader=base_config.data.train_loader).item()
-
-    sigma_ten_percent_increase = base_model.get_sigma_ten_percent_increase(
-        dataloader=base_config.data.train_loader,
-        base_error=1 - base_metrics.final_train_accuracy,
-        num_mc_samples=pacb_config.num_mc_samples_max_sigma,
-    ).item()
-    inverse_squared_sigma_ten_percent_increase = 1 / (sigma_ten_percent_increase ** 2)
-
-    kl_bound_sigma_ten_percent_increase = base_model.pacb_kl_bound(
-        prior=init_model,
-        sigma=sigma_ten_percent_increase,
-        n=len(base_config.data.train_loader.dataset),
-        delta=pacb_config.delta,
-        num_union_bounds=1,
-    ).item()
-
-    error_bound_min_over_sigma_inverse_kl = pacb_metrics.pac_bound_inverse_kl
-    error_bound_min_over_sigma_pinsker = pacb_metrics.pac_bound_pinsker
-
-    min_hidden_width = dist_metrics.complexity
 
     complexity_measures = config.ComplexityMeasures(
-        inverse_margin_tenth_percentile=inverse_margin_tenth_percentile,
-        train_loss=train_loss,
+        inverse_margin_tenth_percentile=base_model.get_inverse_margin_tenth_percentile(dataloader=base_config.data.train_loader).item(),
+        train_loss=base_metrics.final_train_loss,
         train_error=1 - base_metrics.final_train_accuracy,
-        output_entropy=output_entropy,
+        output_entropy=base_model.get_avg_output_entropy(dataloader=base_config.data.train_loader).item(),
         l1_norm=base_model.mu_l1_norm().item(),
         l2_norm=base_model.mu_l2_norm().item(),
         l1_norm_from_init=base_model.mu_l1_norm_from_init(other=init_model).item(),
@@ -201,11 +182,11 @@ def get_complexity_measures(
         spectral_product_from_init=base_model.mu_spectral_product_from_init(other=init_model).item(),
         frobenius_sum_from_init=base_model.mu_frobenius_sum_from_init(other=init_model).item(),
         frobenius_product_from_init=base_model.mu_frobenius_product_from_init(other=init_model).item(),
-        inverse_squared_sigma_ten_percent_increase=inverse_squared_sigma_ten_percent_increase,
-        kl_bound_sigma_ten_percent_increase=kl_bound_sigma_ten_percent_increase,
-        error_bound_min_over_sigma_inverse_kl=error_bound_min_over_sigma_inverse_kl,
-        error_bound_min_over_sigma_pinsker=error_bound_min_over_sigma_pinsker,
-        min_hidden_width=min_hidden_width,
+        inverse_squared_sigma_target=1 / (pacb_metrics.sigma_target ** 2),
+        kl_bound_sigma_rounded=pacb_metrics.kl_bound,
+        error_bound_sigma_rounded_inverse_kl=pacb_metrics.error_bound_inverse_kl,
+        error_bound_sigma_rounded_pinsker=pacb_metrics.error_bound_pinsker,
+        min_hidden_width=dist_metrics.complexity,
     )
     
     return complexity_measures
@@ -313,7 +294,6 @@ def main():
         init_model=init_model,
         base_model=base_model,
         base_config=base_config,
-        pacb_config=pacb_config,
         base_metrics=base_metrics,
         dist_metrics=dist_metrics,
         pacb_metrics=pacb_metrics,

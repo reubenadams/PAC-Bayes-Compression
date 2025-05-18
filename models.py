@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 from copy import deepcopy
 from itertools import product
 
@@ -237,63 +237,128 @@ class MLP(nn.Module):
                 outputs = self.forward_with_noise(x, sigma=sigma)
                 _, predicted = torch.max(outputs, -1)
                 num_errors += (predicted != labels).sum()
+            # Divide by num_samples=num_mc_samples used in the sampler
             return num_errors / num_mc_samples
 
-    def get_max_sigma(
+    def monte_carlo_CE_loss(self, dataset: Dataset, sigma: float, num_mc_samples: int=10**5, new_noise_every: int=32) -> torch.Tensor:
+        assert not self.training, "Model should be in eval mode."
+        sampler = RandomSampler(dataset, replacement=True, num_samples=num_mc_samples)
+        # New weights are drawn for every batch, but not for every sample
+        dataloader = DataLoader(dataset, sampler=sampler, batch_size=new_noise_every, pin_memory=True)
+        loss_fn = nn.CrossEntropyLoss(reduction="sum")
+        total_loss = torch.tensor(0.0, device=self.device)
+        with torch.no_grad():
+            for x, labels in dataloader:
+                x, labels = x.to(self.device), labels.to(self.device)
+                x = x.view(x.size(0), -1)
+                outputs = self.forward_with_noise(x, sigma=sigma)
+                total_loss += loss_fn(outputs, labels)
+            # Divide by num_samples=num_mc_samples used in the sampler
+            return total_loss / num_mc_samples            
+
+    # def get_max_sigma(
+    #         self,
+    #         dataset: Dataset,
+    #         target_error_increase: float,
+    #         num_mc_samples: int,
+    #         sigma_min: float=0,
+    #         sigma_max: float=1,
+    #         sigma_tol:float=2**(-14),
+    #         ) -> float:
+    #     """Returns the maximum value of sigma within [sigma_min, sigma_max] such that the noisy accuracy is at most target_acc + acc_prec"""
+    #     total_num_sigmas = 1 / sigma_tol  # If sigma_tol = 2^(-n) then we have chosen from 2^n possible sigmas (0 not included)
+    #     full_dataloader = DataLoader(dataset, batch_size=128, shuffle=False)
+    #     deterministic_error = 1 - self.get_full_accuracy(dataloader=full_dataloader)
+    #     target_error = deterministic_error + target_error_increase
+    #     noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_max, num_mc_samples=num_mc_samples)
+    #     if noisy_error <= target_error:
+    #         raise ValueError(f"Error at {sigma_max=} is {noisy_error=}, which is not enough to reach {target_error=}. Increase sigma_max.")
+    #     sigmas_tried = []
+    #     errors = []
+
+    #     while True:
+    #         sigma_new = (sigma_max + sigma_min) / 2
+    #         noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples).item()
+    #         print(f"For sigma={sigma_new} get error={noisy_error}")
+    #         sigmas_tried.append(sigma_new)
+    #         errors.append(noisy_error)
+    #         if abs(sigma_max - sigma_min) < sigma_tol:
+    #             return sigma_new, noisy_error, sigmas_tried, errors, total_num_sigmas
+    #         if noisy_error < target_error:
+    #             sigma_min = sigma_new
+    #         else:
+    #             sigma_max = sigma_new
+
+    # def get_sigma_ten_percent_increase(self, dataloader: DataLoader, base_error: torch.Tensor, num_mc_samples: int) -> torch.Tensor:
+    #     """Returns the sigma such that the noisy accuracy is 10% larger than the base_error"""
+    #     assert not self.training, "Model should be in eval mode."
+    #     sigma_min = torch.tensor(0.0, device=self.device)
+    #     sigma_max = torch.tensor(1.0, device=self.device)
+    #     target_error = base_error * 1.1
+    #     while True:
+    #         noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_max.item(), num_mc_samples=num_mc_samples)
+    #         if noisy_error >= target_error:
+    #             break
+    #         sigma_max *= 2
+        
+    #     while True:
+    #         sigma_new = (sigma_max + sigma_min) / 2
+    #         print(f"Evaluating model with sigma={sigma_new.item()}")
+    #         noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_new.item(), num_mc_samples=num_mc_samples)
+    #         if abs(sigma_max - sigma_min) < 1e-6:
+    #             return sigma_new
+    #         if noisy_error < target_error:
+    #             sigma_min = sigma_new
+    #         else:
+    #             sigma_max = sigma_new
+
+    def get_sigma_target_CE_loss(
             self,
             dataset: Dataset,
-            target_error_increase: float,
-            num_mc_samples: int,
-            sigma_min: float=0,
-            sigma_max: float=1,
-            sigma_tol:float=2**(-14),
-            ) -> float:
-        """Returns the maximum value of sigma within [sigma_min, sigma_max] such that the noisy accuracy is at most target_acc + acc_prec"""
-        total_num_sigmas = 1 / sigma_tol  # If sigma_tol = 2^(-n) then we have chosen from 2^n possible sigmas (0 not included)
-        full_dataloader = DataLoader(dataset, batch_size=128, shuffle=False)
-        deterministic_error = 1 - self.get_full_accuracy(dataloader=full_dataloader)
-        target_error = deterministic_error + target_error_increase
-        noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_max, num_mc_samples=num_mc_samples)
-        if noisy_error <= target_error:
-            raise ValueError(f"Error at {sigma_max=} is {noisy_error=}, which is not enough to reach {target_error=}. Increase sigma_max.")
-        sigmas_tried = []
-        errors = []
-
-        while True:
-            sigma_new = (sigma_max + sigma_min) / 2
-            noisy_error = self.monte_carlo_01_error(dataset=dataset, sigma=sigma_new, num_mc_samples=num_mc_samples).item()
-            print(f"For sigma={sigma_new} get error={noisy_error}")
-            sigmas_tried.append(sigma_new)
-            errors.append(noisy_error)
-            if abs(sigma_max - sigma_min) < sigma_tol:
-                return sigma_new, noisy_error, sigmas_tried, errors, total_num_sigmas
-            if noisy_error < target_error:
-                sigma_min = sigma_new
-            else:
-                sigma_max = sigma_new      
-
-    def get_sigma_ten_percent_increase(self, dataloader: DataLoader, base_error: torch.Tensor, num_mc_samples: int) -> torch.Tensor:
-        """Returns the sigma such that the noisy accuracy is 10% larger than the base_error"""
+            base_CE_loss: torch.Tensor,
+            CE_loss_increase: torch.Tensor,
+            num_mc_samples: int
+        ) -> torch.Tensor:
+        """Returns the sigma such that the noisy CE loss is equal to base_CE_loss + CE_loss_increase"""
         assert not self.training, "Model should be in eval mode."
         sigma_min = torch.tensor(0.0, device=self.device)
         sigma_max = torch.tensor(1.0, device=self.device)
-        target_error = base_error * 1.1
+        target_CE_loss = base_CE_loss + CE_loss_increase
         while True:
-            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_max.item(), num_mc_samples=num_mc_samples)
-            if noisy_error >= target_error:
+            noisy_CE_loss = self.monte_carlo_CE_loss(dataset=dataset, sigma=sigma_max.item(), num_mc_samples=num_mc_samples)
+            if noisy_CE_loss >= target_CE_loss:
                 break
             sigma_max *= 2
         
         while True:
-            sigma_new = (sigma_max + sigma_min) / 2
-            print(f"Evaluating model with sigma={sigma_new.item()}")
-            noisy_error = self.monte_carlo_01_error(dataset=dataloader.dataset, sigma=sigma_new.item(), num_mc_samples=num_mc_samples)
+            sigma_target = (sigma_max + sigma_min) / 2
+            print(f"Evaluating model with sigma={sigma_target.item()}")
+            noisy_CE_loss = self.monte_carlo_CE_loss(dataset=dataset, sigma=sigma_target.item(), num_mc_samples=num_mc_samples)
             if abs(sigma_max - sigma_min) < 1e-6:
-                return sigma_new
-            if noisy_error < target_error:
-                sigma_min = sigma_new
+                return sigma_target, noisy_CE_loss
+            if noisy_CE_loss < target_CE_loss:
+                sigma_min = sigma_target
             else:
-                sigma_max = sigma_new
+                sigma_max = sigma_target
+
+    @staticmethod
+    def get_sigma_rounded(sigma: torch.Tensor, sigma_tol: float) -> torch.Tensor:
+        """Returns the closest sigma to sigma that is a multiple of sigma_tol"""
+        return round(sigma / sigma_tol) * sigma_tol
+
+    @staticmethod
+    def get_closest_sigma(sigma: float, sigmas: list[float]) -> float:
+        """Returns the element of sigmas closest to sigma"""
+        if len(sigmas) == 0:
+            raise ValueError("sigmas is empty")
+        closest_sigma = sigmas[0]
+        min_diff = abs(sigma - closest_sigma)
+        for s in sigmas[1:]:
+            diff = abs(sigma - s)
+            if diff < min_diff:
+                closest_sigma = s
+                min_diff = diff
+        return closest_sigma
 
     def get_generalization_gap(self, train_loader, test_loader):
         full_train_01_error = 1 - self.get_full_accuracy(train_loader)

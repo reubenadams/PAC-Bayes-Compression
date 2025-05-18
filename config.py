@@ -556,10 +556,16 @@ class DistFinalResults:
 
 @dataclass
 class PACBConfig:
-    num_mc_samples_max_sigma: int
-    num_mc_samples_pac_bound: int
+    target_CE_loss_increase: float = 0.1
     delta: float = 0.05
-    target_error_increase: float = 0.1
+    sigma_min: float = 2**(-14)
+    sigma_max: float = 1
+    num_mc_samples_sigma_target: int
+    num_mc_samples_pac_bound: int
+
+    def __post_init__(self):
+        self.sigma_tol = self.sigma_min
+        self.num_union_bounds = (self.sigma_max - self.sigma_min) / self.sigma_tol
 
     @classmethod
     def quick_test(cls):
@@ -584,11 +590,43 @@ class PACBConfig:
 
     def to_dict(self):
         return {
-            "PACB Num MC Samples for Max Sigma": self.num_mc_samples_max_sigma,
+            "PACB Num MC Samples Sigma Target": self.num_mc_samples_sigma_target,
             "PACB Num MC Samples for PACB Bound": self.num_mc_samples_pac_bound,
             "PACB Delta": self.delta,
-            "PACB Target Error Increase": self.target_error_increase,
+            "PACB Target CE Loss Increase": self.target_CE_loss_increase,
         }
+
+
+@dataclass
+class PACBResults:
+    sigma_target: float
+    sigma_bound: float
+    noisy_CE_loss: float
+    # sigma: float
+    # noisy_error: float
+    # noise_trials: list[dict]
+    # total_num_sigmas: int
+    kl_bound: float
+    error_bound_inverse_kl: float
+    error_bound_pinsker: float
+    
+    def to_dict(self):
+        return {
+            "PACB Sigma Target": self.sigma_target,
+            "PACB Sigma Bound": self.sigma_bound,
+            "PACB Noisy CE Loss": self.noisy_CE_loss,
+            # "PACB Sigma": self.sigma,
+            # "PACB Noisy Error": self.noisy_error,
+            # "PACB Noise Trials": self.noise_trials,
+            # "PACB Total Num Sigmas": self.total_num_sigmas,
+            "PACB KL Bound": self.kl_bound,
+            "PACB Error Bound Inverse kl": self.error_bound_inverse_kl,
+            "PACB Error Bound Pinsker": self.error_bound_pinsker,
+        }
+
+    def log(self):
+        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (float, torch.Tensor)}
+        wandb.log(wandb_metrics)
 
 
 @dataclass
@@ -617,50 +655,86 @@ class ComplexityMeasures:
     frobenius_product_from_init: float
 
     # Sharpness measure
-    inverse_squared_sigma_ten_percent_increase: float
+    inverse_squared_sigma_target: float
     
     # PAC-Bayes measures
-    kl_bound_sigma_ten_percent_increase: float
-    error_bound_min_over_sigma_inverse_kl: float
-    error_bound_min_over_sigma_pinsker: float
+    kl_bound_sigma_rounded: float
+    error_bound_sigma_rounded_inverse_kl: float
+    error_bound_sigma_rounded_pinsker: float
 
     # Distillation complexity
     min_hidden_width: int
 
-    # Dictionary mapping ordinary names to matplotlib names
-    _name_mapping = {
-        "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
-        "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
-        "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
-        "Output Entropy": r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
-        
-        "L1 Norm": r"$\mu_{\text{l1}} = \|w\|_1$",
-        "L2 Norm": r"$\mu_{\text{l2}} = \|w\|_2$",
-        "L1 Norm From Init": r"$\mu_{\text{l1-init}} = \|w - w^0\|_1$",
-        "L2 Norm From Init": r"$\mu_{\text{l2-init}} = \|w - w^0\|_2$",
-        
-        "Spectral Sum": r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$",
-        "Spectral Product": r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$",
-        "Frobenius Sum": r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$",
-        "Frobenius Product": r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$",
-        
-        "Spectral Sum From Init": r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$",
-        "Spectral Product From Init": r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$",
-        "Frobenius Sum From Init": r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$",
-        "Frobenius Product From Init": r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$",
-        
-        "Inverse Squared Sigma Ten Percent Increase": r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\text{max}}$",
-        
-        "KL Bound Sigma Ten Percent Increase": r"$\mu_{\text{pacb-kl-bound}} = \zeta(\sigma_{\text{kl}})$",
-        "Error Bound Min Over Sigma Inverse KL": r"$\mu_{\text{pacb-error-bound-inverse-kl}}$",
-        "Error Bound Min Over Sigma Pinsker": r"$\mu_{\text{pacb-error-bound-pinsker}}$",
-        
-        "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
-    }
+    # Should be set to the same as PACBConfig.target_CE_loss_increase
+    target_CE_loss_increase: float
+
+    _use_log_x_axis = [
+        "Inverse Margin Tenth Percentile",
+        "L1 Norm",
+        "L2 Norm",
+        "L1 Norm From Init",
+        "L2 Norm From Init",
+        "Spectral Sum",
+        "Spectral Product",
+        "Frobenius Sum",
+        "Frobenius Product",
+        "Spectral Sum From Init",
+        "Spectral Product From Init",
+        "Frobenius Sum From Init",
+        "Frobenius Product From Init",
+        "KL Bound",
+        "Error Bound Pinsker",
+    ]
+
+    def __post_init__(self):
+        target_str = str(self.target_CE_loss_increase)
+        # Dictionary mapping ordinary names to matplotlib names
+        self._name_mapping = {
+            "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
+            "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
+            "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
+            "Output Entropy": r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
+            
+            "L1 Norm": r"$\mu_{\ell_1} = \|w\|_1$",
+            "L2 Norm": r"$\mu_{\ell_2} = \|w\|_2$",
+            "L1 Norm From Init": r"$\mu_{\ell_1\text{-init}} = \|w - w^0\|_1$",
+            "L2 Norm From Init": r"$\mu_{\ell\text{-init}} = \|w - w^0\|_2$",
+            
+            "Spectral Sum": r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$",
+            "Spectral Product": r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$",
+            "Frobenius Sum": r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$",
+            "Frobenius Product": r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$",
+            
+            "Spectral Sum From Init": r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$",
+            "Spectral Product From Init": r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$",
+            "Frobenius Sum From Init": r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$",
+            "Frobenius Product From Init": r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$",
+            
+            "Inverse Squared Sigma Target": r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\beta=" + target_str + r"}$",  # TODO: I think the calculation is wrong as we're getting 0 or 1e12.
+            
+            "KL Bound": r"$\mu_{\text{pacb-kl-bound}} = \zeta(\tilde{\sigma}_{\beta=" + target_str + r"})$",  # TODO: You've put sigma_kl, but I think it's meant to be sigma_max?
+            "Error Bound Inverse KL": r"$\mu_{\text{pacb-error-bound-inverse-kl}}$",
+            "Error Bound Pinsker": r"$\mu_{\text{pacb-error-bound-pinsker}}$",
+            
+            "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
+        }
+
 
     @classmethod
     def get_all_names(cls):
-        return cls._name_mapping.keys()
+        return list(cls._name_mapping.keys())
+
+    @classmethod
+    def get_matplotlib_name(cls, name):
+        if name not in cls._name_mapping:
+            raise ValueError(f"Invalid name: {name}. Must be one of {cls._name_mapping.keys()}")
+        return cls._name_mapping[name]
+
+    @classmethod
+    def use_log_x_axis(cls, name):
+        if name in cls._use_log_x_axis:
+            return True
+        return False
 
     def to_dict(self):
         return {
@@ -684,11 +758,11 @@ class ComplexityMeasures:
             "Frobenius Sum From Init": self.frobenius_sum_from_init,
             "Frobenius Product From Init": self.frobenius_product_from_init,
 
-            "Inverse Squared Sigma Ten Percent Increase": self.inverse_squared_sigma_ten_percent_increase,
+            "Inverse Squared Sigma Target": self.inverse_squared_sigma_target,
             
-            "KL Bound Sigma Ten Percent Increase": self.kl_bound_sigma_ten_percent_increase,
-            "Error Bound Min Over Sigma Inverse KL": self.error_bound_min_over_sigma_inverse_kl,
-            "Error Bound Min Over Sigma Pinsker": self.error_bound_min_over_sigma_pinsker,
+            "KL Bound": self.kl_bound_sigma_rounded,
+            "Error Bound Inverse KL": self.error_bound_sigma_rounded_inverse_kl,
+            "Error Bound Pinsker": self.error_bound_sigma_rounded_pinsker,
             
             "Dist Complexity": self.min_hidden_width,
         }
@@ -730,30 +804,6 @@ class EvaluationMetrics:
             "CIT At Most One Hyp Dim": self.cit_k_at_most_one_hyp_dim,
             "CIT At Most Two Hyp Dims": self.cit_k_at_most_two_hyp_dims,
         }
-
-
-@dataclass
-class PACBResults:
-    sigma: float
-    noisy_error: float
-    noise_trials: list[dict]
-    total_num_sigmas: int
-    pac_bound_inverse_kl: float
-    pac_bound_pinsker: float
-    
-    def to_dict(self):
-        return {
-            "PACB Sigma": self.sigma,
-            "PACB Noisy Error": self.noisy_error,
-            "PACB Noise Trials": self.noise_trials,
-            "PACB Total Num Sigmas": self.total_num_sigmas,
-            "PACB Bound Inverse kl": self.pac_bound_inverse_kl,
-            "PACB Bound Pinsker": self.pac_bound_pinsker,
-        }
-
-    def log(self):
-        wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (float, torch.Tensor)}
-        wandb.log(wandb_metrics)
 
 
 @dataclass
