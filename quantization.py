@@ -4,7 +4,7 @@ import wandb
 import torch
 import pandas as pd
 
-from distillation_comb import get_pacb_config, train_base_model
+from distillation_comb import get_pacb_config, train_and_save_base_model
 import config
 
 
@@ -94,7 +94,7 @@ def main():
     run.save()
 
     print("Training base model...")
-    init_model, base_model, base_metrics = train_base_model(base_config=base_config)
+    init_model, base_model, base_metrics = train_and_save_base_model(base_config=base_config)
     init_model.save(base_config.model_init_dir, base_config.model_name)
     base_model.save(base_config.model_base_dir, base_config.model_name)
     base_metrics.log()

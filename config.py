@@ -207,29 +207,50 @@ class BaseConfig:
         self.new_input_shape_str = "x".join(map(str, self.data._new_input_shape))
         self.model_dims_str = "x".join(map(str, self.model_dims))
 
-        self.model_root_dir = f"{self.experiment_type}/models/{self.data.dataset_name}/{self.new_input_shape_str}"
-        self.model_init_dir = f"{self.model_root_dir}/init"
-        self.model_base_dir = f"{self.model_root_dir}/base"
+        self.root_dir = f"{self.experiment_type}/models/{self.data.dataset_name}/{self.new_input_shape_str}"
+        self.model_init_dir = f"{self.root_dir}/init"
+        self.model_base_dir = f"{self.root_dir}/base"
+
         os.makedirs(self.model_init_dir, exist_ok=True)
         os.makedirs(self.model_base_dir, exist_ok=True)
-        if self.experiment_type == "distillation":
-            self.model_dist_dir = f"{self.model_root_dir}/dist"
-            self.dist_metrics_dir = f"{self.model_root_dir}/dist_metrics"
-            os.makedirs(self.model_dist_dir, exist_ok=True)
-            os.makedirs(self.dist_metrics_dir, exist_ok=True)
-            self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.csv"
-        elif self.experiment_type == "quantization":
-            self.comp_setup_dir = f"{self.model_root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
 
-            self.no_comp_metrics_dir = f"{self.model_root_dir}/no_comp_metrics"
-            self.quant_k_means_metrics_dir = f"{self.model_root_dir}/quant_k_means_metrics"
-            self.quant_trunc_metrics_dir = f"{self.model_root_dir}/quant_trunc_metrics"
+        if self.experiment_type == "distillation":
+
+            self.model_dist_dir = f"{self.root_dir}/dist"
+            self.base_metrics_dir = f"{self.root_dir}/base_metrics"
+            self.dist_metrics_dir = f"{self.root_dir}/dist_metrics"
+            self.pacb_metrics_dir = f"{self.root_dir}/pacb_metrics"
+            self.complexity_measures_dir = f"{self.root_dir}/complexity_measures"
+            self.all_metrics_dir = f"{self.root_dir}/all_metrics"
             
-            self.low_rank_metrics_dir = f"{self.model_root_dir}/low_rank_metrics"
-            self.low_rank_and_quant_k_means_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_k_means_metrics"
-            self.low_rank_and_quant_trunc_metrics_dir = f"{self.model_root_dir}/low_rank_and_quant_trunc_metrics"
+            os.makedirs(self.model_dist_dir, exist_ok=True)
+            os.makedirs(self.base_metrics_dir, exist_ok=True)
+            os.makedirs(self.dist_metrics_dir, exist_ok=True)
+            os.makedirs(self.pacb_metrics_dir, exist_ok=True)
+            os.makedirs(self.complexity_measures_dir, exist_ok=True)
+            os.makedirs(self.all_metrics_dir, exist_ok=True)
             
-            self.best_comp_metrics_dir = f"{self.model_root_dir}/best_comp_metrics"
+            self.base_metrics_path = f"{self.base_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.dist_metrics_path = f"{self.dist_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.pacb_metrics_path = f"{self.pacb_metrics_dir}/{self.hyperparams.run_name}.json"
+            self.complexity_measures_path = f"{self.complexity_measures_dir}/{self.hyperparams.run_name}.json"
+            self.all_metrics_path = f"{self.all_metrics_dir}/{self.hyperparams.run_name}.csv"
+
+            self.successful_runs_path = f"{self.root_dir}/successful_runs.txt"
+
+        elif self.experiment_type == "quantization":
+
+            self.comp_setup_dir = f"{self.root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
+
+            self.no_comp_metrics_dir = f"{self.root_dir}/no_comp_metrics"
+            self.quant_k_means_metrics_dir = f"{self.root_dir}/quant_k_means_metrics"
+            self.quant_trunc_metrics_dir = f"{self.root_dir}/quant_trunc_metrics"
+            
+            self.low_rank_metrics_dir = f"{self.root_dir}/low_rank_metrics"
+            self.low_rank_and_quant_k_means_metrics_dir = f"{self.root_dir}/low_rank_and_quant_k_means_metrics"
+            self.low_rank_and_quant_trunc_metrics_dir = f"{self.root_dir}/low_rank_and_quant_trunc_metrics"
+            
+            self.best_comp_metrics_dir = f"{self.root_dir}/best_comp_metrics"
             
             os.makedirs(self.comp_setup_dir, exist_ok=True)
             
@@ -253,7 +274,9 @@ class BaseConfig:
             self.low_rank_and_quant_k_means_metrics_path = f"{self.low_rank_and_quant_k_means_metrics_dir}/{self.hyperparams.run_name}.json"
             self.low_rank_and_quant_trunc_metrics_path = f"{self.low_rank_and_quant_trunc_metrics_dir}/{self.hyperparams.run_name}.json"
             self.best_comp_metrics_path = f"{self.best_comp_metrics_dir}/{self.hyperparams.run_name}.json"
+
         else:
+
             raise ValueError(f"Invalid experiment type: {self.experiment_type}. Must be 'distillation' or 'quantization'.")
     
     def to_dict(self):
@@ -290,7 +313,17 @@ class BaseResults:
     def log(self):
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
+    
+    def save(self, path):
+        """Save the results to a JSON file."""
+        with open(path, "w") as f:
+            json.dump(asdict(self), f, indent=4)
 
+    @classmethod
+    def load(cls, path):
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls(**data)
 
 @dataclass
 class DistHyperparamsConfig:
@@ -532,7 +565,7 @@ class DistAttemptResults:
 
 @dataclass
 class DistFinalResults:
-    complexity: int
+    complexity: Optional[int] = None
     mean_kl_on_train_data: Optional[float] = None
     mean_kl_on_test_data: Optional[float] = None
     accuracy_on_train_data: Optional[float] = None
@@ -553,15 +586,25 @@ class DistFinalResults:
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
+    def save(self, path):
+        """Save the results to a JSON file."""
+        with open(path, "w") as f:
+            json.dump(asdict(self), f, indent=4)
+
+    @classmethod
+    def load(cls, path):
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls(**data)
 
 @dataclass
 class PACBConfig:
+    num_mc_samples_sigma_target: int
+    num_mc_samples_pac_bound: int
     target_CE_loss_increase: float = 0.1
     delta: float = 0.05
     sigma_min: float = 2**(-14)
     sigma_max: float = 1
-    num_mc_samples_sigma_target: int
-    num_mc_samples_pac_bound: int
 
     def __post_init__(self):
         self.sigma_tol = self.sigma_min
@@ -570,14 +613,14 @@ class PACBConfig:
     @classmethod
     def quick_test(cls):
         return cls(
-            num_mc_samples_max_sigma=10**2,
+            num_mc_samples_sigma_target=10**2,
             num_mc_samples_pac_bound=10**2,
         )
 
     @classmethod
     def full_scale(cls):
         return cls(
-            num_mc_samples_max_sigma=10**5,
+            num_mc_samples_sigma_target=10**5,
             num_mc_samples_pac_bound=10**6,
         )
     
@@ -628,6 +671,17 @@ class PACBResults:
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (float, torch.Tensor)}
         wandb.log(wandb_metrics)
 
+    def save(self, path):
+        """Save the results to a JSON file."""
+        with open(path, "w") as f:
+            json.dump(asdict(self), f, indent=4)
+    
+    @classmethod
+    def load(cls, path):
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls(**data)
+
 
 @dataclass
 class ComplexityMeasures:
@@ -649,6 +703,7 @@ class ComplexityMeasures:
     spectral_product: float
     frobenius_sum: float
     frobenius_product: float
+    
     spectral_sum_from_init: float
     spectral_product_from_init: float
     frobenius_sum_from_init: float
@@ -719,7 +774,6 @@ class ComplexityMeasures:
             "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
         }
 
-
     @classmethod
     def get_all_names(cls):
         return list(cls._name_mapping.keys())
@@ -770,6 +824,17 @@ class ComplexityMeasures:
     def log(self):
         wandb_metrics = {k: v for k, v in self.to_dict().items() if type(v) in (int, float, torch.Tensor)}
         wandb.log(wandb_metrics)
+
+    def save(self, path):
+        """Save the results to a JSON file."""
+        with open(path, "w") as f:
+            json.dump(asdict(self), f, indent=4)
+    
+    @classmethod
+    def load(cls, path):
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls(**data)
 
 
 @dataclass

@@ -344,7 +344,7 @@ class MLP(nn.Module):
     @staticmethod
     def get_sigma_rounded(sigma: torch.Tensor, sigma_tol: float) -> torch.Tensor:
         """Returns the closest sigma to sigma that is a multiple of sigma_tol"""
-        return round(sigma / sigma_tol) * sigma_tol
+        return torch.round(sigma / sigma_tol) * sigma_tol
 
     @staticmethod
     def get_closest_sigma(sigma: float, sigmas: list[float]) -> float:
