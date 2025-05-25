@@ -741,29 +741,30 @@ class ComplexityMeasures:
         "Error Bound Pinsker",
     ]
 
-    def __post_init__(self):
-        target_str = str(self.target_CE_loss_increase)
+    @classmethod
+    def get_name_mapping(cls, target_CE_loss_increase: float):
+        target_str = str(target_CE_loss_increase)
         # Dictionary mapping ordinary names to matplotlib names
-        self._name_mapping = {
+        name_mapping = {
             "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
             "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
             "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
             "Output Entropy": r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
             
-            "L1 Norm": r"$\mu_{\ell_1} = \|w\|_1$",
-            "L2 Norm": r"$\mu_{\ell_2} = \|w\|_2$",
-            "L1 Norm From Init": r"$\mu_{\ell_1\text{-init}} = \|w - w^0\|_1$",
-            "L2 Norm From Init": r"$\mu_{\ell\text{-init}} = \|w - w^0\|_2$",
+            "L1 Norm": r"$\mu_{\ell_1} = \|\text{vec}(W, B)\|_1$",
+            "L2 Norm": r"$\mu_{\ell_2} = \|\text{vec}(W, B)\|_2$",
+            "L1 Norm From Init": r"$\mu_{\ell_1\text{-init}} = \|\text{vec}(W-W^0, B-B^0)\|_1$",
+            "L2 Norm From Init": r"$\mu_{\ell_2\text{-init}} = \|\text{vec}(W-W^0, B-B^0)\|_2$",
             
-            "Spectral Sum": r"$\mu_{\text{spectral-sum}} = \sum_i \|W_i\|_{\text{spec}}$",
-            "Spectral Product": r"$\mu_{\text{spectral-prod}} = \prod_i \|W_i\|_{\text{spec}}$",
-            "Frobenius Sum": r"$\mu_{\text{frobenius-sum}} = \sum_i \|W_i\|_{\text{fro}}$",
-            "Frobenius Product": r"$\mu_{\text{frobenius-prod}} = \prod_i \|W_i\|_{\text{fro}}$",
+            "Spectral Sum": r"$\mu_{\text{spec-sum}} = \sum_i \ \|W_i\|_{\text{spec}}$",
+            "Spectral Product": r"$\mu_{\text{spec-prod}} = \prod_i \ \|W_i\|_{\text{spec}}$",
+            "Frobenius Sum": r"$\mu_{\text{frob-sum}} = \sum_i \ \|W_i\|_{\text{frob}}$",
+            "Frobenius Product": r"$\mu_{\text{frob-prod}} = \prod_i \ \|W_i\|_{\text{frob}}$",
             
-            "Spectral Sum From Init": r"$\mu_{\text{spectral-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{spec}}$",
-            "Spectral Product From Init": r"$\mu_{\text{spectral-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{spec}}$",
-            "Frobenius Sum From Init": r"$\mu_{\text{frobenius-sum-init}} = \sum_i \|W_i - W_i^0\|_{\text{fro}}$",
-            "Frobenius Product From Init": r"$\mu_{\text{frobenius-prod-init}} = \prod_i \|W_i - W_i^0\|_{\text{fro}}$",
+            "Spectral Sum From Init": r"$\mu_{\text{spec-sum-init}} = \sum_i \ \|W_i - W_i^0\|_{\text{spec}}$",
+            "Spectral Product From Init": r"$\mu_{\text{spec-prod-init}} = \prod_i \ \|W_i - W_i^0\|_{\text{spec}}$",
+            "Frobenius Sum From Init": r"$\mu_{\text{frob-sum-init}} = \sum_i \ \|W_i - W_i^0\|_{\text{frob}}$",
+            "Frobenius Product From Init": r"$\mu_{\text{frob-prod-init}} = \prod_i \ \|W_i - W_i^0\|_{\text{frob}}$",
             
             "Inverse Squared Sigma Target": r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\beta=" + target_str + r"}$",  # TODO: I think the calculation is wrong as we're getting 0 or 1e12.
             
@@ -773,16 +774,19 @@ class ComplexityMeasures:
             
             "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
         }
+        return name_mapping
 
     @classmethod
-    def get_all_names(cls):
-        return list(cls._name_mapping.keys())
+    def get_all_names(cls, target_CE_loss_increase: float):
+        return list(cls.get_name_mapping(target_CE_loss_increase).keys())
 
     @classmethod
-    def get_matplotlib_name(cls, name):
-        if name not in cls._name_mapping:
-            raise ValueError(f"Invalid name: {name}. Must be one of {cls._name_mapping.keys()}")
-        return cls._name_mapping[name]
+    def get_matplotlib_name(cls, name: str, target_CE_loss_increase: float):
+        """Get the matplotlib name for a given complexity measure."""
+        name_mapping = cls.get_name_mapping(target_CE_loss_increase)
+        if name not in name_mapping:
+            raise ValueError(f"Invalid name: {name}. Must be one of {name_mapping.keys()}")
+        return name_mapping[name]
 
     @classmethod
     def use_log_x_axis(cls, name):

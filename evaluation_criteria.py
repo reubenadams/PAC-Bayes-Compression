@@ -1,6 +1,10 @@
 from typing import Optional
 import json
 from itertools import product
+import os
+import cProfile
+import pstats
+
 
 import torch
 from scipy import stats
@@ -34,9 +38,9 @@ def get_hyp_vals(sweep_config_path: str) -> dict:
     return hyp_vals
 
 
-# TODO: It should take the name of a complexity measure.
 def get_sweep_results(hyp_vals: dict, df: pd.DataFrame, complexity_name: Optional[str]) -> tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
 
+    print(f"\tGetting sweep results")
     hyp_names = sorted(list(hyp_vals.keys()))  # TODO: Make sure we're always sorting.
     
     results_shape = tuple(len(hyp_vals[name]) for name in hyp_names)  # Number of values for each hyperparameter
@@ -56,9 +60,8 @@ def get_sweep_results(hyp_vals: dict, df: pd.DataFrame, complexity_name: Optiona
             gen_gaps[index] = row["Base Generalization Gap"]
             successes[index] = True
         else:
-            print(f"Run {row["run_name"]} with index {index} did not reach target")
+            print(f"\tRun {row["Run Name"]} with index {index} did not reach target")
             successes[index] = False
-    
     return successes, complexities, gen_gaps
 
 
@@ -70,18 +73,26 @@ def get_oracle_epsilons(successes: torch.Tensor, gen_gaps: torch.Tensor, std_pro
 
 
 def epsilon_oracle(gen_gaps: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """Generates oracle complexities by adding N(0, epsilon^2) noise to the generalization gaps."""
     return gen_gaps + torch.randn(gen_gaps.shape) * epsilon
 
 
-def get_linear_regression(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, complexity_name: Optional[str] = None, make_plot: Optional[bool] = False) -> Optional[float]:
+def get_linear_regression(
+        successes: torch.Tensor,
+        complexities: torch.Tensor,
+        gen_gaps: torch.Tensor,
+        complexity_name: Optional[str] = None,
+        make_plot: Optional[bool] = False
+        ) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    print("\tCalculating linear regression")
     assert successes.shape == complexities.shape == gen_gaps.shape
 
     complexities = complexities[successes].flatten()
     gen_gaps = gen_gaps[successes].flatten()
     
     if (complexities == complexities[0]).all():
-        print("Complexities are all the same, cannot do linear regression")
-        return None
+        print("\tComplexities are all the same, cannot do linear regression")
+        return None, None, None
 
     res = stats.linregress(x=complexities, y=gen_gaps)
     slope = res.slope
@@ -113,30 +124,34 @@ def get_linear_regression(successes: torch.Tensor, complexities: torch.Tensor, g
     return rvalue, r_squared, pvalue
 
 
-def get_oracle_linear_regression(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> tuple[float, float, float]:
-    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
-    linear regression coefficients between complexities and generalization gaps where successes is True"""
-    assert successes.shape == gen_gaps.shape
-    total_rvalue = 0
-    total_r_squared = 0
-    total_pvalue = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-        total_rvalue += rvalue
-        total_r_squared += r_squared
-        total_pvalue += pvalue
-    avg_rvalue = total_rvalue / num_oracle_samples
-    avg_r_squared = total_r_squared / num_oracle_samples
-    avg_pvalue = total_pvalue / num_oracle_samples
-    return avg_rvalue, avg_r_squared, avg_pvalue
+# def get_oracle_linear_regression(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> tuple[float, float, float]:
+#     """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
+#     linear regression coefficients between complexities and generalization gaps where successes is True"""
+#     assert successes.shape == gen_gaps.shape
+#     total_rvalue = 0
+#     total_r_squared = 0
+#     total_pvalue = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#         total_rvalue += rvalue
+#         total_r_squared += r_squared
+#         total_pvalue += pvalue
+#     avg_rvalue = total_rvalue / num_oracle_samples
+#     avg_r_squared = total_r_squared / num_oracle_samples
+#     avg_pvalue = total_pvalue / num_oracle_samples
+#     return avg_rvalue, avg_r_squared, avg_pvalue
 
 
-def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> Optional[float]:
+def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, verbose: bool=True) -> Optional[float]:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the Kendall rank correlation
     coefficient between complexities and generalization gaps where successes is True. Returns None if the KRCC is undefined."""
+    if verbose:
+        print("\tCalculating KRCC")
     assert successes.shape == complexities.shape == gen_gaps.shape
     complexities = complexities[successes].flatten()
+    if complexities.shape[0] == 0:
+        return None
     gen_gaps = gen_gaps[successes].flatten()
     undefined = ((complexities == complexities[0]).all()) or ((gen_gaps == gen_gaps[0]).all())  # KRCC is undefined
     if undefined:
@@ -144,27 +159,28 @@ def get_krcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torc
     return stats.kendalltau(complexities, gen_gaps).statistic
 
 
-def get_oracle_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
-    Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
-    assert successes.shape == gen_gaps.shape
-    num_krccs = 0
-    total_krcc = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        oracle_krcc = get_krcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-        if oracle_krcc is None:
-            continue
-        assert not np.isnan(oracle_krcc)
-        num_krccs += 1
-        total_krcc += oracle_krcc
-    assert num_krccs > 0
-    return total_krcc / num_krccs
+# def get_oracle_krcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average
+#     Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
+#     assert successes.shape == gen_gaps.shape
+#     num_krccs = 0
+#     total_krcc = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         oracle_krcc = get_krcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#         if oracle_krcc is None:
+#             continue
+#         assert not np.isnan(oracle_krcc)
+#         num_krccs += 1
+#         total_krcc += oracle_krcc
+#     assert num_krccs > 0
+#     return total_krcc / num_krccs
 
 
 def get_gkrcc_components(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> list[float]:
     """Takes three 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), returns the *granulated*
     Kendall rank correlation coefficient*s* between complexities and generalization gaps where successes is True"""
+    print("\tCalculating GKRCC components")
     assert successes.shape == complexities.shape == gen_gaps.shape
     gkrcc_components = []
     for dim in range(len(successes.shape)):
@@ -175,7 +191,7 @@ def get_gkrcc_components(successes: torch.Tensor, complexities: torch.Tensor, ge
         num_defined_krccs = 0
         total_krcc = 0
         for success_batch, comp_batch, gap_batch in zip(successes_flattened, complexities_flattened, gen_gaps_flattened):
-            krcc = get_krcc(successes=success_batch, complexities=comp_batch, gen_gaps=gap_batch)
+            krcc = get_krcc(successes=success_batch, complexities=comp_batch, gen_gaps=gap_batch, verbose=False)
             if krcc is None:
                 continue
             assert not np.isnan(krcc), f"KRCC is NaN for dim {dim}"
@@ -188,24 +204,26 @@ def get_gkrcc_components(successes: torch.Tensor, complexities: torch.Tensor, ge
     return gkrcc_components
 
 
-def get_gkrcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> float:
-    gkrcc_components = get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
-    assert len(gkrcc_components) == len(successes.shape)
+def get_gkrcc(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, gkrcc_components: Optional[list[float]]=None) -> float:
+    print("\tCalculating GKRCC")
+    if gkrcc_components is None:
+        gkrcc_components = get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    assert len(gkrcc_components) == len(successes.shape), f"{len(gkrcc_components)} != {len(successes.shape)}"
     defined_components = [comp for comp in gkrcc_components if comp is not None]
     if len(defined_components) == 0:
         return None
     return torch.tensor(defined_components).mean().item()
 
 
-def get_oracle_gkrcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average *granulated*
-    Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
-    assert successes.shape == gen_gaps.shape
-    total_gkrcc = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_gkrcc += get_gkrcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-    return total_gkrcc / num_oracle_samples
+# def get_oracle_gkrcc(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     """Takes *two* 3x3x3x3x3x3x3 arrays (one dim for each hyperparameter), generates oracle comlexities, and returns the average *granulated*
+#     Kendall rank correlation coefficient between complexities and generalization gaps where successes is True"""
+#     assert successes.shape == gen_gaps.shape
+#     total_gkrcc = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         total_gkrcc += get_gkrcc(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#     return total_gkrcc / num_oracle_samples
 
 
 def flatten_except_dim(tensor: torch.Tensor, dim: int) -> torch.Tensor:
@@ -254,12 +272,19 @@ def conditional_mutual_inf(pmf_joint_triple: torch.Tensor) -> float:
     return torch.sum(torch.tensor(mut_infs))
 
 
+# def get_differences(tensor: torch.Tensor) -> torch.Tensor:
+#     assert tensor.ndim == 1
+#     num_elements = tensor.size(0)
+#     diffs =  torch.tensor([tensor[i] - tensor[j] for i, j in product(range(num_elements), repeat=2) if i != j])
+#     assert diffs.numel() == num_elements * (num_elements - 1)
+#     return diffs
+
+
 def get_differences(tensor: torch.Tensor) -> torch.Tensor:
     assert tensor.ndim == 1
     num_elements = tensor.size(0)
-    diffs =  torch.tensor([tensor[i] - tensor[j] for i, j in product(range(num_elements), repeat=2) if i != j])
-    assert diffs.numel() == num_elements * (num_elements - 1)
-    return diffs
+    diffs = tensor.unsqueeze(1) - tensor.unsqueeze(0)
+    return diffs[~torch.eye(num_elements, dtype=torch.bool)].view(-1)
 
 
 def get_signs(tensor: torch.Tensor) -> torch.Tensor:
@@ -307,22 +332,6 @@ def get_joint_probs_one_hyp_dim(successes: torch.Tensor, complexities: torch.Ten
     assert complexities_signs.shape == gen_gaps_signs.shape
 
     return get_joint_probs_from_signs(complexities_signs=complexities_signs, gen_gaps_signs=gen_gaps_signs, prob_hyp_vals=prob_hyp)
-
-
-def get_joint_probs_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
-    successes_slice = successes[slices].flatten()
-    complexities_slice = complexities[slices].flatten()
-    gen_gaps_slice = gen_gaps[slices].flatten()
-
-    complexities_slice = complexities_slice[successes_slice]
-    gen_gaps_slice = gen_gaps_slice[successes_slice]
-    assert complexities_slice.shape == gen_gaps_slice.shape
-
-    complexities_signs = get_signs(complexities_slice)
-    gen_gaps_signs = get_signs(gen_gaps_slice)
-    assert complexities_signs.shape == gen_gaps_signs.shape
-
-    return get_joint_probs_from_signs(complexities_signs=complexities_signs, gen_gaps_signs=gen_gaps_signs, prob_hyp_vals=1)
 
 
 def get_joint_probs_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor, slices: tuple[slice]):
@@ -449,6 +458,7 @@ def get_normalized_conditional_entropies_zero_hyp_dims(successes: torch.Tensor, 
 
 
 def CIT_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    print("\tCalculating CIT_K")
     cit_k_two_hyp_dims = CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
     cit_k_one_hyp_dim = CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
     cit_k_zero_hyp_dims = CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
@@ -456,49 +466,56 @@ def CIT_K(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.T
 
 
 def CIT_K_two_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    print("\tCalculating CIT_K for two hyperparameter dimensions")
     return get_normalized_conditional_entropies_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
 def CIT_K_one_hyp_dim(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    print("\tCalculating CIT_K for one hyperparameter dimension")
     return get_normalized_conditional_entropies_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
 def CIT_K_zero_hyp_dims(successes: torch.Tensor, complexities: torch.Tensor, gen_gaps: torch.Tensor) -> torch.Tensor:
+    print("\tCalculating CIT_K for zero hyperparameter dimensions")
     return get_normalized_conditional_entropies_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).min()
 
 
-def oracle_CIT_K(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    oracle_cit_k_two_hyp_dims = oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    oracle_cit_k_one_hyp_dim = oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    oracle_cit_k_zero_hyp_dims = oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
-    return min(oracle_cit_k_two_hyp_dims, oracle_cit_k_one_hyp_dim, oracle_cit_k_zero_hyp_dims)
+# def oracle_CIT_K(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     print("\tCalculating oracle CIT_K")
+#     oracle_cit_k_two_hyp_dims = oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+#     oracle_cit_k_one_hyp_dim = oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+#     oracle_cit_k_zero_hyp_dims = oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+#     return min(oracle_cit_k_two_hyp_dims, oracle_cit_k_one_hyp_dim, oracle_cit_k_zero_hyp_dims)
 
 
-def oracle_CIT_K_two_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    assert successes.shape == gen_gaps.shape
-    total_cit_k = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_cit_k += CIT_K_two_hyp_dims(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-    return total_cit_k / num_oracle_samples
+# def oracle_CIT_K_two_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     print("\tCalculating oracle CIT_K for two hyperparameter dimensions")
+#     assert successes.shape == gen_gaps.shape
+#     total_cit_k = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         total_cit_k += CIT_K_two_hyp_dims(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#     return total_cit_k / num_oracle_samples
 
 
-def oracle_CIT_K_one_hyp_dim(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    assert successes.shape == gen_gaps.shape
-    total_cit_k = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_cit_k += CIT_K_one_hyp_dim(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-    return total_cit_k / num_oracle_samples
+# def oracle_CIT_K_one_hyp_dim(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     print("\tCalculating oracle CIT_K for one hyperparameter dimension")
+#     assert successes.shape == gen_gaps.shape
+#     total_cit_k = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         total_cit_k += CIT_K_one_hyp_dim(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#     return total_cit_k / num_oracle_samples
 
 
-def oracle_CIT_K_zero_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
-    assert successes.shape == gen_gaps.shape
-    total_cit_k = 0
-    for _ in range(num_oracle_samples):
-        oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
-        total_cit_k += CIT_K_zero_hyp_dims(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
-    return total_cit_k / num_oracle_samples
+# def oracle_CIT_K_zero_hyp_dims(successes: torch.Tensor, gen_gaps: torch.Tensor, epsilon: float, num_oracle_samples: int) -> float:
+#     print("\tCalculating oracle CIT_K for zero hyperparameter dimensions")
+#     assert successes.shape == gen_gaps.shape
+#     total_cit_k = 0
+#     for _ in range(num_oracle_samples):
+#         oracle_complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+#         total_cit_k += CIT_K_zero_hyp_dims(successes=successes, complexities=oracle_complexities, gen_gaps=gen_gaps)
+#     return total_cit_k / num_oracle_samples
 
 
 def collate_evaluation_metrics(complexity_measure: str, hyp_vals: dict, combined_df: pd.DataFrame) -> EvaluationMetrics:
@@ -514,71 +531,105 @@ def collate_evaluation_metrics(complexity_measure: str, hyp_vals: dict, combined
     """
     successes, complexities, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=complexity_measure)
     rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=complexities, gen_gaps=gen_gaps, complexity_name=complexity_measure)
+    gkrcc_components = get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    gkrcc = get_gkrcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps, gkrcc_components=gkrcc_components)
     return EvaluationMetrics(
         complexity_measure_name=complexity_measure,
-        rvalue=rvalue,
-        r_squared=r_squared,
-        pvalue=pvalue,
+        rvalue=float(rvalue) if rvalue is not None else None,
+        r_squared=float(r_squared) if r_squared is not None else None,
+        pvalue=float(pvalue) if pvalue is not None else None,
         krcc=get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        gkrcc_components=get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        gkrcc=get_gkrcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        cit_k_zero_hyp_dims=CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        cit_k_one_hyp_dim=CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
-        cit_k_two_hyp_dims=CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        gkrcc_components=[float(c) if c is not None else None for c in gkrcc_components],
+        gkrcc=gkrcc,
+        cit_k_zero_hyp_dims=CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
+        cit_k_one_hyp_dim=CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
+        cit_k_two_hyp_dims=CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
     )
 
 
-def collate_oracle_evaluation_metrics(hyp_vals: dict, combined_df: pd.DataFrame, epsilon: float, num_oracle_samples: int) -> EvaluationMetrics:
-    """Collates the oracle evaluation metrics for a given complexity measure.
+def collate_oracle_evaluation_metrics(hyp_vals: dict, combined_df: pd.DataFrame, epsilon: float, sample_num: int) -> EvaluationMetrics:
+    """Collates the oracle evaluation metrics for a given epsilon.
 
     Args:
         hyp_vals (dict): A dictionary of hyperparameter values used for the sweep.
         combined_df (pd.DataFrame): The combined DataFrame containing the evaluation metrics.
-        epsilon (float): The noise level for the oracle evaluation.
 
     Returns:
-        EvaluationMetrics: An object containing the oracle evaluation metrics for the given hyperparameter values.
+        EvaluationMetrics: An object containing the evaluation metrics for the given oracle epsilon and hyperparameter values.
     """
+    complexity_name = f"Oracle epsilon={epsilon:.2f} sample_num={sample_num}"
     successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
-    rvalue, r_squared, pvalue = get_oracle_linear_regression(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+    complexities = epsilon_oracle(gen_gaps=gen_gaps, epsilon=epsilon)
+    rvalue, r_squared, pvalue = get_linear_regression(successes=successes, complexities=complexities, gen_gaps=gen_gaps, complexity_name=complexity_name)
+    gkrcc_components = get_gkrcc_components(successes=successes, complexities=complexities, gen_gaps=gen_gaps)
+    gkrcc = get_gkrcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps, gkrcc_components=gkrcc_components)
     return EvaluationMetrics(
-        complexity_measure_name=f"Oracle {epsilon}",
-        rvalue=rvalue,
-        r_squared=r_squared,
-        pvalue=pvalue,
-        krcc=get_oracle_krcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
-        gkrcc_components=None,
-        gkrcc=get_oracle_gkrcc(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
-        cit_k_zero_hyp_dims=oracle_CIT_K_zero_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
-        cit_k_one_hyp_dim=oracle_CIT_K_one_hyp_dim(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
-        cit_k_two_hyp_dims=oracle_CIT_K_two_hyp_dims(successes=successes, gen_gaps=gen_gaps, epsilon=epsilon, num_oracle_samples=num_oracle_samples),
+        complexity_measure_name=complexity_name,
+        rvalue=float(rvalue) if rvalue is not None else None,
+        r_squared=float(r_squared) if r_squared is not None else None,
+        pvalue=float(pvalue) if pvalue is not None else None,
+        krcc=get_krcc(successes=successes, complexities=complexities, gen_gaps=gen_gaps),
+        gkrcc_components=[float(c) if c is not None else None for c in gkrcc_components],
+        gkrcc=gkrcc,
+        cit_k_zero_hyp_dims=CIT_K_zero_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
+        cit_k_one_hyp_dim=CIT_K_one_hyp_dim(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
+        cit_k_two_hyp_dims=CIT_K_two_hyp_dims(successes=successes, complexities=complexities, gen_gaps=gen_gaps).item(),
     )
 
 
 def main():
 
-    complexity_measure_names = ComplexityMeasures.get_all_names()
+    target_CE_loss_increase = 0.1
+    complexity_measure_names = ComplexityMeasures.get_all_names(target_CE_loss_increase=target_CE_loss_increase)
     std_proportions = torch.linspace(0.1, 1, 10)
-    hyp_vals = get_hyp_vals("sweep_config_comb_toy.yaml")
-    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\dist_metrics\combined.csv")
+    num_oracle_samples = 100
+    hyp_vals = get_hyp_vals("sweep_config_comb.yaml")
+    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\all_metrics\combined.csv")
     all_evaluation_metrics = []
+    os.makedirs(rf"distillation\models\MNIST1D\40\evaluation_metrics", exist_ok=True)
+    os.makedirs(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle", exist_ok=True)
 
-    for name in complexity_measure_names:
-        print(name)
-        evaluation_metrics = collate_evaluation_metrics(complexity_measure=name, hyp_vals=hyp_vals, combined_df=combined_df)
-        all_evaluation_metrics.append(evaluation_metrics)
+    # for name in complexity_measure_names[18:]:
+    #     print(name)
+    #     evaluation_metrics = collate_evaluation_metrics(complexity_measure=name, hyp_vals=hyp_vals, combined_df=combined_df)
+    #     with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\{name}.json", "w") as f:
+    #         json.dump(evaluation_metrics.to_dict(), f, indent=2)
+    #     all_evaluation_metrics.append(evaluation_metrics)
 
     successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
     oracle_epsilons = get_oracle_epsilons(successes=successes, gen_gaps=gen_gaps, std_proportions=std_proportions)
+    all_oracle_evaluation_metrics = []
     for std_prop, epsilon in zip(std_proportions, oracle_epsilons):
-        print(f"Std proportion: {std_prop}, Oracle epsilon: {epsilon}")
-        evaluation_metrics = collate_oracle_evaluation_metrics(hyp_vals=hyp_vals, combined_df=combined_df, epsilon=epsilon, num_oracle_samples=100)
-        all_evaluation_metrics.append(evaluation_metrics)
+        print(f"\tStd proportion: {std_prop}, Oracle epsilon: {epsilon}")
+        for sample_num in range(num_oracle_samples):
+            evaluation_metrics = {
+                "std_proportion": std_prop.item(),
+                "epsilon": epsilon.item(),
+                "sample_num": sample_num,
+            }
+            print(f"\t\tSample number: {sample_num}")
+            evaluation_metrics |= collate_oracle_evaluation_metrics(hyp_vals=hyp_vals, combined_df=combined_df, epsilon=epsilon, sample_num=sample_num).to_dict()
+            all_oracle_evaluation_metrics.append(evaluation_metrics)
+            with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle\oracle_{std_prop:.2f}_{sample_num}.json", "w") as f:
+                json.dump(evaluation_metrics, f, indent=2)
+    with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle\all_oracle_evaluation_metrics.json", "w") as f:
+        json.dump(all_oracle_evaluation_metrics, f, indent=2)
 
-    # Save the evaluation metrics to a JSON file
-    with open("dist_evaluation_metrics.json", "w") as f:
-        json.dump([em.to_dict() for em in all_evaluation_metrics], f, indent=4)
+
+    # for std_prop, epsilon in zip(std_proportions, oracle_epsilons):
+    #     evaluation_metrics = collate_oracle_evaluation_metrics(hyp_vals=hyp_vals, combined_df=combined_df, epsilon=epsilon, num_oracle_samples=num_oracle_samples)
+    #     with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle_{std_prop:.2f}.json", "w") as f:
+    #         json.dump(evaluation_metrics.to_dict(), f, indent=2)
+    #     all_evaluation_metrics.append(evaluation_metrics)
+
+    # Save combined evaluation metrics to a single JSON file
+    # with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\all_evaluation_metrics.json", "w") as f:
+    #     all_metrics_dict = {em.complexity_measure_name: em.to_dict() for em in all_evaluation_metrics}
+    #     json.dump(all_metrics_dict, f, indent=2)
 
 
 if __name__ == "__main__":
     main()
+    # cProfile.run('main()', 'temp_profile.prof')
+    # stats = pstats.Stats('temp_profile.prof')
+    # stats.sort_stats('cumulative').print_stats(20)

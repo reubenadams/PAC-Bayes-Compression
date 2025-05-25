@@ -34,4 +34,4 @@ def combine_csv_files(directory_path: str) -> None:
 
 
 if __name__ == "__main__":
-    combine_csv_files(r"distillation\models\MNIST1D\40\dist_metrics")
+    combine_csv_files(r"distillation\models\MNIST1D\40\all_metrics")

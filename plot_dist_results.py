@@ -11,15 +11,13 @@ pd.set_option('display.width', 1000)
 
 
 def main():
-    complexity_measure_names = ComplexityMeasures.get_all_names()
-    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\dist_metrics\combined.csv")
-
-    print(combined_df[["Base Final Train Loss", "Base Final Test Loss", "Base Final Train Accuracy", "Base Final Test Accuracy", "Inverse Squared Sigma Ten Percent Increase"]].head(100))
-    assert False
+    target_CE_loss_increase = 0.1
+    combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\all_metrics\combined.csv")
+    complexity_measure_names = ComplexityMeasures.get_all_names(target_CE_loss_increase=target_CE_loss_increase)
 
     y = combined_df["Base Generalization Gap"]
-    for name in complexity_measure_names[16:]:
-        matplotlib_name = ComplexityMeasures.get_matplotlib_name(name)
+    for name in complexity_measure_names:
+        matplotlib_name = ComplexityMeasures.get_matplotlib_name(name, target_CE_loss_increase=target_CE_loss_increase)
         x = combined_df[name]
         plt.scatter(x, y, s=2)
         plt.xlabel(matplotlib_name, fontsize=12)
