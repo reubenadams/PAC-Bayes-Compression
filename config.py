@@ -240,6 +240,8 @@ class BaseConfig:
 
         elif self.experiment_type == "quantization":
 
+            self.base_metrics_dir = f"{self.root_dir}/base_metrics"
+            self.base_metrics_path = f"{self.base_metrics_dir}/{self.hyperparams.run_name}.json"
             self.comp_setup_dir = f"{self.root_dir}/quant_metrics"  # This is here in addition to the below dirs because you're actually saving things twice.
 
             self.no_comp_metrics_dir = f"{self.root_dir}/no_comp_metrics"
@@ -252,6 +254,7 @@ class BaseConfig:
             
             self.best_comp_metrics_dir = f"{self.root_dir}/best_comp_metrics"
             
+            os.makedirs(self.base_metrics_dir, exist_ok=True)
             os.makedirs(self.comp_setup_dir, exist_ok=True)
             
             os.makedirs(self.no_comp_metrics_dir, exist_ok=True)

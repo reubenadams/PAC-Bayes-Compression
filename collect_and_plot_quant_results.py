@@ -13,7 +13,7 @@ plt.rcParams.update({
     'axes.labelsize': 14,        # X and Y labels font size
     'xtick.labelsize': 10,       # X tick labels size
     'ytick.labelsize': 10,       # Y tick labels size
-    'legend.fontsize': 12,       # Legend font size
+    'legend.fontsize': 14,       # Legend font size
     'figure.titlesize': 18       # Figure title size
 })
 
@@ -53,6 +53,7 @@ def plot_trunc_results(
         dataset_name: str,
         hw: int,
         nl: int,
+        collected_figures_dir: str = None,
 ):
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
     comp_filepath = get_filepath(dataset_name, hw, nl, "quant_trunc")
@@ -82,7 +83,7 @@ def plot_trunc_results(
         axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
     axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 0].set_ylabel(r"Error on train set, $\hat{{L}}_0(h_{W', B})$")
+    axes[0, 0].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
     if set_y_limits:
         axes[0, 0].set_ylim(0.25, 1.05)
 
@@ -92,7 +93,7 @@ def plot_trunc_results(
         comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.exponent_bits == exponent_bits]
         axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=exponent_colors[exponent_bits], label=f"$b_e = {exponent_bits}$")
     axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 1].set_ylabel(r"Margin loss on train set, $\hat{{L}}_{\gamma^*}(h_{W', B})$")
+    axes[0, 1].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
     if set_y_limits:
         axes[0, 1].set_ylim(0.25, 1.05)
 
@@ -129,7 +130,12 @@ def plot_trunc_results(
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
 
     plot_path = comp_filepath[:-5] + ".png"
+    print(f"Saving plot to {plot_path}")
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    if collected_figures_dir:
+        collected_figures_dir = os.path.join(collected_figures_dir, "trunc.png")
+        print(f"Saving plot to {collected_figures_dir}")
+        plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
     plt.show()
     plt.close(fig)
 
@@ -138,6 +144,7 @@ def plot_k_means_results(
         dataset_name: str,
         hw: int,
         nl: int,
+        collected_figures_dir: str = None,
 ):
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
     comp_filepath = get_filepath(dataset_name, hw, nl, "quant_k_means")
@@ -161,21 +168,23 @@ def plot_k_means_results(
     # Plot 1: Train Errors (top-left)
     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
     comp_train_errors = [1 - results.train_accuracy for results in all_comp_results]
-    axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=exponent_colors[4], label="K-Means")
+    axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=exponent_colors[4], label="$k$-Means")
     axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
     axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 0].set_ylabel(r"Error on train set, $\hat{{L}}_0(h_{W', B})$")
+    axes[0, 0].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
     if set_y_limits:
         axes[0, 0].set_ylim(0.25, 1.05)
+        # axes[0, 0].set_ylim(0.05, 1.05)
 
     # Plot 2: Margin Losses (top-right)
     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
     comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results]
     axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=exponent_colors[4])
     axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 1].set_ylabel(r"Margin loss on train set, $\hat{{L}}_{\gamma^*}(h_{W', B})$")
+    axes[0, 1].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
     if set_y_limits:
         axes[0, 1].set_ylim(0.25, 1.05)
+        # axes[0, 0].set_ylim(0.05, 1.05)
 
     # Plot 3: Inverse KL Bounds (bottom-left)
     comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results]
@@ -208,7 +217,12 @@ def plot_k_means_results(
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
 
     plot_path = comp_filepath[:-5] + ".png"
+    print(f"Saving plot to {plot_path}")
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    if collected_figures_dir:
+        collected_figures_dir = os.path.join(collected_figures_dir, "k_means.png")
+        print(f"Saving plot to {collected_figures_dir}")
+        plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
     plt.show()
     plt.close(fig)
 
@@ -217,6 +231,7 @@ def plot_low_rank_results(
         dataset_name: str,
         hw: int,
         nl: int,
+        collected_figures_dir: str = None,
 ):
     
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
@@ -251,7 +266,7 @@ def plot_low_rank_results(
             axes[0, 0].scatter(comp_string_lengths, comp_train_errors, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
     axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
     axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 0].set_ylabel(r"Error on train set, $\hat{{L}}_0(h_{W', B})$")
+    axes[0, 0].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
     if set_y_limits:
         axes[0, 0].set_ylim(0.25, 1.05)
 
@@ -264,7 +279,7 @@ def plot_low_rank_results(
         else:
             axes[0, 1].scatter(comp_string_lengths, comp_margin_losses, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
     axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 1].set_ylabel(r"Margin loss on train set, $\hat{{L}}_{\gamma^*}(h_{W', B})$")
+    axes[0, 1].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
     if set_y_limits:
         axes[0, 1].set_ylim(0.25, 1.05)
 
@@ -307,7 +322,12 @@ def plot_low_rank_results(
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
 
     plot_path = comp_filepath[:-5] + ".png"
+    print(f"Saving plot to {plot_path}")
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    if collected_figures_dir:
+        collected_figures_dir = os.path.join(collected_figures_dir, "low_rank.png")
+        print(f"Saving plot to {collected_figures_dir}")
+        plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
     plt.show()
     plt.close(fig)
 
@@ -386,28 +406,34 @@ def collect_quant_results(
 
 if __name__ == "__main__":
 
+    figures_dir = "quantization\cluster_results\quant_figures\MNIST1D"
     # for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
-    for hw in [128]:
+    for hw in [512]:
         # for nl in [1, 2, 3, 4]:
-        for nl in [2]:
-
-            plot_trunc_results(
-                dataset_name="MNIST",
-                hw=hw,
-                nl=nl,
-            )
+        for nl in [1]:
+            if figures_dir:
+                collected_figures_dir = os.path.join(figures_dir, f"hw{hw}_nl{nl}") # os has no method join
+                os.makedirs(collected_figures_dir, exist_ok=True)
+            # plot_trunc_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            #     collected_figures_dir=collected_figures_dir if figures_path else None,
+            # )
 
             plot_k_means_results(
-                dataset_name="MNIST",
+                dataset_name="MNIST1D",
                 hw=hw,
                 nl=nl,
+                collected_figures_dir=collected_figures_dir if figures_dir else None,
             )
 
-            plot_low_rank_results(
-                dataset_name="MNIST",
-                hw=hw,
-                nl=nl,
-            )
+            # plot_low_rank_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            #     collected_figures_dir=collected_figures_dir if figures_path else None,
+            # )
 
             # for comp_scheme in ["no_comp", "quant_trunc", "quant_k_means", "low_rank"]:
             #     for bound_type in ["Inverse KL", "Pinsker"]:           

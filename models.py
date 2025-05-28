@@ -1365,6 +1365,21 @@ class MLP(nn.Module):
         self.compute_svd()
         return self.Vts[layer_idx]
 
+    def get_all_ranks(self, min_rank: int, min_num_rank_values: int) -> list[tuple[int]]:
+        """Returns all rank combinations, regardless of whether they reduce storage size."""
+        max_all_ranks = []
+        rank_steps = []
+        for layer in self.linear_layers:
+            m, n = layer.weight.shape
+            max_rank = min(m, n)
+            rank_step = max(1, max_rank // min_num_rank_values)
+            max_all_ranks.append(max_rank)
+            rank_steps.append(rank_step)
+        print(f"{max_all_ranks=}")
+        print(f"{rank_steps=}")
+        sensible_ranks = list(product(*[range(min_rank, r + 1, rank_step) for r, rank_step in zip(max_all_ranks, rank_steps)]))
+        return sensible_ranks
+
     def get_sensible_ranks(self, min_rank: int, min_num_rank_values: int) -> list[tuple[int]]:
         """Returns the rank combinations that reduce (or do not change) the storage size for every layer."""
         max_sensible_ranks = []
@@ -1400,6 +1415,8 @@ class MLP(nn.Module):
         return sensible_codeword_lengths
 
     def get_sensible_ranks_and_codeword_lengths(self, min_rank: int, min_num_rank_values: int) -> list[tuple[tuple[int], int]]:
+        """Returns the rank combinations and codeword lengths such that both steps, low rank approximation
+        and k-means quantization result in reduced (or unchanged) storage size."""
         full_model_size = self.get_comp_model_size_in_bits(
             ranks=None,
             codeword_length=None,
@@ -1425,6 +1442,28 @@ class MLP(nn.Module):
                 if (comp_model_size < low_rank_size) and (low_rank_size < full_model_size):
                     sensible_ranks_and_codeword_lengths.append((ranks, codeword_length))
         return sensible_ranks_and_codeword_lengths
+
+    def get_all_ranks_and_sensible_codeword_lengths(self, min_rank: int, min_num_rank_values: int) -> list[tuple[tuple[int], int]]:
+        full_model_size = self.get_comp_model_size_in_bits(
+            ranks=None,
+            codeword_length=None,
+            exponent_bits=None,
+            mantissa_bits=None,            
+        )
+        all_ranks_and_sensible_codeword_lengths = []
+        all_ranks = self.get_all_ranks(min_rank=min_rank, min_num_rank_values=min_num_rank_values)
+        for ranks in all_ranks:
+            for codeword_length in range(1, 33):
+                comp_model_size = self.get_comp_model_size_in_bits(
+                    ranks=ranks,
+                    codeword_length=codeword_length,
+                    exponent_bits=None,
+                    mantissa_bits=None,
+                )
+                if comp_model_size < full_model_size:
+                    all_ranks_and_sensible_codeword_lengths.append((ranks, codeword_length))
+        return all_ranks_and_sensible_codeword_lengths
+
 
     def get_model_difference(self: MLP, other: MLP) -> MLP:
         """Returns the MLP with weights and biases equal to self - other."""

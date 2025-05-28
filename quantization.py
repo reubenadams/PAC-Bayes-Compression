@@ -4,7 +4,7 @@ import wandb
 import torch
 import pandas as pd
 
-from distillation_comb import get_pacb_config, train_and_save_base_model
+from distillation import get_pacb_config, train_and_save_base_model
 import config
 
 
@@ -63,10 +63,11 @@ def save_configs_and_base_metrics(
 
 def main():
 
-    quick_test = True
+    quick_test = False
     device = "cpu"
-    dataset_name = "MNIST"
+    dataset_name = "MNIST1D"
     seed = 0
+    use_all_ranks_for_low_rank_and_quant_k_means = True
     best_results = dict()
 
     torch.manual_seed(seed)
@@ -290,7 +291,10 @@ def main():
             print()
             print("Getting low rank and quant k-means results...")
 
-            sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+            if use_all_ranks_for_low_rank_and_quant_k_means:
+                sensible_ranks_and_codeword_lengths = base_model.get_all_ranks_and_sensible_codeword_lengths(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+            else:
+                sensible_ranks_and_codeword_lengths = base_model.get_sensible_ranks_and_codeword_lengths(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
             sensible_ranks_and_codeword_lengths = [(ranks, code_len) for ranks, code_len in sensible_ranks_and_codeword_lengths if code_len <= comp_config.max_codeword_length_for_low_rank]
             num_union_bounds = len(sensible_ranks_and_codeword_lengths)
             print(f"{sensible_ranks_and_codeword_lengths=}")
