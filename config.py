@@ -746,11 +746,6 @@ class ComplexityMeasures:
         target_str = str(target_CE_loss_increase)
         # Dictionary mapping ordinary names to matplotlib names
         name_mapping = {
-            "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
-            "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
-            "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
-            "Output Entropy": r"$\mu_{\text{neg-entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
-            
             "L1 Norm": r"$\mu_{\ell_1} = \|\text{vec}(W, B)\|_1$",
             "L2 Norm": r"$\mu_{\ell_2} = \|\text{vec}(W, B)\|_2$",
             "L1 Norm From Init": r"$\mu_{\ell_1\text{-init}} = \|\text{vec}(W-W^0, B-B^0)\|_1$",
@@ -767,10 +762,14 @@ class ComplexityMeasures:
             "Frobenius Product From Init": r"$\mu_{\text{frob-prod-init}} = \prod_i \ \|W_i - W_i^0\|_{\text{frob}}$",
             
             "Inverse Squared Sigma Target": r"$\mu_{\text{sharpness}} = 1 / \sigma^2_{\beta=" + target_str + r"}$",  # TODO: I think the calculation is wrong as we're getting 0 or 1e12.
-            
             "KL Bound": r"$\mu_{\text{pacb-kl-bound}} = \zeta(\tilde{\sigma}_{\beta=" + target_str + r"})$",  # TODO: You've put sigma_kl, but I think it's meant to be sigma_max?
             "Error Bound Inverse KL": r"$\mu_{\text{pacb-error-bound-inverse-kl}}$",
             "Error Bound Pinsker": r"$\mu_{\text{pacb-error-bound-pinsker}}$",
+            
+            "Train Loss": r"$\mu_{\text{final-loss}} = \hat{L}_\text{cross-entropy}(h_{W, B})$",
+            "Train Error": r"$\mu_{\text{final-error}} = \hat{L}_\text{0}(h_{W, B})$",
+            "Inverse Margin Tenth Percentile": r"$\mu_{\text{inverse-margin}} = 1 / \gamma_{10\%}^2$",
+            "Output Entropy": r"$\mu_{\text{entropy}} = \frac{1}{m}\sum_{i=1}^m H(h_{W, B}(x_i))$",
             
             "Dist Complexity": r"$\mu_{\text{dist-complexity}}$",
         }
@@ -796,15 +795,15 @@ class ComplexityMeasures:
 
     def to_dict(self):
         return {
-            "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
-            "Train Loss": self.train_loss,
-            "Train Error": self.train_error,
-            "Output Entropy": self.output_entropy,
-            
             "L1 Norm": self.l1_norm,
             "L2 Norm": self.l2_norm,
             "L1 Norm From Init": self.l1_norm_from_init,
             "L2 Norm From Init": self.l2_norm_from_init,
+
+            "Inverse Margin Tenth Percentile": self.inverse_margin_tenth_percentile,
+            "Train Loss": self.train_loss,
+            "Train Error": self.train_error,
+            "Output Entropy": self.output_entropy,
 
             "Spectral Sum": self.spectral_sum,
             "Spectral Product": self.spectral_product,
@@ -818,8 +817,8 @@ class ComplexityMeasures:
 
             "Inverse Squared Sigma Target": self.inverse_squared_sigma_target,
             
-            "KL Bound": self.kl_bound_sigma_rounded,
-            "Error Bound Inverse KL": self.error_bound_sigma_rounded_inverse_kl,
+            "kl Bound": self.kl_bound_sigma_rounded,
+            "Error Bound Inverse kl": self.error_bound_sigma_rounded_inverse_kl,
             "Error Bound Pinsker": self.error_bound_sigma_rounded_pinsker,
             
             "Dist Complexity": self.min_hidden_width,

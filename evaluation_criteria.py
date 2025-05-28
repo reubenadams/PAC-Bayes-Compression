@@ -581,7 +581,7 @@ def main():
 
     target_CE_loss_increase = 0.1
     complexity_measure_names = ComplexityMeasures.get_all_names(target_CE_loss_increase=target_CE_loss_increase)
-    std_proportions = torch.linspace(0.1, 1, 10)
+    std_proportions = torch.logspace(start=-1, end=1, steps=11, base=10)
     num_oracle_samples = 100
     hyp_vals = get_hyp_vals("sweep_config_comb.yaml")
     combined_df = pd.read_csv(r"distillation\models\MNIST1D\40\all_metrics\combined.csv")
@@ -589,25 +589,32 @@ def main():
     os.makedirs(rf"distillation\models\MNIST1D\40\evaluation_metrics", exist_ok=True)
     os.makedirs(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle", exist_ok=True)
 
-    # for name in complexity_measure_names[18:]:
-    #     print(name)
-    #     evaluation_metrics = collate_evaluation_metrics(complexity_measure=name, hyp_vals=hyp_vals, combined_df=combined_df)
-    #     with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\{name}.json", "w") as f:
-    #         json.dump(evaluation_metrics.to_dict(), f, indent=2)
-    #     all_evaluation_metrics.append(evaluation_metrics)
+    for name in complexity_measure_names:
+        print(name)
+        evaluation_metrics = collate_evaluation_metrics(complexity_measure=name, hyp_vals=hyp_vals, combined_df=combined_df)
+        with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\{name}.json", "w") as f:
+            json.dump(evaluation_metrics.to_dict(), f, indent=2)
+        all_evaluation_metrics.append(evaluation_metrics)
+
+    # Save combined evaluation metrics to a single JSON file
+    with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\all_evaluation_metrics.json", "w") as f:
+        all_metrics_dict = {em.complexity_measure_name: em.to_dict() for em in all_evaluation_metrics}
+        json.dump(all_metrics_dict, f, indent=2)
+
+    assert False
 
     successes, _, gen_gaps = get_sweep_results(hyp_vals=hyp_vals, df=combined_df, complexity_name=None)
     oracle_epsilons = get_oracle_epsilons(successes=successes, gen_gaps=gen_gaps, std_proportions=std_proportions)
     all_oracle_evaluation_metrics = []
     for std_prop, epsilon in zip(std_proportions, oracle_epsilons):
-        print(f"\tStd proportion: {std_prop}, Oracle epsilon: {epsilon}")
+        print(f"Std proportion: {std_prop}, Oracle epsilon: {epsilon}")
         for sample_num in range(num_oracle_samples):
             evaluation_metrics = {
                 "std_proportion": std_prop.item(),
                 "epsilon": epsilon.item(),
                 "sample_num": sample_num,
             }
-            print(f"\t\tSample number: {sample_num}")
+            print(f"\tSample number: {sample_num}")
             evaluation_metrics |= collate_oracle_evaluation_metrics(hyp_vals=hyp_vals, combined_df=combined_df, epsilon=epsilon, sample_num=sample_num).to_dict()
             all_oracle_evaluation_metrics.append(evaluation_metrics)
             with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\oracle\oracle_{std_prop:.2f}_{sample_num}.json", "w") as f:
@@ -622,10 +629,6 @@ def main():
     #         json.dump(evaluation_metrics.to_dict(), f, indent=2)
     #     all_evaluation_metrics.append(evaluation_metrics)
 
-    # Save combined evaluation metrics to a single JSON file
-    # with open(rf"distillation\models\MNIST1D\40\evaluation_metrics\all_evaluation_metrics.json", "w") as f:
-    #     all_metrics_dict = {em.complexity_measure_name: em.to_dict() for em in all_evaluation_metrics}
-    #     json.dump(all_metrics_dict, f, indent=2)
 
 
 if __name__ == "__main__":
