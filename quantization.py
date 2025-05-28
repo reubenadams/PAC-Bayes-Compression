@@ -68,6 +68,7 @@ def main():
     dataset_name = "MNIST1D"
     seed = 0
     use_all_ranks_for_low_rank_and_quant_k_means = True
+    use_all_ranks_for_low_rank_and_quant_trunc = True
     best_results = dict()
 
     torch.manual_seed(seed)
@@ -337,7 +338,12 @@ def main():
             print()
             print("Getting low rank and quant truncation results...")
 
-            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+            if use_all_ranks_for_low_rank_and_quant_trunc:
+                rank_combs = base_model.get_all_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+            else:
+                rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+
+            # rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
             num_union_bounds = 8 * 23 * len(rank_combs)
             final_low_rank_and_quant_trunc_results = config.FinalCompResults(
                 compression_scheme="low_rank_and_quant_trunc",

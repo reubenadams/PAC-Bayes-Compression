@@ -332,6 +332,111 @@ def plot_low_rank_results(
     plt.close(fig)
 
 
+def plot_low_rank_and_quant_k_means_results(
+        dataset_name: str,
+        hw: int,
+        nl: int,
+        collected_figures_dir: str = None,
+):
+
+    no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
+    comp_filepath = get_filepath(dataset_name, hw, nl, "low_rank_and_quant_k_means")
+
+    try:
+        no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
+        all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    except FileNotFoundError:
+        print(f"File not found: {no_comp_filepath} or {comp_filepath}. Skipping.")
+        return
+
+    no_comp_error = 1 - no_comp_results.train_accuracy
+    no_comp_string_length = no_comp_results.KL / sqrt(2)
+    no_comp_inverse_kl_bound = no_comp_results.error_bound_inverse_kl_spectral_domain
+    no_comp_pinsker_bound = no_comp_results.error_bound_pinsker_spectral_domain
+
+    r1_vals = sorted(list(set(results.ranks[0] for results in all_comp_results)))
+    r1_colors = plt.cm.viridis(np.linspace(0, 1, len(r1_vals)))
+
+    # Create a 2x2 subplot figure with shared x-axis
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
+    plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+
+    # Plot 1: Train Errors (top-left)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.ranks[0] == r1]
+        if nl == 1:
+            axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[0, 0].scatter(comp_string_lengths, comp_train_errors, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
+    axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 0].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
+    if set_y_limits:
+        axes[0, 0].set_ylim(0.25, 1.05)
+
+    # Plot 2: Margin Losses (top-right)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        if nl == 1:
+            axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[0, 1].scatter(comp_string_lengths, comp_margin_losses, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[0, 1].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
+    if set_y_limits:
+        axes[0, 1].set_ylim(0.25, 1.05)
+
+    # Plot 3: Inverse KL Bounds (bottom-left)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        if nl == 1:
+            axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[1, 0].scatter(comp_string_lengths, comp_inverse_kl_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
+    axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 0].set_xlabel("String length")
+    axes[1, 0].set_ylabel("Error bound, inverse kl")
+    if set_y_limits:
+        axes[1, 0].set_ylim(0.8625, 1.0125)
+
+    # Plot 4: Pinsker Bounds (bottom-right)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        if nl == 1:
+            axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[1, 1].scatter(comp_string_lengths, comp_pinsker_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
+    axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[1, 1].set_xlabel("String length")
+    axes[1, 1].set_ylabel("Error bound, Pinsker")
+    if set_y_limits:
+        axes[1, 1].set_ylim(0.85, 1.85)
+
+    # Add a single legend for all subplots
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05), 
+            ncol=ceil((len(r1_vals) + 1)/3), fancybox=True, shadow=True)
+
+    # Adjust layout to make space for the legend
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    plot_path = comp_filepath[:-5] + ".png"
+    print(f"Saving plot to {plot_path}")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    if collected_figures_dir:
+        collected_figures_dir = os.path.join(collected_figures_dir, "low_rank_and_k_means.png")
+        print(f"Saving plot to {collected_figures_dir}")
+        plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
+    plt.show()
+    plt.close(fig)
+
+
 def collect_quant_results(
         dataset_name: str,
         hw: int,
@@ -408,9 +513,9 @@ if __name__ == "__main__":
 
     figures_dir = "quantization\cluster_results\quant_figures\MNIST1D"
     # for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
-    for hw in [512]:
+    for hw in [32]:
         # for nl in [1, 2, 3, 4]:
-        for nl in [1]:
+        for nl in [2]:
             if figures_dir:
                 collected_figures_dir = os.path.join(figures_dir, f"hw{hw}_nl{nl}") # os has no method join
                 os.makedirs(collected_figures_dir, exist_ok=True)
@@ -421,12 +526,12 @@ if __name__ == "__main__":
             #     collected_figures_dir=collected_figures_dir if figures_path else None,
             # )
 
-            plot_k_means_results(
-                dataset_name="MNIST1D",
-                hw=hw,
-                nl=nl,
-                collected_figures_dir=collected_figures_dir if figures_dir else None,
-            )
+            # plot_k_means_results(
+            #     dataset_name="MNIST1D",
+            #     hw=hw,
+            #     nl=nl,
+            #     collected_figures_dir=collected_figures_dir if figures_dir else None,
+            # )
 
             # plot_low_rank_results(
             #     dataset_name="MNIST1D",
@@ -435,14 +540,22 @@ if __name__ == "__main__":
             #     collected_figures_dir=collected_figures_dir if figures_path else None,
             # )
 
+            plot_low_rank_and_quant_k_means_results(
+                dataset_name="MNIST1D",
+                hw=hw,
+                nl=nl,
+                collected_figures_dir=collected_figures_dir if figures_dir else None,
+            )
+
             # for comp_scheme in ["no_comp", "quant_trunc", "quant_k_means", "low_rank"]:
-            #     for bound_type in ["Inverse KL", "Pinsker"]:           
-            #         summary = collect_quant_results(
-            #             dataset_name="MNIST1D",
-            #             hw=hw,
-            #             nl=nl,
-            #             comp_scheme=comp_scheme,
-            #             bound_type=bound_type,
-            #         )
-            #         pprint(summary)
-            #         print()
+            for comp_scheme in ["low_rank_and_quant_k_means"]:
+                for bound_type in ["Inverse KL", "Pinsker"]:           
+                    summary = collect_quant_results(
+                        dataset_name="MNIST1D",
+                        hw=hw,
+                        nl=nl,
+                        comp_scheme=comp_scheme,
+                        bound_type=bound_type,
+                    )
+                    pprint(summary)
+                    print()

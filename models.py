@@ -1453,7 +1453,10 @@ class MLP(nn.Module):
         all_ranks_and_sensible_codeword_lengths = []
         all_ranks = self.get_all_ranks(min_rank=min_rank, min_num_rank_values=min_num_rank_values)
         for ranks in all_ranks:
+            num_UV_truncs = self.get_num_UV_truncs(ranks=ranks)
             for codeword_length in range(1, 33):
+                if 2 ** codeword_length > num_UV_truncs:  # The number of codewords = number of centroids for k-means, which must be less than the number of values to quantize
+                    break
                 comp_model_size = self.get_comp_model_size_in_bits(
                     ranks=ranks,
                     codeword_length=codeword_length,
