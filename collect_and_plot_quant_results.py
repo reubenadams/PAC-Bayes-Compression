@@ -20,7 +20,6 @@ plt.rcParams.update({
 
 exponent_colors = plt.cm.viridis(np.linspace(0, 1, 9))
 
-set_y_limits = False
 
 comp_schemes = {
     "no_comp": "No Comp",
@@ -40,8 +39,10 @@ def get_filepath(
 ):
     filepath = os.path.join(
         "quantization",
-        "cluster_results",
+        # "cluster_results",
+        "models",
         dataset_name,
+        "40",
         f"{comp_scheme}_metrics",
         f"opadam_hw{hw}_nl{nl}_lr0.001_bs128_dp0_wd0.json",
     )
@@ -337,6 +338,7 @@ def plot_low_rank_and_quant_k_means_results(
         hw: int,
         nl: int,
         collected_figures_dir: str = None,
+        plot_bounds: bool = True,
 ):
 
     no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
@@ -358,68 +360,77 @@ def plot_low_rank_and_quant_k_means_results(
     r1_colors = plt.cm.viridis(np.linspace(0, 1, len(r1_vals)))
 
     # Create a 2x2 subplot figure with shared x-axis
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
-    plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+    if plot_bounds:
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
+        plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
+        plt.subplots_adjust(wspace=0.3)
 
     # Plot 1: Train Errors (top-left)
     for idx, r1 in enumerate(r1_vals):
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
         comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.ranks[0] == r1]
+        axes_index = (0, 0) if plot_bounds else 0
         if nl == 1:
-            axes[0, 0].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            axes[axes_index].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
         else:
-            axes[0, 0].scatter(comp_string_lengths, comp_train_errors, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-    axes[0, 0].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
-    axes[0, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 0].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
+            axes[axes_index].scatter(comp_string_lengths, comp_train_errors, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[axes_index].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
+    axes[axes_index].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[axes_index].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
     if set_y_limits:
-        axes[0, 0].set_ylim(0.25, 1.05)
+        axes[axes_index].set_ylim(0.25, 1.05)
 
     # Plot 2: Margin Losses (top-right)
     for idx, r1 in enumerate(r1_vals):
         comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
         comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        axes_index = (0, 1) if plot_bounds else 1
         if nl == 1:
-            axes[0, 1].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            axes[axes_index].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
         else:
-            axes[0, 1].scatter(comp_string_lengths, comp_margin_losses, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-    axes[0, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[0, 1].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
+            axes[axes_index].scatter(comp_string_lengths, comp_margin_losses, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[axes_index].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[axes_index].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
     if set_y_limits:
-        axes[0, 1].set_ylim(0.25, 1.05)
+        axes[axes_index].set_ylim(0.25, 1.05)
 
-    # Plot 3: Inverse KL Bounds (bottom-left)
-    for idx, r1 in enumerate(r1_vals):
-        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
-        comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
-        if nl == 1:
-            axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-        else:
-            axes[1, 0].scatter(comp_string_lengths, comp_inverse_kl_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-    axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
-    axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[1, 0].set_xlabel("String length")
-    axes[1, 0].set_ylabel("Error bound, inverse kl")
-    if set_y_limits:
-        axes[1, 0].set_ylim(0.8625, 1.0125)
+    if plot_bounds:
+        # Plot 3: Inverse KL Bounds (bottom-left)
+        for idx, r1 in enumerate(r1_vals):
+            comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+            comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+            if nl == 1:
+                axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            else:
+                axes[1, 0].scatter(comp_string_lengths, comp_inverse_kl_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
+        axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+        axes[1, 0].set_xlabel("String length")
+        axes[1, 0].set_ylabel("Error bound, inverse kl")
+        if set_y_limits:
+            axes[1, 0].set_ylim(0.8625, 1.0125)
 
-    # Plot 4: Pinsker Bounds (bottom-right)
-    for idx, r1 in enumerate(r1_vals):
-        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
-        comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
-        if nl == 1:
-            axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-        else:
-            axes[1, 1].scatter(comp_string_lengths, comp_pinsker_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
-    axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
-    axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
-    axes[1, 1].set_xlabel("String length")
-    axes[1, 1].set_ylabel("Error bound, Pinsker")
-    if set_y_limits:
-        axes[1, 1].set_ylim(0.85, 1.85)
+        # Plot 4: Pinsker Bounds (bottom-right)
+        for idx, r1 in enumerate(r1_vals):
+            comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+            comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+            if nl == 1:
+                axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            else:
+                axes[1, 1].scatter(comp_string_lengths, comp_pinsker_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
+        axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+        axes[1, 1].set_xlabel("String length")
+        axes[1, 1].set_ylabel("Error bound, Pinsker")
+        if set_y_limits:
+            axes[1, 1].set_ylim(0.85, 1.85)
 
     # Add a single legend for all subplots
-    handles, labels = axes[0, 0].get_legend_handles_labels()
+    axes_index = (0, 0) if plot_bounds else 0
+    handles, labels = axes[axes_index].get_legend_handles_labels()
+    
     fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05), 
             ncol=ceil((len(r1_vals) + 1)/3), fancybox=True, shadow=True)
 
@@ -431,6 +442,120 @@ def plot_low_rank_and_quant_k_means_results(
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     if collected_figures_dir:
         collected_figures_dir = os.path.join(collected_figures_dir, "low_rank_and_k_means.png")
+        print(f"Saving plot to {collected_figures_dir}")
+        plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
+    plt.show()
+    plt.close(fig)
+
+
+def plot_low_rank_and_quant_trunc_results(
+        dataset_name: str,
+        hw: int,
+        nl: int,
+        collected_figures_dir: str = None,
+        plot_bounds: bool = True,
+):
+
+    no_comp_filepath = get_filepath(dataset_name, hw, nl, "no_comp")
+    comp_filepath = get_filepath(dataset_name, hw, nl, "low_rank_and_quant_trunc")
+
+    try:
+        no_comp_results = FinalCompResults.load_from_json(filepath=no_comp_filepath).best_results
+        all_comp_results = FinalCompResults.load_from_json(filepath=comp_filepath).all_results
+    except FileNotFoundError:
+        print(f"File not found: {no_comp_filepath} or {comp_filepath}. Skipping.")
+        return
+
+    no_comp_error = 1 - no_comp_results.train_accuracy
+    no_comp_string_length = no_comp_results.KL / sqrt(2)
+    no_comp_inverse_kl_bound = no_comp_results.error_bound_inverse_kl_spectral_domain
+    no_comp_pinsker_bound = no_comp_results.error_bound_pinsker_spectral_domain
+
+    r1_vals = sorted(list(set(results.ranks[0] for results in all_comp_results)))
+    r1_colors = plt.cm.viridis(np.linspace(0, 1, len(r1_vals)))
+
+    # Create a 2x2 subplot figure with shared x-axis
+    if plot_bounds:
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=True)
+        plt.subplots_adjust(hspace=0.3, wspace=0.3)  # Adjust spacing between subplots
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
+        plt.subplots_adjust(wspace=0.3)
+
+    # Plot 1: Train Errors (top-left)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_train_errors = [1 - results.train_accuracy for results in all_comp_results if results.ranks[0] == r1]
+        axes_index = (0, 0) if plot_bounds else 0
+        if nl == 1:
+            axes[axes_index].plot(comp_string_lengths, comp_train_errors, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[axes_index].scatter(comp_string_lengths, comp_train_errors, marker='o', s=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[axes_index].axhline(y=no_comp_error, color='k', linestyle='--', label="No Compression")
+    axes[axes_index].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[axes_index].set_ylabel(r"Error on train set, $R_S^0(h_{W', B})$")
+    if set_y_limits:
+        axes[axes_index].set_ylim(0.25, 1.05)
+
+    # Plot 2: Margin Losses (top-right)
+    for idx, r1 in enumerate(r1_vals):
+        comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+        comp_margin_losses = [results.train_margin_loss_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+        axes_index = (0, 1) if plot_bounds else 1
+        if nl == 1:
+            axes[axes_index].plot(comp_string_lengths, comp_margin_losses, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        else:
+            axes[axes_index].scatter(comp_string_lengths, comp_margin_losses, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+    axes[axes_index].axvline(x=no_comp_string_length, color='k', linestyle='--')
+    axes[axes_index].set_ylabel(r"Margin loss on train set, $R_S^{\gamma^*}(h_{W', B})$")
+    if set_y_limits:
+        axes[axes_index].set_ylim(0.25, 1.05)
+
+    if plot_bounds:
+        # Plot 3: Inverse KL Bounds (bottom-left)
+        for idx, r1 in enumerate(r1_vals):
+            comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+            comp_inverse_kl_bounds = [results.error_bound_inverse_kl_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+            if nl == 1:
+                axes[1, 0].plot(comp_string_lengths, comp_inverse_kl_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            else:
+                axes[1, 0].scatter(comp_string_lengths, comp_inverse_kl_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        axes[1, 0].axhline(y=no_comp_inverse_kl_bound, color='k', linestyle='--')
+        axes[1, 0].axvline(x=no_comp_string_length, color='k', linestyle='--')
+        axes[1, 0].set_xlabel("String length")
+        axes[1, 0].set_ylabel("Error bound, inverse kl")
+        if set_y_limits:
+            axes[1, 0].set_ylim(0.8625, 1.0125)
+
+        # Plot 4: Pinsker Bounds (bottom-right)
+        for idx, r1 in enumerate(r1_vals):
+            comp_string_lengths = [results.KL / sqrt(2) for results in all_comp_results if results.ranks[0] == r1]
+            comp_pinsker_bounds = [results.error_bound_pinsker_spectral_domain for results in all_comp_results if results.ranks[0] == r1]
+            if nl == 1:
+                axes[1, 1].plot(comp_string_lengths, comp_pinsker_bounds, marker='o', markersize=3, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+            else:
+                axes[1, 1].scatter(comp_string_lengths, comp_pinsker_bounds, marker='o', s=9, color=r1_colors[idx], label=f"$r_1 = {r1}$")
+        axes[1, 1].axhline(y=no_comp_pinsker_bound, color='k', linestyle='--')
+        axes[1, 1].axvline(x=no_comp_string_length, color='k', linestyle='--')
+        axes[1, 1].set_xlabel("String length")
+        axes[1, 1].set_ylabel("Error bound, Pinsker")
+        if set_y_limits:
+            axes[1, 1].set_ylim(0.85, 1.85)
+
+    # Add a single legend for all subplots
+    axes_index = (0, 0) if plot_bounds else 0
+    handles, labels = axes[axes_index].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05), 
+            ncol=ceil((len(r1_vals) + 1)/3), fancybox=True, shadow=True)
+
+    # Adjust layout to make space for the legend
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    plot_path = comp_filepath[:-5] + ".png"
+    print(f"Saving plot to {plot_path}")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    if collected_figures_dir:
+        collected_figures_dir = os.path.join(collected_figures_dir, "low_rank_and_trunc.png")
         print(f"Saving plot to {collected_figures_dir}")
         plt.savefig(collected_figures_dir, dpi=300, bbox_inches='tight')
     plt.show()
@@ -512,6 +637,7 @@ def collect_quant_results(
 if __name__ == "__main__":
 
     figures_dir = "quantization\cluster_results\quant_figures\MNIST1D"
+    set_y_limits = True
     # for hw in [4, 8, 16, 32, 64, 128, 256, 512]:
     for hw in [32]:
         # for nl in [1, 2, 3, 4]:
@@ -545,10 +671,19 @@ if __name__ == "__main__":
                 hw=hw,
                 nl=nl,
                 collected_figures_dir=collected_figures_dir if figures_dir else None,
+                plot_bounds=False,
+            )
+
+            plot_low_rank_and_quant_trunc_results(
+                dataset_name="MNIST1D",
+                hw=hw,
+                nl=nl,
+                collected_figures_dir=collected_figures_dir if figures_dir else None,
+                plot_bounds=False,
             )
 
             # for comp_scheme in ["no_comp", "quant_trunc", "quant_k_means", "low_rank"]:
-            for comp_scheme in ["low_rank_and_quant_k_means"]:
+            for comp_scheme in ["low_rank_and_quant_trunc"]:
                 for bound_type in ["Inverse KL", "Pinsker"]:           
                     summary = collect_quant_results(
                         dataset_name="MNIST1D",

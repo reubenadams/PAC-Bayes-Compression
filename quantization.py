@@ -250,15 +250,15 @@ def main():
             print()
             print("Getting low rank results...")
 
-            rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
-            num_union_bounds = len(rank_combs)
-            print(f"{rank_combs=}")
+            rank_trunc_bit_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+            num_union_bounds = len(rank_trunc_bit_combs)
+            print(f"{rank_trunc_bit_combs=}")
             final_low_rank_results = config.FinalCompResults(
                 compression_scheme="low_rank",
                 num_union_bounds=num_union_bounds,
             )
 
-            for ranks in rank_combs:
+            for ranks in rank_trunc_bit_combs:
                 print(f"\t{ranks=}")
                 low_rank_results = base_model.get_comp_pacb_results(
                     delta=pacb_config.delta,
@@ -339,43 +339,45 @@ def main():
             print("Getting low rank and quant truncation results...")
 
             if use_all_ranks_for_low_rank_and_quant_trunc:
-                rank_combs = base_model.get_all_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+                rank_trunc_bit_combs = base_model.get_all_ranks_and_sensible_trunc_bits(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
             else:
-                rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
+                rank_trunc_bit_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
 
             # rank_combs = base_model.get_sensible_ranks(min_rank=comp_config.min_rank, min_num_rank_values=comp_config.min_num_rank_values)
-            num_union_bounds = 8 * 23 * len(rank_combs)
+            num_union_bounds = len(rank_trunc_bit_combs)
+            # num_union_bounds = 8 * 23 * len(rank_combs)
             final_low_rank_and_quant_trunc_results = config.FinalCompResults(
                 compression_scheme="low_rank_and_quant_trunc",
                 num_union_bounds=num_union_bounds,
             )
+            for ranks, b_e, b_m in rank_trunc_bit_combs:
+                print(f"\t{ranks=}, {b_e=}, {b_m=}")
+            # for ranks in rank_trunc_bit_combs:
+            #     print(f"\t{ranks=}")
+            #     for b_e in range(9):
+            #         for b_m in range(24):
+            #             print(f"\t\t{b_e=}, {b_m=}")
+                low_rank_and_quant_trunc_results = base_model.get_comp_pacb_results(
+                    delta=pacb_config.delta,
+                    num_union_bounds=num_union_bounds,
+                    train_loader=comp_config.train_loader,
+                    test_loader=comp_config.test_loader,
+                    rand_domain_loader=comp_config.rand_domain_loader,
+                    base_logit_train_loader=comp_config.base_logit_train_loader,
+                    base_logit_test_loader=comp_config.base_logit_test_loader,
+                    base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
+                    C_domain=base_config.data.C_train_domain,
+                    C_data=base_config.data.C_train_data,
 
-            for ranks in rank_combs:
-                print(f"\t{ranks=}")
-                for b_e in range(9):
-                    for b_m in range(24):
-                        print(f"\t\t{b_e=}, {b_m=}")
-                        low_rank_and_quant_trunc_results = base_model.get_comp_pacb_results(
-                            delta=pacb_config.delta,
-                            num_union_bounds=num_union_bounds,
-                            train_loader=comp_config.train_loader,
-                            test_loader=comp_config.test_loader,
-                            rand_domain_loader=comp_config.rand_domain_loader,
-                            base_logit_train_loader=comp_config.base_logit_train_loader,
-                            base_logit_test_loader=comp_config.base_logit_test_loader,
-                            base_logit_rand_domain_loader=comp_config.base_logit_rand_domain_loader,
-                            C_domain=base_config.data.C_train_domain,
-                            C_data=base_config.data.C_train_data,
-
-                            ranks=ranks,
-                            codeword_length=None,
-                            exponent_bits=b_e,
-                            mantissa_bits=b_m,
-                            compress_model_difference=comp_config.compress_model_difference,
-                            init_model=init_model,
-                        )
-                        final_low_rank_and_quant_trunc_results.add_results(low_rank_and_quant_trunc_results)
-                        low_rank_and_quant_trunc_results.log()
+                    ranks=ranks,
+                    codeword_length=None,
+                    exponent_bits=b_e,
+                    mantissa_bits=b_m,
+                    compress_model_difference=comp_config.compress_model_difference,
+                    init_model=init_model,
+                )
+                final_low_rank_and_quant_trunc_results.add_results(low_rank_and_quant_trunc_results)
+                low_rank_and_quant_trunc_results.log()
             final_low_rank_and_quant_trunc_results.get_best_results()
             final_low_rank_and_quant_trunc_results.save_to_json(filepath=base_config.low_rank_and_quant_trunc_metrics_path)
             best_results["low_rank_and_quant_trunc"] = final_low_rank_and_quant_trunc_results.best_results.to_dict()

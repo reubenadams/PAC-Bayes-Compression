@@ -1467,6 +1467,27 @@ class MLP(nn.Module):
                     all_ranks_and_sensible_codeword_lengths.append((ranks, codeword_length))
         return all_ranks_and_sensible_codeword_lengths
 
+    def get_all_ranks_and_sensible_trunc_bits(self, min_rank: int, min_num_rank_values: int) -> list[tuple[tuple[int], int]]:
+        full_model_size = self.get_comp_model_size_in_bits(
+            ranks=None,
+            codeword_length=None,
+            exponent_bits=None,
+            mantissa_bits=None,            
+        )
+        all_ranks_and_sensible_trunc_bits = []
+        all_ranks = self.get_all_ranks(min_rank=min_rank, min_num_rank_values=min_num_rank_values)
+        for ranks in all_ranks:
+            for b_e in range(9):
+                for b_m in range(24):
+                    comp_model_size = self.get_comp_model_size_in_bits(
+                        ranks=ranks,
+                        codeword_length=None,
+                        exponent_bits=b_e,
+                        mantissa_bits=b_m,
+                    )
+                    if comp_model_size < full_model_size:
+                        all_ranks_and_sensible_trunc_bits.append((ranks, b_e, b_m))
+        return all_ranks_and_sensible_trunc_bits
 
     def get_model_difference(self: MLP, other: MLP) -> MLP:
         """Returns the MLP with weights and biases equal to self - other."""
